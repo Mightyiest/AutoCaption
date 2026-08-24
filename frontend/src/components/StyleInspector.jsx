@@ -198,7 +198,7 @@ export const StyleInspector = () => {
                       paintOrder: 'stroke fill',
                       strokeLinejoin: 'round',
                       WebkitTextStrokeLinejoin: 'round',
-                      textShadow: preset.style.shadowBlur ? `0 0 6px ${preset.style.shadowColor}` : 'none',
+                      textShadow: preset.style.shadowBlur ? `0 4px ${preset.style.shadowBlur}px ${preset.style.shadowColor}` : 'none',
                       display: 'inline-block',
                       margin: '0 2px'
                     }}>

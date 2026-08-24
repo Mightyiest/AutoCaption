@@ -54,6 +54,7 @@ def generate_ass_subtitle(
     preview_base_width: float = 310.0,
     preview_metrics: dict = None
 ) -> str:
+    # Use preview_metrics for accurate scaling based on actual preview container dimensions
     base_w = preview_metrics.get("container_width", preview_base_width) if preview_metrics else preview_base_width
     scale = video_width / float(base_w if base_w > 0 else 310.0)
     
@@ -69,11 +70,14 @@ def generate_ass_subtitle(
     shadow_col = hex_to_ass_color(style.get("shadowColor", "#000000"), alpha_hex="35")
     
     # CSS paint-order: stroke fill exposes only 50% of the stroke outward
+    # ASS Outline expands 100% outward, so we must halve the CSS stroke width
     raw_stroke = float(style.get("strokeWidth", 6))
+    # Divide by 2 to compensate for ASS drawing 100% outward vs CSS 50% outward
     ass_stroke_width = max(0, int(round((raw_stroke / 2.0) * scale)))
     
     # Ambient soft-edge glow matching CSS text-shadow: 0 0 {shadowBlur}px (no directional shelf)
     raw_shadow = float(style.get("shadowBlur", 8))
+    # Scale shadow blur proportionally; CSS shadowBlur of 8px maps to ASS blur of ~3
     ass_blur = max(0.0, round((raw_shadow / 8.0) * 3.0, 1)) if raw_shadow > 0 else 0.0
     
     # Character tracking / letter spacing (-0.5px CSS -> -2px in 1080p ASS, +3px for Bebas Neue)
@@ -81,7 +85,8 @@ def generate_ass_subtitle(
     
     pos_x = int(round(video_width * (float(style.get("positionX", 50)) / 100.0)))
     pos_y = int(round(video_height * (float(style.get("positionY", 74)) / 100.0)))
-    fallback_line_h = int(round(ass_font_size * 1.05))
+    # Use measured line height from preview if available, otherwise fallback
+    fallback_line_h = int(round(ass_font_size * 1.15))
     
     is_uppercase = style.get("textTransform", "uppercase") == "uppercase"
     anim_type = style.get("animationType", "pop")
@@ -106,7 +111,9 @@ def generate_ass_subtitle(
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
     ]
     
-    shadow_tag = "\\xshad0\\yshad0" if raw_shadow > 0 else ""
+    # Shadow and blur tags for dialogue events
+    # Always include shadow tags - even with 0 stroke, shadows should render
+    # Use \blur tag for soft glow effect (CSS text-shadow equivalent)
     blur_tag = f"\\blur{ass_blur}" if ass_blur > 0 else ""
 
     for seg in segments:
@@ -136,6 +143,11 @@ def generate_ass_subtitle(
 
         num_lines = len(lines)
         measured_offsets = seg.get("measured_line_offsets")
+        measured_line_height = seg.get("measured_line_height")
+        
+        # Use measured line height from preview if available for accurate spacing
+        effective_line_h = int(round(measured_line_height * scale)) if measured_line_height else fallback_line_h
+        
         if measured_offsets and isinstance(measured_offsets, list) and len(measured_offsets) == num_lines:
             y_offsets = [
                 int(round(pos_y + (measured_offsets[i] * scale)))
@@ -143,7 +155,7 @@ def generate_ass_subtitle(
             ]
         else:
             y_offsets = [
-                int(round(pos_y + (i - (num_lines - 1) / 2.0) * fallback_line_h))
+                int(round(pos_y + (i - (num_lines - 1) / 2.0) * effective_line_h))
                 for i in range(num_lines)
             ]
 
@@ -184,7 +196,7 @@ def generate_ass_subtitle(
 
                 # 3 spaces between words replicate CSS margin: 0 4px in ASS video space
                 line_str = "   ".join(tokens)
-                ass_content.append(f"Dialogue: 0,{start_ts},{end_ts},BaseStyle,,0,0,0,,{{\\an5\\pos({pos_x},{line_y}){shadow_tag}{blur_tag}}}{line_str}")
+                ass_content.append(f"Dialogue: 0,{start_ts},{end_ts},BaseStyle,,0,0,0,,{{\\an5\\pos({pos_x},{line_y}){blur_tag}}}{line_str}")
 
     return "\n".join(ass_content)
 

@@ -442,7 +442,8 @@ export const VideoPlayer = () => {
                 fontWeight: style.fontWeight,
                 lineHeight: 1.15,
                 textTransform: style.textTransform,
-                letterSpacing: style.fontFamily === 'Bebas Neue' ? '1px' : '-0.5px'
+                letterSpacing: style.fontFamily === 'Bebas Neue' ? '1px' : '-0.5px',
+                paintOrder: 'stroke fill'
               }}>
                 {activeSegment.words.map((w, idx) => {
                   const isActive = idx === activeWordIndex;
@@ -459,7 +460,10 @@ export const VideoPlayer = () => {
                           ? `0 4px ${style.shadowBlur}px ${style.shadowColor}` 
                           : 'none',
                         display: 'inline-block',
-                        margin: '0 4px'
+                        margin: '0 4px',
+                        paintOrder: 'stroke fill',
+                        strokeLinejoin: 'round',
+                        WebkitTextStrokeLinejoin: 'round'
                       }}
                     >
                       {w.word}

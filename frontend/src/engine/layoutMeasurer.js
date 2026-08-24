@@ -104,16 +104,18 @@ export function measureSegmentLines(words, style, boxWidthPx) {
     const lineCenterY = e.top + (e.height / 2.0);
     return lineCenterY - boxCenterY;
   });
+  // Use CSS line-height (1.15) for accurate line height measurement matching preview
   const avgLineHeight = lineEntries.length > 0 
     ? lineEntries.reduce((acc, cur) => acc + cur.height, 0) / lineEntries.length 
     : (style.fontSize || 34) * 1.15;
-
+  
   host.removeChild(container);
 
   return {
     lines: lines.length > 0 ? lines : [words.map((_, i) => i)],
     lineOffsets: lineOffsets.length > 0 ? lineOffsets : [0],
-    lineHeight: avgLineHeight
+    lineHeight: avgLineHeight,
+    containerHeight: containerRect.height
   };
 }
 
