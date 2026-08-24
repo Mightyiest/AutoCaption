@@ -66,8 +66,10 @@ export function measureSegmentLines(words, style, boxWidthPx) {
     span.style.margin = '0 4px';
     span.style.boxSizing = 'border-box';
     span.style.paintOrder = 'stroke fill';
+    // Halve stroke width to match CSS paint-order: stroke fill (50% outward)
+    // This ensures measured layout matches what user sees in preview and final render
     if (strokeWidth > 0) {
-      span.style.webkitTextStroke = `${strokeWidth}px ${strokeColor}`;
+      span.style.webkitTextStroke = `${(strokeWidth / 2)}px ${strokeColor}`;
     }
     container.appendChild(span);
     return span;

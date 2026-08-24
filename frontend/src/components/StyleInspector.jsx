@@ -168,7 +168,7 @@ export const StyleInspector = () => {
                     </span>
                   </div>
 
-                  {/* Visual Style Mini Preview */}
+                  {/* Visual Style Mini Preview - Matches final render output */}
                   <div style={{
                     padding: '8px',
                     borderRadius: '8px',
@@ -178,11 +178,13 @@ export const StyleInspector = () => {
                     fontSize: '18px',
                     fontWeight: preset.style.fontWeight,
                     textTransform: preset.style.textTransform,
-                    overflow: 'hidden'
+                    overflow: 'hidden',
+                    lineHeight: 1.15
                   }}>
                     <span style={{
                       color: preset.style.primaryColor,
-                      WebkitTextStroke: preset.style.strokeWidth ? `1.5px ${preset.style.strokeColor}` : 'none',
+                      // Halve stroke width for preview to match CSS paint-order: stroke fill (50% outward)
+                      WebkitTextStroke: preset.style.strokeWidth ? `${(preset.style.strokeWidth / 2)}px ${preset.style.strokeColor}` : 'none',
                       paintOrder: 'stroke fill',
                       strokeLinejoin: 'round',
                       WebkitTextStrokeLinejoin: 'round',
@@ -194,10 +196,12 @@ export const StyleInspector = () => {
                     {' '}
                     <span style={{
                       color: preset.style.activeColor,
-                      WebkitTextStroke: preset.style.strokeWidth ? `1.5px ${preset.style.strokeColor}` : 'none',
+                      // Halve stroke width for preview to match CSS paint-order: stroke fill
+                      WebkitTextStroke: preset.style.strokeWidth ? `${(preset.style.strokeWidth / 2)}px ${preset.style.strokeColor}` : 'none',
                       paintOrder: 'stroke fill',
                       strokeLinejoin: 'round',
                       WebkitTextStrokeLinejoin: 'round',
+                      // Use proper shadow format matching VideoPlayer preview
                       textShadow: preset.style.shadowBlur ? `0 4px ${preset.style.shadowBlur}px ${preset.style.shadowColor}` : 'none',
                       display: 'inline-block',
                       margin: '0 2px'

@@ -11,7 +11,8 @@ import {
   FileCheck,
   ExternalLink,
   Zap,
-  Cpu
+  Cpu,
+  Palette
 } from 'lucide-react';
 import { useEditorStore } from '../store/useEditorStore';
 import { measureAllSegmentsLayout } from '../engine/layoutMeasurer';
@@ -34,6 +35,7 @@ export const ExportModal = () => {
     aspectRatio === '9:16' ? '1080x1920' : aspectRatio === '1:1' ? '1080x1080' : '1920x1080'
   );
   const [encoderMode, setEncoderMode] = useState('cpu'); // 'cpu' (Option A) | 'gpu_nvenc' (Option B)
+  const [useCanvasRenderer, setUseCanvasRenderer] = useState(false); // CapCut-style exact preview matching
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [exportResultUrl, setExportResultUrl] = useState(null);
@@ -84,6 +86,7 @@ export const ExportModal = () => {
             height: h,
             video_duration: duration || 10.0,
             encoder_mode: encoderMode,
+            use_canvas_renderer: useCanvasRenderer,
             preview_metrics
           })
         });
@@ -185,6 +188,43 @@ export const ExportModal = () => {
 
         {/* Body */}
         <div style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {/* Canvas Renderer Toggle - CapCut-style exact preview matching */}
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-muted)', display: 'block', marginBottom: '8px' }}>
+              Rendering Quality Mode
+            </label>
+
+            <div
+              onClick={() => !isExporting && setUseCanvasRenderer(!useCanvasRenderer)}
+              className="glass-card"
+              style={{
+                padding: '12px',
+                borderRadius: '10px',
+                cursor: isExporting ? 'not-allowed' : 'pointer',
+                border: useCanvasRenderer ? '2px solid #FBBF24' : '1px solid var(--border-color)',
+                background: useCanvasRenderer ? 'rgba(251, 191, 36, 0.12)' : 'rgba(31, 41, 55, 0.5)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Palette size={18} color={useCanvasRenderer ? '#FBBF24' : 'var(--text-muted)'} />
+                <div>
+                  <div style={{ fontSize: '12px', fontWeight: '800', color: useCanvasRenderer ? '#FBBF24' : '#FFF' }}>
+                    {useCanvasRenderer ? 'CapCut-Style Exact Match (Canvas)' : 'Fast ASS Subtitle'}
+                  </div>
+                  <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+                    {useCanvasRenderer 
+                      ? 'Pixel-perfect preview match using Pillow rendering (slower)' 
+                      : 'Fast libass filter (~1s render), minor stroke/shadow differences'}
+                  </div>
+                </div>
+              </div>
+              {useCanvasRenderer && <CheckCircle2 size={18} color="#FBBF24" />}
+            </div>
+          </div>
+
           {/* Encoder Selection: Option A vs Option B */}
           <div>
             <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-muted)', display: 'block', marginBottom: '8px' }}>
@@ -318,7 +358,7 @@ export const ExportModal = () => {
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: '700' }}>
                 <span style={{ color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <Loader2 size={14} className="animate-spin" />
-                  Rendering ({encoderMode === 'cpu' ? 'Option A: CPU' : 'Option B: GPU NVENC'})...
+                  Rendering ({useCanvasRenderer ? 'CapCut-Style Canvas' : (encoderMode === 'cpu' ? 'Option A: CPU' : 'Option B: GPU NVENC')})...
                 </span>
                 <span style={{ color: '#FFF', fontFamily: 'monospace' }}>{exportProgress}%</span>
               </div>
@@ -413,8 +453,8 @@ export const ExportModal = () => {
               className="btn-viral"
               disabled={isExporting}
             >
-              {encoderMode === 'gpu_nvenc' ? <Zap size={15} /> : <Cpu size={15} />}
-              <span>{isExporting ? `Rendering (${exportProgress}%)` : `Export (${encoderMode === 'cpu' ? 'Option A: CPU' : 'Option B: GPU'})`}</span>
+              {useCanvasRenderer ? <Palette size={15} /> : (encoderMode === 'gpu_nvenc' ? <Zap size={15} /> : <Cpu size={15} />)}
+              <span>{isExporting ? `Rendering (${exportProgress}%)` : `Export (${useCanvasRenderer ? 'CapCut-Style Canvas' : (encoderMode === 'cpu' ? 'Option A: CPU' : 'Option B: GPU')})`}</span>
             </button>
           )}
         </div>
