@@ -1,40 +1,48 @@
-```gitignore
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
 .Python
 venv/
 .venv/
+env/
 .env
 .env.local
 .env.*
 
-# Build artifacts
-build/
+# Node / Frontend
+node_modules/
+frontend/node_modules/
 dist/
-*.egg-info/
-
-# Logs
+build/
+.vite/
 *.log
 
-# Editors
+# Media / Generated Storage (keep .gitkeep and test inputs)
+backend/storage/uploads/*
+!backend/storage/uploads/.gitkeep
+backend/storage/exports/*
+!backend/storage/exports/.gitkeep
+backend/storage/debug/*
+backend/storage/demo/*
+backend/storage/temp/*
+*.ass
+backend/*.ass
+backend/test_sub_out.mp4
+scratch/test_*.mp4
+scratch/test_*.png
+
+# Testing & Coverage
+.coverage
+coverage/
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+
+# Editors & OS
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# Coverage
-.coverage
-coverage/
-htmlcov/
-
-# Testing
-.pytest_cache/
-.mypy_cache/
-
-# OS
 .DS_Store
 Thumbs.db
-```
