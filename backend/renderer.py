@@ -81,12 +81,14 @@ def generate_ass_subtitle(
     # CRITICAL: CSS paint-order: stroke fill exposes only 50% of stroke outward
     # ASS Outline expands 100% outward, so we MUST halve the CSS stroke width
     raw_stroke = float(style.get("strokeWidth", 6))
+    # Divide by 2 to compensate for ASS drawing 100% outward vs CSS 50% outward
     ass_stroke_width = max(0, int(round((raw_stroke / 2.0) * scale)))
     
     # CRITICAL: CSS text-shadow uses true Gaussian blur
     # ASS \blur creates similar soft edge effect
     # Map CSS shadowBlur (8px typical) to ASS blur (3 typical)
     raw_shadow = float(style.get("shadowBlur", 8))
+    # Scale shadow blur proportionally; CSS shadowBlur of 8px maps to ASS blur of ~3
     ass_blur = max(0.0, round((raw_shadow / 8.0) * 3.0, 1)) if raw_shadow > 0 else 0.0
     
     # Character tracking / letter spacing
