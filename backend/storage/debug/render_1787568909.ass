@@ -1,0 +1,45 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: MainStyle,Montserrat Black,118,&H00FFFFFF&,&H00F8BD38&,&H00000000&,&H00000000&,0,0,0,0,100,100,-2,0,1,0,0,5,0,0,0,1
+Style: ShadowStyle,Montserrat Black,118,&H30000000&,&H30000000&,&H00000000&,&H00000000&,0,0,0,0,100,100,-2,0,1,0,0,5,0,0,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:00.75,ShadowStyle,,0,0,0,,{\an5\pos(192,1435)\fsp-2\blur4.2\fscx96\fscy96\t(0,60,\fscx112\fscy112)\t(60,130,\fscx104\fscy104)}CLEAN
+Dialogue: 2,0:00:00.00,0:00:00.75,MainStyle,,0,0,0,,{\an5\pos(192,1421)\fsp-2\c&H00F8BD38&\fscx96\fscy96\t(0,60,\fscx112\fscy112)\t(60,130,\fscx104\fscy104)}CLEAN
+Dialogue: 0,0:00:00.00,0:00:00.75,ShadowStyle,,0,0,0,,{\an5\pos(435,1435)\fsp-2\blur4.2}FROSTED
+Dialogue: 1,0:00:00.00,0:00:00.75,MainStyle,,0,0,0,,{\an5\pos(435,1421)\fsp-2\c&H00FFFFFF&}FROSTED
+Dialogue: 0,0:00:00.00,0:00:00.75,ShadowStyle,,0,0,0,,{\an5\pos(679,1435)\fsp-2\blur4.2}PILL
+Dialogue: 1,0:00:00.00,0:00:00.75,MainStyle,,0,0,0,,{\an5\pos(679,1421)\fsp-2\c&H00FFFFFF&}PILL
+Dialogue: 0,0:00:00.00,0:00:00.75,ShadowStyle,,0,0,0,,{\an5\pos(871,1435)\fsp-2\blur4.2}TEST
+Dialogue: 1,0:00:00.00,0:00:00.75,MainStyle,,0,0,0,,{\an5\pos(871,1421)\fsp-2\c&H00FFFFFF&}TEST
+Dialogue: 0,0:00:00.75,0:00:01.50,ShadowStyle,,0,0,0,,{\an5\pos(192,1435)\fsp-2\blur4.2}CLEAN
+Dialogue: 1,0:00:00.75,0:00:01.50,MainStyle,,0,0,0,,{\an5\pos(192,1421)\fsp-2\c&H00FFFFFF&}CLEAN
+Dialogue: 0,0:00:00.75,0:00:01.50,ShadowStyle,,0,0,0,,{\an5\pos(435,1435)\fsp-2\blur4.2\fscx96\fscy96\t(0,60,\fscx112\fscy112)\t(60,130,\fscx104\fscy104)}FROSTED
+Dialogue: 2,0:00:00.75,0:00:01.50,MainStyle,,0,0,0,,{\an5\pos(435,1421)\fsp-2\c&H00F8BD38&\fscx96\fscy96\t(0,60,\fscx112\fscy112)\t(60,130,\fscx104\fscy104)}FROSTED
+Dialogue: 0,0:00:00.75,0:00:01.50,ShadowStyle,,0,0,0,,{\an5\pos(679,1435)\fsp-2\blur4.2}PILL
+Dialogue: 1,0:00:00.75,0:00:01.50,MainStyle,,0,0,0,,{\an5\pos(679,1421)\fsp-2\c&H00FFFFFF&}PILL
+Dialogue: 0,0:00:00.75,0:00:01.50,ShadowStyle,,0,0,0,,{\an5\pos(871,1435)\fsp-2\blur4.2}TEST
+Dialogue: 1,0:00:00.75,0:00:01.50,MainStyle,,0,0,0,,{\an5\pos(871,1421)\fsp-2\c&H00FFFFFF&}TEST
+Dialogue: 0,0:00:01.50,0:00:02.25,ShadowStyle,,0,0,0,,{\an5\pos(192,1435)\fsp-2\blur4.2}CLEAN
+Dialogue: 1,0:00:01.50,0:00:02.25,MainStyle,,0,0,0,,{\an5\pos(192,1421)\fsp-2\c&H00FFFFFF&}CLEAN
+Dialogue: 0,0:00:01.50,0:00:02.25,ShadowStyle,,0,0,0,,{\an5\pos(435,1435)\fsp-2\blur4.2}FROSTED
+Dialogue: 1,0:00:01.50,0:00:02.25,MainStyle,,0,0,0,,{\an5\pos(435,1421)\fsp-2\c&H00FFFFFF&}FROSTED
+Dialogue: 0,0:00:01.50,0:00:02.25,ShadowStyle,,0,0,0,,{\an5\pos(679,1435)\fsp-2\blur4.2\fscx96\fscy96\t(0,60,\fscx112\fscy112)\t(60,130,\fscx104\fscy104)}PILL
+Dialogue: 2,0:00:01.50,0:00:02.25,MainStyle,,0,0,0,,{\an5\pos(679,1421)\fsp-2\c&H00F8BD38&\fscx96\fscy96\t(0,60,\fscx112\fscy112)\t(60,130,\fscx104\fscy104)}PILL
+Dialogue: 0,0:00:01.50,0:00:02.25,ShadowStyle,,0,0,0,,{\an5\pos(871,1435)\fsp-2\blur4.2}TEST
+Dialogue: 1,0:00:01.50,0:00:02.25,MainStyle,,0,0,0,,{\an5\pos(871,1421)\fsp-2\c&H00FFFFFF&}TEST
+Dialogue: 0,0:00:02.25,0:00:03.00,ShadowStyle,,0,0,0,,{\an5\pos(192,1435)\fsp-2\blur4.2}CLEAN
+Dialogue: 1,0:00:02.25,0:00:03.00,MainStyle,,0,0,0,,{\an5\pos(192,1421)\fsp-2\c&H00FFFFFF&}CLEAN
+Dialogue: 0,0:00:02.25,0:00:03.00,ShadowStyle,,0,0,0,,{\an5\pos(435,1435)\fsp-2\blur4.2}FROSTED
+Dialogue: 1,0:00:02.25,0:00:03.00,MainStyle,,0,0,0,,{\an5\pos(435,1421)\fsp-2\c&H00FFFFFF&}FROSTED
+Dialogue: 0,0:00:02.25,0:00:03.00,ShadowStyle,,0,0,0,,{\an5\pos(679,1435)\fsp-2\blur4.2}PILL
+Dialogue: 1,0:00:02.25,0:00:03.00,MainStyle,,0,0,0,,{\an5\pos(679,1421)\fsp-2\c&H00FFFFFF&}PILL
+Dialogue: 0,0:00:02.25,0:00:03.00,ShadowStyle,,0,0,0,,{\an5\pos(871,1435)\fsp-2\blur4.2\fscx96\fscy96\t(0,60,\fscx112\fscy112)\t(60,130,\fscx104\fscy104)}TEST
+Dialogue: 2,0:00:02.25,0:00:03.00,MainStyle,,0,0,0,,{\an5\pos(871,1421)\fsp-2\c&H00F8BD38&\fscx96\fscy96\t(0,60,\fscx112\fscy112)\t(60,130,\fscx104\fscy104)}TEST
