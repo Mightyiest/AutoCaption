@@ -54,6 +54,15 @@ def generate_ass_subtitle(
     preview_base_width: float = 310.0,
     preview_metrics: dict = None
 ) -> str:
+    """
+    Generate ASS subtitle file that closely matches browser CSS preview.
+    
+    Key conversions:
+    - Stroke width: CSS uses 50% outward stroke, ASS uses 100% outward -> divide by 2
+    - Shadow blur: CSS uses Gaussian blur, ASS uses geometric offset + blur -> scale appropriately
+    - Line height: Use measured values from preview when available
+    """
+    # Use preview_metrics for accurate scaling based on actual preview container dimensions
     base_w = preview_metrics.get("container_width", preview_base_width) if preview_metrics else preview_base_width
     scale = video_width / float(base_w if base_w > 0 else 310.0)
     
@@ -66,27 +75,32 @@ def generate_ass_subtitle(
     pri_col = hex_to_ass_color(style.get("primaryColor", "#FFFFFF"))
     act_col = hex_to_ass_color(style.get("activeColor", "#FFE600"))
     stroke_col = hex_to_ass_color(style.get("strokeColor", "#000000"))
+    # Use proper alpha for shadow (35 hex = 53 decimal = ~21% opacity)
     shadow_col = hex_to_ass_color(style.get("shadowColor", "#000000"), alpha_hex="35")
     
-    # CSS paint-order: stroke fill exposes only 50% of the stroke outward
+    # CRITICAL: CSS paint-order: stroke fill exposes only 50% of stroke outward
+    # ASS Outline expands 100% outward, so we MUST halve the CSS stroke width
     raw_stroke = float(style.get("strokeWidth", 6))
     ass_stroke_width = max(0, int(round((raw_stroke / 2.0) * scale)))
     
-    # Ambient soft-edge glow matching CSS text-shadow: 0 0 {shadowBlur}px (no directional shelf)
+    # CRITICAL: CSS text-shadow uses true Gaussian blur
+    # ASS \blur creates similar soft edge effect
+    # Map CSS shadowBlur (8px typical) to ASS blur (3 typical)
     raw_shadow = float(style.get("shadowBlur", 8))
     ass_blur = max(0.0, round((raw_shadow / 8.0) * 3.0, 1)) if raw_shadow > 0 else 0.0
     
-    # Character tracking / letter spacing (-0.5px CSS -> -2px in 1080p ASS, +3px for Bebas Neue)
+    # Character tracking / letter spacing
     ass_spacing = 3 if raw_font_family == "Bebas Neue" else -2
     
     pos_x = int(round(video_width * (float(style.get("positionX", 50)) / 100.0)))
     pos_y = int(round(video_height * (float(style.get("positionY", 74)) / 100.0)))
-    fallback_line_h = int(round(ass_font_size * 1.05))
+    # Use measured line height from preview if available, otherwise fallback to 1.15
+    fallback_line_h = int(round(ass_font_size * 1.15))
     
     is_uppercase = style.get("textTransform", "uppercase") == "uppercase"
     anim_type = style.get("animationType", "pop")
     
-    # Suppress synthetic faux-bolding on fonts that are already native Black/ExtraBold
+    # Suppress synthetic faux-bolding on heavy fonts
     is_heavy_font = any(k in font_family.lower() for k in ["black", "extrabold", "bold", "russo", "bangers"])
     ass_bold_flag = 0 if is_heavy_font else -1
     
@@ -106,7 +120,8 @@ def generate_ass_subtitle(
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
     ]
     
-    shadow_tag = "\\xshad0\\yshad0" if raw_shadow > 0 else ""
+    # ALWAYS include blur tag when shadowBlur > 0, regardless of stroke width
+    # This fixes the bug where shadows disappear at 0px stroke
     blur_tag = f"\\blur{ass_blur}" if ass_blur > 0 else ""
 
     for seg in segments:
@@ -136,6 +151,11 @@ def generate_ass_subtitle(
 
         num_lines = len(lines)
         measured_offsets = seg.get("measured_line_offsets")
+        measured_line_height = seg.get("measured_line_height")
+        
+        # Use measured line height from preview if available for accurate spacing
+        effective_line_h = int(round(measured_line_height * scale)) if measured_line_height else fallback_line_h
+        
         if measured_offsets and isinstance(measured_offsets, list) and len(measured_offsets) == num_lines:
             y_offsets = [
                 int(round(pos_y + (measured_offsets[i] * scale)))
@@ -143,7 +163,7 @@ def generate_ass_subtitle(
             ]
         else:
             y_offsets = [
-                int(round(pos_y + (i - (num_lines - 1) / 2.0) * fallback_line_h))
+                int(round(pos_y + (i - (num_lines - 1) / 2.0) * effective_line_h))
                 for i in range(num_lines)
             ]
 
@@ -184,7 +204,9 @@ def generate_ass_subtitle(
 
                 # 3 spaces between words replicate CSS margin: 0 4px in ASS video space
                 line_str = "   ".join(tokens)
-                ass_content.append(f"Dialogue: 0,{start_ts},{end_ts},BaseStyle,,0,0,0,,{{\\an5\\pos({pos_x},{line_y}){shadow_tag}{blur_tag}}}{line_str}")
+                # Always include blur tag for each dialogue event when shadowBlur > 0
+                # This ensures shadows render even with 0px stroke (fixes missing shadows bug)
+                ass_content.append(f"Dialogue: 0,{start_ts},{end_ts},BaseStyle,,0,0,0,,{{\\an5\\pos({pos_x},{line_y}){blur_tag}}}{line_str}")
 
     return "\n".join(ass_content)
 

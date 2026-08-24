@@ -13,6 +13,14 @@ import imageio_ffmpeg
 from transcriber import transcribe_media, setup_cuda_dlls, log_msg, LOG_HISTORY
 from renderer import render_captioned_video, generate_ass_subtitle
 
+# Optional: Canvas-based renderer for CapCut-style exact preview matching
+try:
+    from canvas_renderer import render_captioned_video_canvas
+    CANVAS_RENDERER_AVAILABLE = True
+except ImportError:
+    CANVAS_RENDERER_AVAILABLE = False
+    log_msg("INFO", "Canvas renderer not available, using ASS-based rendering")
+
 setup_cuda_dlls()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -49,6 +57,7 @@ class RenderRequest(BaseModel):
     video_duration: Optional[float] = 10.0
     encoder_mode: Optional[str] = "cpu"  # "cpu" (Option A) | "gpu_nvenc" (Option B)
     preview_metrics: Optional[Dict[str, Any]] = None
+    use_canvas_renderer: Optional[bool] = False  # Use CapCut-style canvas rendering for exact preview match
 
 class TranscribeSavedRequest(BaseModel):
     video_filename: str
@@ -196,7 +205,10 @@ async def transcribe_endpoint(
 
 def _do_render_task(job_id: str, req: RenderRequest, source_path: str, output_path: str, export_filename: str):
     total_dur = max(0.5, req.video_duration or 10.0)
-    mode_label = "CPU Ultra-Fast" if req.encoder_mode == "cpu" else "NVIDIA GPU NVENC"
+    
+    # Determine rendering method
+    use_canvas = req.use_canvas_renderer and CANVAS_RENDERER_AVAILABLE
+    mode_label = "Canvas (CapCut-style)" if use_canvas else ("CPU Ultra-Fast" if req.encoder_mode == "cpu" else "NVIDIA GPU NVENC")
     
     def on_progress(current_sec):
         if current_sec >= 999990:
@@ -211,17 +223,31 @@ def _do_render_task(job_id: str, req: RenderRequest, source_path: str, output_pa
         RENDER_JOBS[job_id]["status"] = "rendering"
         log_msg("RENDER", f"[{mode_label}] Starting video export for '{req.video_filename}' ({req.width}x{req.height})")
         
-        render_captioned_video(
-            source_video_path=source_path,
-            output_video_path=output_path,
-            segments=req.segments,
-            style=req.style,
-            video_width=req.width or 1080,
-            video_height=req.height or 1920,
-            encoder_mode=req.encoder_mode or "cpu",
-            preview_metrics=req.preview_metrics,
-            progress_callback=on_progress
-        )
+        if use_canvas:
+            # Use CapCut-style canvas renderer for exact preview matching
+            render_captioned_video_canvas(
+                source_video_path=source_path,
+                output_video_path=output_path,
+                segments=req.segments,
+                style=req.style,
+                video_width=req.width or 1080,
+                video_height=req.height or 1920,
+                encoder_mode=req.encoder_mode or "cpu",
+                progress_callback=on_progress
+            )
+        else:
+            # Use fast ASS-based renderer
+            render_captioned_video(
+                source_video_path=source_path,
+                output_video_path=output_path,
+                segments=req.segments,
+                style=req.style,
+                video_width=req.width or 1080,
+                video_height=req.height or 1920,
+                encoder_mode=req.encoder_mode or "cpu",
+                preview_metrics=req.preview_metrics,
+                progress_callback=on_progress
+            )
         
         RENDER_JOBS[job_id]["percent"] = 100
         RENDER_JOBS[job_id]["status"] = "done"

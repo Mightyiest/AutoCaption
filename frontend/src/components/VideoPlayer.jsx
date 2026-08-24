@@ -442,7 +442,8 @@ export const VideoPlayer = () => {
                 fontWeight: style.fontWeight,
                 lineHeight: 1.15,
                 textTransform: style.textTransform,
-                letterSpacing: style.fontFamily === 'Bebas Neue' ? '1px' : '-0.5px'
+                letterSpacing: style.fontFamily === 'Bebas Neue' ? '1px' : '-0.5px',
+                paintOrder: 'stroke fill'
               }}>
                 {activeSegment.words.map((w, idx) => {
                   const isActive = idx === activeWordIndex;
@@ -454,12 +455,18 @@ export const VideoPlayer = () => {
                       className={`word-token ${isActive ? 'is-active' : ''} ${animClass}`}
                       style={{
                         color: isActive ? style.activeColor : style.primaryColor,
-                        WebkitTextStroke: style.strokeWidth ? `${style.strokeWidth}px ${style.strokeColor}` : 'none',
+                        // Halve stroke width to match CSS paint-order: stroke fill behavior (50% outward)
+                        // This ensures preview matches final render output
+                        WebkitTextStroke: style.strokeWidth ? `${(style.strokeWidth / 2)}px ${style.strokeColor}` : 'none',
+                        // Use proper shadow format with blur radius
                         textShadow: style.shadowBlur 
                           ? `0 4px ${style.shadowBlur}px ${style.shadowColor}` 
                           : 'none',
                         display: 'inline-block',
-                        margin: '0 4px'
+                        margin: '0 4px',
+                        paintOrder: 'stroke fill',
+                        strokeLinejoin: 'round',
+                        WebkitTextStrokeLinejoin: 'round'
                       }}
                     >
                       {w.word}

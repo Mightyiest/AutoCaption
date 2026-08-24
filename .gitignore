@@ -1,37 +1,40 @@
-# Node / Frontend
-node_modules/
-dist/
-dist-ssr/
-*.local
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-
+```gitignore
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
+*.pyc
+*.pyo
+*.pyd
 .Python
-env/
 venv/
-ENV/
 .venv/
+.env
+.env.local
+.env.*
 
-# Storage & Temporary Files
-backend/storage/uploads/*
-!backend/storage/uploads/.gitkeep
-backend/storage/exports/*
-!backend/storage/exports/.gitkeep
-backend/test_sub_out.mp4
-backend/sub_test_sub_out.mp4.ass
-scratch/
+# Build artifacts
+build/
+dist/
+*.egg-info/
 
-# OS & IDE
-.DS_Store
-Thumbs.db
+# Logs
+*.log
+
+# Editors
 .vscode/
 .idea/
 *.swp
 *.swo
+
+# Coverage
+.coverage
+coverage/
+htmlcov/
+
+# Testing
+.pytest_cache/
+.mypy_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+```

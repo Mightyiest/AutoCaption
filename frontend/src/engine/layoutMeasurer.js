@@ -66,8 +66,10 @@ export function measureSegmentLines(words, style, boxWidthPx) {
     span.style.margin = '0 4px';
     span.style.boxSizing = 'border-box';
     span.style.paintOrder = 'stroke fill';
+    // Halve stroke width to match CSS paint-order: stroke fill (50% outward)
+    // This ensures measured layout matches what user sees in preview and final render
     if (strokeWidth > 0) {
-      span.style.webkitTextStroke = `${strokeWidth}px ${strokeColor}`;
+      span.style.webkitTextStroke = `${(strokeWidth / 2)}px ${strokeColor}`;
     }
     container.appendChild(span);
     return span;
@@ -104,16 +106,18 @@ export function measureSegmentLines(words, style, boxWidthPx) {
     const lineCenterY = e.top + (e.height / 2.0);
     return lineCenterY - boxCenterY;
   });
+  // Use CSS line-height (1.15) for accurate line height measurement matching preview
   const avgLineHeight = lineEntries.length > 0 
     ? lineEntries.reduce((acc, cur) => acc + cur.height, 0) / lineEntries.length 
     : (style.fontSize || 34) * 1.15;
-
+  
   host.removeChild(container);
 
   return {
     lines: lines.length > 0 ? lines : [words.map((_, i) => i)],
     lineOffsets: lineOffsets.length > 0 ? lineOffsets : [0],
-    lineHeight: avgLineHeight
+    lineHeight: avgLineHeight,
+    containerHeight: containerRect.height
   };
 }
 
