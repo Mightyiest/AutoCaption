@@ -1,10 +1,59 @@
+export const DEFAULT_STYLE = {
+  fontFamily: 'Montserrat',
+  fontSize: 34,
+  fontWeight: '900',
+  textTransform: 'uppercase',
+  primaryColor: '#FFFFFF',
+  activeColor: '#FFE600',
+  strokeColor: '#000000',
+  strokeWidth: 6,
+  shadowColor: '#000000',
+  shadowBlur: 8,
+  shadowOffsetX: 0,
+  shadowOffsetY: 4,
+  backgroundColor: 'transparent',
+  backgroundPadding: 0,
+  borderRadius: 0,
+  positionX: 50,
+  positionY: 74,
+  animationType: 'pop',
+  maxWordsPerSegment: 3
+};
+
+export function sanitizeStyle(style = {}) {
+  const s = style || {};
+  return {
+    ...DEFAULT_STYLE,
+    ...s,
+    fontFamily: String(s.fontFamily || DEFAULT_STYLE.fontFamily).trim(),
+    fontSize: Number(s.fontSize ?? DEFAULT_STYLE.fontSize),
+    fontWeight: String(s.fontWeight || DEFAULT_STYLE.fontWeight),
+    textTransform: String(s.textTransform || DEFAULT_STYLE.textTransform).toLowerCase(),
+    primaryColor: s.primaryColor || DEFAULT_STYLE.primaryColor,
+    activeColor: s.activeColor || DEFAULT_STYLE.activeColor,
+    strokeColor: s.strokeColor || DEFAULT_STYLE.strokeColor,
+    strokeWidth: Number(s.strokeWidth ?? DEFAULT_STYLE.strokeWidth),
+    shadowColor: s.shadowColor || DEFAULT_STYLE.shadowColor,
+    shadowBlur: Number(s.shadowBlur ?? DEFAULT_STYLE.shadowBlur),
+    shadowOffsetX: Number(s.shadowOffsetX ?? DEFAULT_STYLE.shadowOffsetX),
+    shadowOffsetY: Number(s.shadowOffsetY ?? DEFAULT_STYLE.shadowOffsetY),
+    backgroundColor: s.backgroundColor || DEFAULT_STYLE.backgroundColor,
+    backgroundPadding: Number(s.backgroundPadding ?? DEFAULT_STYLE.backgroundPadding),
+    borderRadius: Number(s.borderRadius ?? DEFAULT_STYLE.borderRadius),
+    positionX: Number(s.positionX ?? DEFAULT_STYLE.positionX),
+    positionY: Number(s.positionY ?? DEFAULT_STYLE.positionY),
+    animationType: s.animationType || DEFAULT_STYLE.animationType,
+    maxWordsPerSegment: Number(s.maxWordsPerSegment ?? DEFAULT_STYLE.maxWordsPerSegment)
+  };
+}
+
 export const PRESETS = [
   {
     id: 'hormozi',
     name: 'Hormozi Impact',
     description: 'High-energy bold pop with yellow punch word highlight',
     badge: 'VIRAL',
-    style: {
+    style: sanitizeStyle({
       fontFamily: 'Montserrat',
       fontSize: 34,
       fontWeight: '900',
@@ -15,6 +64,8 @@ export const PRESETS = [
       strokeWidth: 6,
       shadowColor: '#000000',
       shadowBlur: 8,
+      shadowOffsetX: 0,
+      shadowOffsetY: 4,
       backgroundColor: 'transparent',
       backgroundPadding: 0,
       borderRadius: 0,
@@ -22,14 +73,14 @@ export const PRESETS = [
       positionX: 50,
       animationType: 'pop',
       maxWordsPerSegment: 3
-    }
+    })
   },
   {
     id: 'beast',
     name: 'MrBeast Explosive',
     description: 'Vibrant neon green bounce with heavy contrast',
     badge: 'POPULAR',
-    style: {
+    style: sanitizeStyle({
       fontFamily: 'Russo One',
       fontSize: 36,
       fontWeight: '900',
@@ -40,6 +91,8 @@ export const PRESETS = [
       strokeWidth: 7,
       shadowColor: '#000000',
       shadowBlur: 10,
+      shadowOffsetX: 0,
+      shadowOffsetY: 4,
       backgroundColor: 'transparent',
       backgroundPadding: 0,
       borderRadius: 0,
@@ -47,14 +100,14 @@ export const PRESETS = [
       positionX: 50,
       animationType: 'bounce',
       maxWordsPerSegment: 3
-    }
+    })
   },
   {
     id: 'neon',
     name: 'Neon Cyberpunk',
     description: 'Glowing cyan electric karaoke flow',
     badge: 'AESTHETIC',
-    style: {
+    style: sanitizeStyle({
       fontFamily: 'Outfit',
       fontSize: 32,
       fontWeight: '800',
@@ -65,6 +118,8 @@ export const PRESETS = [
       strokeWidth: 4,
       shadowColor: '#00FFFF',
       shadowBlur: 12,
+      shadowOffsetX: 0,
+      shadowOffsetY: 0,
       backgroundColor: 'transparent',
       backgroundPadding: 0,
       borderRadius: 0,
@@ -72,14 +127,14 @@ export const PRESETS = [
       positionX: 50,
       animationType: 'karaoke',
       maxWordsPerSegment: 4
-    }
+    })
   },
   {
     id: 'fire',
     name: 'Fire Flame',
     description: 'Hot red-orange gradient pop for hooks',
     badge: 'HIGH HOOK',
-    style: {
+    style: sanitizeStyle({
       fontFamily: 'Bebas Neue',
       fontSize: 38,
       fontWeight: '700',
@@ -90,6 +145,8 @@ export const PRESETS = [
       strokeWidth: 6,
       shadowColor: '#EA580C',
       shadowBlur: 10,
+      shadowOffsetX: 0,
+      shadowOffsetY: 4,
       backgroundColor: 'transparent',
       backgroundPadding: 0,
       borderRadius: 0,
@@ -97,14 +154,14 @@ export const PRESETS = [
       positionX: 50,
       animationType: 'pop',
       maxWordsPerSegment: 2
-    }
+    })
   },
   {
     id: 'minimal',
     name: 'Clean Frosted Pill',
     description: 'Minimalist subtitle bar with smooth blur backdrop',
     badge: 'ELEGANT',
-    style: {
+    style: sanitizeStyle({
       fontFamily: 'Plus Jakarta Sans',
       fontSize: 24,
       fontWeight: '700',
@@ -115,6 +172,8 @@ export const PRESETS = [
       strokeWidth: 0,
       shadowColor: 'transparent',
       shadowBlur: 0,
+      shadowOffsetX: 0,
+      shadowOffsetY: 0,
       backgroundColor: 'rgba(15, 23, 42, 0.82)',
       backgroundPadding: 10,
       borderRadius: 14,
@@ -122,14 +181,14 @@ export const PRESETS = [
       positionX: 50,
       animationType: 'fade',
       maxWordsPerSegment: 4
-    }
+    })
   },
   {
     id: 'comic',
     name: 'Comic Marker',
     description: 'Hand-drawn marker style with pastel yellow pop',
     badge: 'CREATIVE',
-    style: {
+    style: sanitizeStyle({
       fontFamily: 'Bangers',
       fontSize: 36,
       fontWeight: '400',
@@ -140,6 +199,8 @@ export const PRESETS = [
       strokeWidth: 6,
       shadowColor: '#000000',
       shadowBlur: 6,
+      shadowOffsetX: 0,
+      shadowOffsetY: 4,
       backgroundColor: 'transparent',
       backgroundPadding: 0,
       borderRadius: 0,
@@ -147,6 +208,6 @@ export const PRESETS = [
       positionX: 50,
       animationType: 'bounce',
       maxWordsPerSegment: 3
-    }
+    })
   }
 ];

@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useEditorStore } from '../store/useEditorStore';
 import { measureAllSegmentsLayout } from '../engine/layoutMeasurer';
+import { sanitizeStyle } from '../engine/presets';
 
 const BACKEND_URL = 'http://127.0.0.1:8000';
 
@@ -79,7 +80,7 @@ export const ExportModal = () => {
           body: JSON.stringify({
             video_filename: videoFilename,
             segments: measuredSegments,
-            style,
+            style: sanitizeStyle(style),
             width: w,
             height: h,
             video_duration: duration || 10.0,

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { PRESETS } from '../engine/presets';
+import { PRESETS, sanitizeStyle } from '../engine/presets';
 
 const DEFAULT_PRESET = PRESETS[0];
 
@@ -284,14 +284,14 @@ export const useEditorStore = create((set, get) => ({
     if (!preset) return;
     set({
       activePresetId: presetId,
-      style: { ...preset.style }
+      style: sanitizeStyle(preset.style)
     });
   },
 
   updateStyle: (partialStyle) => {
     set((state) => ({
       activePresetId: 'custom',
-      style: { ...state.style, ...partialStyle }
+      style: sanitizeStyle({ ...state.style, ...partialStyle })
     }));
   },
 
@@ -313,7 +313,7 @@ export const useEditorStore = create((set, get) => ({
       currentTime: 0.0,
       segments: DEMO_SEGMENTS,
       activePresetId: 'hormozi',
-      style: { ...PRESETS[0].style }
+      style: sanitizeStyle(PRESETS[0].style)
     });
   }
 }));

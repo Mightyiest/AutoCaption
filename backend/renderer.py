@@ -3,6 +3,7 @@ import sys
 import subprocess
 import tempfile
 import time
+import json
 import imageio_ffmpeg
 
 FONTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "storage", "fonts")
@@ -17,23 +18,39 @@ FONT_NAME_MAP = {
     "Inter": "Montserrat Black"
 }
 
+def escape_ass_text(text: str) -> str:
+    if not text:
+        return ""
+    return (
+        str(text)
+        .replace("\\", "\\\\")
+        .replace("{", "\\{")
+        .replace("}", "\\}")
+    )
+
 def hex_to_ass_color(hex_str: str, alpha_hex: str = "00") -> str:
-    if not hex_str or hex_str == "transparent":
-        return f"&H{alpha_hex}FFFFFF&"
-    hex_str = hex_str.strip().lstrip("#")
-    if len(hex_str) == 3:
-        hex_str = "".join([c * 2 for c in hex_str])
-    elif len(hex_str) == 8:
-        r, g, b, a = hex_str[0:2], hex_str[2:4], hex_str[4:6], hex_str[6:8]
-        inv_a = f"{255 - int(a, 16):02X}"
-        return f"&H{inv_a}{b}{g}{r}&"
-        
-    if len(hex_str) != 6:
+    if not hex_str:
         return f"&H{alpha_hex}FFFFFF&"
         
-    r = hex_str[0:2].upper()
-    g = hex_str[2:4].upper()
-    b = hex_str[4:6].upper()
+    val = str(hex_str).strip()
+    if val.lower() == "transparent":
+        return "&HFF000000&"
+        
+    val = val.lstrip("#")
+    if len(val) == 3:
+        val = "".join([c * 2 for c in val])
+        
+    if len(val) == 8:
+        r, g, b, a = val[0:2], val[2:4], val[4:6], val[6:8]
+        ass_alpha = f"{255 - int(a, 16):02X}"
+        return f"&H{ass_alpha}{b.upper()}{g.upper()}{r.upper()}&"
+        
+    if len(val) != 6:
+        return f"&H{alpha_hex}FFFFFF&"
+        
+    r = val[0:2].upper()
+    g = val[2:4].upper()
+    b = val[4:6].upper()
     return f"&H{alpha_hex}{b}{g}{r}&"
 
 def format_ass_timestamp(seconds: float) -> str:
@@ -46,6 +63,60 @@ def format_ass_timestamp(seconds: float) -> str:
         centis = 99
     return f"{hrs}:{mins:02d}:{secs:02d}.{centis:02d}"
 
+def get_word_display_intervals(segment: dict) -> list:
+    words = segment.get("words", [])
+    if not words:
+        return []
+        
+    seg_start = float(segment.get("start", 0.0))
+    seg_end = float(segment.get("end", seg_start))
+    
+    intervals = []
+    for i, word in enumerate(words):
+        w_start = max(seg_start, float(word.get("start", seg_start)))
+        if i + 1 < len(words):
+            next_start = float(words[i + 1].get("start", w_start))
+            w_end = min(seg_end, next_start)
+        else:
+            w_end = seg_end
+            
+        if w_end <= w_start:
+            fallback_dur = max(0.2, float(word.get("end", w_start + 0.25)) - w_start)
+            w_end = w_start + fallback_dur
+            
+        w_end = min(seg_end, w_end)
+        if w_end <= w_start:
+            w_end = w_start + 0.2
+            
+        intervals.append({
+            "active_index": i,
+            "start": w_start,
+            "end": w_end
+        })
+        
+    return intervals
+
+def build_animation_tags(anim_type: str, duration_ms: int, org_x: int, org_y: int) -> str:
+    duration_ms = max(80, int(duration_ms))
+    
+    if anim_type == "pop":
+        t1 = min(60, int(duration_ms * 0.4))
+        t2 = min(130, duration_ms)
+        return f"\\fscx96\\fscy96\\t(0,{t1},\\fscx112\\fscy112)\\t({t1},{t2},\\fscx104\\fscy104)"
+        
+    if anim_type == "bounce":
+        t1 = min(60, int(duration_ms * 0.4))
+        t2 = min(130, duration_ms)
+        return f"\\org({org_x},{org_y})\\fscx96\\fscy96\\frz-1.5\\t(0,{t1},\\fscx110\\fscy110\\frz1.5)\\t({t1},{t2},\\fscx104\\fscy104\\frz0)"
+        
+    if anim_type == "karaoke":
+        return "\\fscx102\\fscy102"
+        
+    if anim_type == "fade":
+        return "\\alpha&H30&\\t(0,80,\\alpha&H00&)"
+        
+    return ""
+
 def generate_ass_subtitle(
     segments: list,
     style: dict,
@@ -54,43 +125,67 @@ def generate_ass_subtitle(
     preview_base_width: float = 310.0,
     preview_metrics: dict = None
 ) -> str:
-    base_w = preview_metrics.get("container_width", preview_base_width) if preview_metrics else preview_base_width
-    scale = video_width / float(base_w if base_w > 0 else 310.0)
+    metrics = preview_metrics or {}
+    base_w = float(metrics.get("container_width", preview_base_width) or 310.0)
+    base_h = float(metrics.get("container_height", 550.0) or 550.0)
     
-    raw_font_family = style.get("fontFamily", "Montserrat")
+    scale_x = video_width / base_w
+    scale_y = video_height / base_h
+    uniform_scale = min(scale_x, scale_y)
+    
+    raw_font_family = str(style.get("fontFamily", "Montserrat")).strip()
     font_family = FONT_NAME_MAP.get(raw_font_family, raw_font_family)
     
     raw_font_size = float(style.get("fontSize", 34))
-    ass_font_size = int(round(raw_font_size * scale))
+    ass_font_size = int(round(raw_font_size * uniform_scale))
     
     pri_col = hex_to_ass_color(style.get("primaryColor", "#FFFFFF"))
     act_col = hex_to_ass_color(style.get("activeColor", "#FFE600"))
     stroke_col = hex_to_ass_color(style.get("strokeColor", "#000000"))
-    shadow_col = hex_to_ass_color(style.get("shadowColor", "#000000"), alpha_hex="35")
     
-    # CSS paint-order: stroke fill exposes only 50% of the stroke outward
-    raw_stroke = float(style.get("strokeWidth", 6))
-    ass_stroke_width = max(0, int(round((raw_stroke / 2.0) * scale)))
-    
-    # Ambient soft-edge glow matching CSS text-shadow: 0 0 {shadowBlur}px (no directional shelf)
+    # Decoupled Shadow Styling
     raw_shadow = float(style.get("shadowBlur", 8))
-    ass_blur = max(0.0, round((raw_shadow / 8.0) * 3.0, 1)) if raw_shadow > 0 else 0.0
+    raw_shadow_col = style.get("shadowColor", "#000000")
+    shadow_col = hex_to_ass_color(raw_shadow_col, alpha_hex="30")
     
-    # Character tracking / letter spacing (-0.5px CSS -> -2px in 1080p ASS, +3px for Bebas Neue)
-    ass_spacing = 3 if raw_font_family == "Bebas Neue" else -2
+    # CSS paint-order: stroke fill exposes 50% outward
+    raw_stroke = float(style.get("strokeWidth", 6))
+    ass_stroke_width = max(1, int(round((raw_stroke / 2.0) * uniform_scale))) if raw_stroke > 0 else 0
+    
+    # Scaled Letter-spacing
+    css_letter_spacing = 1.0 if raw_font_family == "Bebas Neue" else -0.5
+    ass_spacing = int(round(css_letter_spacing * uniform_scale))
+    
+    # Shadow offset & blur
+    shadow_offset_y_css = float(style.get("shadowOffsetY", 4.0 if raw_shadow > 0 else 0.0))
+    shadow_offset_x_css = float(style.get("shadowOffsetX", 0.0))
+    shadow_offset_y = int(round(shadow_offset_y_css * scale_y))
+    shadow_offset_x = int(round(shadow_offset_x_css * scale_x))
+    ass_blur = max(0.0, round(raw_shadow * 0.35, 1)) if raw_shadow > 0 else 0.0
+    
+    has_shadow = raw_shadow > 0 and raw_shadow_col.lower() != "transparent"
     
     pos_x = int(round(video_width * (float(style.get("positionX", 50)) / 100.0)))
     pos_y = int(round(video_height * (float(style.get("positionY", 74)) / 100.0)))
-    fallback_line_h = int(round(ass_font_size * 1.05))
     
-    is_uppercase = style.get("textTransform", "uppercase") == "uppercase"
+    text_transform = str(style.get("textTransform", "uppercase")).strip().lower()
     anim_type = style.get("animationType", "pop")
     
-    # Suppress synthetic faux-bolding on fonts that are already native Black/ExtraBold
-    is_heavy_font = any(k in font_family.lower() for k in ["black", "extrabold", "bold", "russo", "bangers"])
+    # Suppress synthetic bold on native heavy weights
+    is_heavy_font = any(k in font_family.lower() for k in ["black", "extrabold", "bold", "russo", "bangers", "bebas"])
     ass_bold_flag = 0 if is_heavy_font else -1
     
-    # ASS Header
+    def transform_word(txt: str) -> str:
+        txt = (txt or "").strip()
+        if text_transform == "uppercase":
+            return txt.upper()
+        if text_transform == "capitalize":
+            return txt.capitalize()
+        if text_transform == "lowercase":
+            return txt.lower()
+        return txt
+
+    # Dual Styles: MainStyle (Layer 1/2) and ShadowStyle (Layer 0)
     ass_content = [
         "[Script Info]",
         "ScriptType: v4.00+",
@@ -100,14 +195,12 @@ def generate_ass_subtitle(
         "",
         "[V4+ Styles]",
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-        f"Style: BaseStyle,{font_family},{ass_font_size},{pri_col},{act_col},{stroke_col},{shadow_col},{ass_bold_flag},0,0,0,100,100,{ass_spacing},0,1,{ass_stroke_width},0,5,0,0,0,1",
+        f"Style: MainStyle,{font_family},{ass_font_size},{pri_col},{act_col},{stroke_col},&H00000000&,{ass_bold_flag},0,0,0,100,100,{ass_spacing},0,1,{ass_stroke_width},0,5,0,0,0,1",
+        f"Style: ShadowStyle,{font_family},{ass_font_size},{shadow_col},{shadow_col},&H00000000&,&H00000000&,{ass_bold_flag},0,0,0,100,100,{ass_spacing},0,1,0,0,5,0,0,0,1",
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
     ]
-    
-    shadow_tag = "\\xshad0\\yshad0" if raw_shadow > 0 else ""
-    blur_tag = f"\\blur{ass_blur}" if ass_blur > 0 else ""
 
     for seg in segments:
         words = seg.get("words", [])
@@ -115,76 +208,100 @@ def generate_ass_subtitle(
             continue
             
         n_words = len(words)
+        intervals = get_word_display_intervals(seg)
+        word_boxes = seg.get("measured_word_boxes")
         
-        # Use exact measured lines from previewer if provided
-        measured_lines = seg.get("measured_lines")
-        if measured_lines and isinstance(measured_lines, list) and len(measured_lines) > 0:
-            lines = []
-            for line_indices in measured_lines:
-                lw = [words[i] for i in line_indices if 0 <= i < n_words]
-                if lw:
-                    lines.append(lw)
-            if not lines:
-                lines = [words]
+        # Branch A: Exact Per-Word Bounding Box Placement (v2 Engine)
+        if word_boxes and isinstance(word_boxes, list) and len(word_boxes) == n_words:
+            for interval in intervals:
+                act_idx = interval["active_index"]
+                start_ts = format_ass_timestamp(interval["start"])
+                end_ts = format_ass_timestamp(interval["end"])
+                dur_ms = int((interval["end"] - interval["start"]) * 1000)
+                
+                for idx, word_data in enumerate(words):
+                    box = word_boxes[idx]
+                    wx = int(round(pos_x + (float(box.get("center_x", 0)) * scale_x)))
+                    wy = int(round(pos_y + (float(box.get("center_y", 0)) * scale_y)))
+                    
+                    is_active = (idx == act_idx)
+                    raw_txt = word_data.get("word", "")
+                    word_escaped = escape_ass_text(transform_word(raw_txt))
+                    
+                    anim_tag = build_animation_tags(anim_type, dur_ms, wx, wy) if is_active else ""
+                    
+                    # 1. Shadow Underlay (Layer 0)
+                    if has_shadow:
+                        sx = wx + shadow_offset_x
+                        sy = wy + shadow_offset_y
+                        blur_str = f"\\blur{ass_blur}" if ass_blur > 0 else ""
+                        shad_anim = anim_tag if is_active else ""
+                        ass_content.append(
+                            f"Dialogue: 0,{start_ts},{end_ts},ShadowStyle,,0,0,0,,{{\\an5\\pos({sx},{sy})\\fsp{ass_spacing}{blur_str}{shad_anim}}}{word_escaped}"
+                        )
+                        
+                    # 2. Main Foreground Word (Layer 1 for inactive, Layer 2 for active)
+                    layer = 2 if is_active else 1
+                    col_tag = f"\\c{act_col}" if is_active else f"\\c{pri_col}"
+                    ass_content.append(
+                        f"Dialogue: {layer},{start_ts},{end_ts},MainStyle,,0,0,0,,{{\\an5\\pos({wx},{wy})\\fsp{ass_spacing}{col_tag}{anim_tag}}}{word_escaped}"
+                    )
         else:
-            # Fallback line splitting
-            if n_words <= 3:
-                lines = [words]
+            # Branch B: Fallback Line-Offset Engine (v1 Backward-Compatibility)
+            measured_lines = seg.get("measured_lines")
+            if measured_lines and isinstance(measured_lines, list) and len(measured_lines) > 0:
+                lines = []
+                for line_indices in measured_lines:
+                    lw = [words[i] for i in line_indices if 0 <= i < n_words]
+                    if lw:
+                        lines.append(lw)
+                if not lines:
+                    lines = [words]
             else:
                 mid = (n_words + 1) // 2
-                lines = [words[:mid], words[mid:]]
+                lines = [words[:mid], words[mid:]] if n_words > 3 else [words]
 
-        num_lines = len(lines)
-        measured_offsets = seg.get("measured_line_offsets")
-        if measured_offsets and isinstance(measured_offsets, list) and len(measured_offsets) == num_lines:
-            y_offsets = [
-                int(round(pos_y + (measured_offsets[i] * scale)))
-                for i in range(num_lines)
-            ]
-        else:
-            y_offsets = [
-                int(round(pos_y + (i - (num_lines - 1) / 2.0) * fallback_line_h))
-                for i in range(num_lines)
-            ]
+            num_lines = len(lines)
+            measured_offsets = seg.get("measured_line_offsets")
+            if measured_offsets and isinstance(measured_offsets, list) and len(measured_offsets) == num_lines:
+                y_offsets = [int(round(pos_y + (measured_offsets[i] * scale_y))) for i in range(num_lines)]
+            else:
+                fallback_line_h = int(round(ass_font_size * 1.15))
+                y_offsets = [int(round(pos_y + (i - (num_lines - 1) / 2.0) * fallback_line_h)) for i in range(num_lines)]
 
-        for active_global_idx in range(n_words):
-            w_active = words[active_global_idx]
-            w_start = w_active.get("start", 0.0)
-            w_end = w_active.get("end", w_start + 0.3)
-            if w_end <= w_start:
-                w_end = w_start + 0.25
+            for interval in intervals:
+                act_idx = interval["active_index"]
+                start_ts = format_ass_timestamp(interval["start"])
+                end_ts = format_ass_timestamp(interval["end"])
+                dur_ms = int((interval["end"] - interval["start"]) * 1000)
 
-            start_ts = format_ass_timestamp(w_start)
-            end_ts = format_ass_timestamp(w_end)
+                global_counter = 0
+                for line_idx, line_words in enumerate(lines):
+                    line_y = y_offsets[line_idx]
+                    tokens = []
+                    for w in line_words:
+                        is_active = (global_counter == act_idx)
+                        global_counter += 1
 
-            global_word_counter = 0
-            for line_idx, line_words in enumerate(lines):
-                line_y = y_offsets[line_idx]
-                tokens = []
-                for w in line_words:
-                    is_active = (global_word_counter == active_global_idx)
-                    global_word_counter += 1
+                        raw_txt = w.get("word", "").strip()
+                        word_txt = escape_ass_text(transform_word(raw_txt))
 
-                    raw_txt = w.get("word", "").strip()
-                    word_txt = raw_txt.upper() if is_uppercase else raw_txt
+                        if is_active:
+                            anim_tag = build_animation_tags(anim_type, dur_ms, pos_x, line_y)
+                            tok = f"{{\\c{act_col}{anim_tag}}}{word_txt}{{\\rMainStyle}}"
+                        else:
+                            tok = f"{{\\c{pri_col}}}{word_txt}{{\\rMainStyle}}"
+                        tokens.append(tok)
 
-                    if is_active:
-                        if anim_type == "bounce":
-                            tok = f"{{\\c{act_col}\\fscx106\\fscy106\\frz-1.5\\t(0,70,\\frz1.5)\\t(70,140,\\frz0)}}{word_txt}{{\\rBaseStyle}}"
-                        elif anim_type == "karaoke":
-                            tok = f"{{\\c{act_col}\\fscx102\\fscy102}}{word_txt}{{\\rBaseStyle}}"
-                        elif anim_type == "fade":
-                            tok = f"{{\\c{act_col}}}{word_txt}{{\\rBaseStyle}}"
-                        else: # "pop"
-                            tok = f"{{\\c{act_col}\\fscx106\\fscy106\\t(0,80,\\fscx102\\fscy102)}}{word_txt}{{\\rBaseStyle}}"
-                    else:
-                        tok = f"{{\\c{pri_col}}}{word_txt}{{\\rBaseStyle}}"
-
-                    tokens.append(tok)
-
-                # 3 spaces between words replicate CSS margin: 0 4px in ASS video space
-                line_str = "   ".join(tokens)
-                ass_content.append(f"Dialogue: 0,{start_ts},{end_ts},BaseStyle,,0,0,0,,{{\\an5\\pos({pos_x},{line_y}){shadow_tag}{blur_tag}}}{line_str}")
+                    line_str = "   ".join(tokens)
+                    if has_shadow:
+                        blur_str = f"\\blur{ass_blur}" if ass_blur > 0 else ""
+                        ass_content.append(
+                            f"Dialogue: 0,{start_ts},{end_ts},ShadowStyle,,0,0,0,,{{\\an5\\pos({pos_x + shadow_offset_x},{line_y + shadow_offset_y})\\fsp{ass_spacing}{blur_str}}}{line_str}"
+                        )
+                    ass_content.append(
+                        f"Dialogue: 1,{start_ts},{end_ts},MainStyle,,0,0,0,,{{\\an5\\pos({pos_x},{line_y})\\fsp{ass_spacing}}}{line_str}"
+                    )
 
     return "\n".join(ass_content)
 
@@ -205,6 +322,10 @@ def render_captioned_video(
     os.makedirs(temp_dir, exist_ok=True)
     temp_ass_path = os.path.join(temp_dir, f"sub_{os.path.basename(output_video_path)}.ass")
     
+    # Save debug snapshot
+    debug_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "storage", "debug")
+    os.makedirs(debug_dir, exist_ok=True)
+    
     ass_text = generate_ass_subtitle(
         segments=segments,
         style=style,
@@ -215,6 +336,10 @@ def render_captioned_video(
     )
     
     with open(temp_ass_path, "w", encoding="utf-8") as f:
+        f.write(ass_text)
+        
+    debug_ass_path = os.path.join(debug_dir, f"render_{int(time.time())}.ass")
+    with open(debug_ass_path, "w", encoding="utf-8") as f:
         f.write(ass_text)
         
     try:
@@ -248,40 +373,36 @@ def render_captioned_video(
             universal_newlines=True
         )
         
-        for line in proc.stdout:
+        duration = 0.0
+        while True:
+            line = proc.stdout.readline()
+            if not line and proc.poll() is not None:
+                break
+            if not line:
+                continue
+                
             line = line.strip()
-            if line.startswith("out_time_us=") and progress_callback:
+            if line.startswith("out_time_ms="):
                 try:
-                    us = int(line.split("=")[1])
-                    current_sec = us / 1_000_000.0
-                    progress_callback(current_sec)
+                    out_ms = int(line.split("=")[1])
+                    if progress_callback and duration > 0:
+                        pct = min(99, int((out_ms / 1000000.0) / duration * 100))
+                        progress_callback(pct)
                 except Exception:
                     pass
-            elif line.startswith("progress=end") and progress_callback:
-                progress_callback(999999)
-                
+            elif line.startswith("duration="):
+                try:
+                    duration = float(line.split("=")[1])
+                except Exception:
+                    pass
+                    
         proc.wait()
-        
-        if proc.returncode != 0 and encoder_mode == "gpu_nvenc":
-            fallback_cmd = [
-                ffmpeg_exe,
-                "-y",
-                "-i", source_video_path,
-                "-vf", vf_filter,
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-crf", "18",
-                "-c:a", "copy",
-                "-progress", "pipe:1",
-                output_video_path
-            ]
-            fb_proc = subprocess.Popen(fallback_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-            fb_proc.wait()
-            if fb_proc.returncode != 0:
-                raise RuntimeError("FFmpeg render failed on both GPU and CPU fallback.")
-        elif proc.returncode != 0:
-            raise RuntimeError(f"FFmpeg render failed with exit code {proc.returncode}")
-
+        if proc.returncode != 0:
+            raise RuntimeError(f"FFmpeg process failed with exit code {proc.returncode}")
+            
+        if progress_callback:
+            progress_callback(100)
+            
     finally:
         if os.path.exists(temp_ass_path):
             try:

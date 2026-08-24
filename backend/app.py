@@ -234,6 +234,11 @@ def _do_render_task(job_id: str, req: RenderRequest, source_path: str, output_pa
 
 @app.post("/api/render")
 async def render_endpoint(req: RenderRequest, background_tasks: BackgroundTasks):
+    if not req.segments:
+        raise HTTPException(status_code=400, detail="No caption segments provided")
+    if (req.width or 0) <= 0 or (req.height or 0) <= 0:
+        raise HTTPException(status_code=400, detail="Invalid export dimensions")
+
     source_path = os.path.join(UPLOADS_DIR, req.video_filename)
     if not os.path.exists(source_path):
         demo_path = os.path.join(DEMO_DIR, req.video_filename)
@@ -245,6 +250,15 @@ async def render_endpoint(req: RenderRequest, background_tasks: BackgroundTasks)
     job_id = uuid.uuid4().hex[:12]
     export_filename = f"export_{job_id}.mp4"
     output_path = os.path.join(EXPORTS_DIR, export_filename)
+    
+    # Save debug payload snapshot
+    debug_dir = os.path.join(BASE_DIR, "storage", "debug")
+    os.makedirs(debug_dir, exist_ok=True)
+    try:
+        with open(os.path.join(debug_dir, f"render_{job_id}_payload.json"), "w", encoding="utf-8") as f:
+            f.write(req.model_dump_json(indent=2))
+    except Exception:
+        pass
     
     RENDER_JOBS[job_id] = {
         "job_id": job_id,
