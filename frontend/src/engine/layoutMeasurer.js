@@ -26,7 +26,7 @@ function getOrCreateHost() {
 }
 
 /**
- * Ensures specific font family and weight are fully loaded in DOM before measuring
+ * Ensures specific font family, weight, and style are fully loaded in DOM before measuring
  */
 export async function ensureFontLoaded(style = {}) {
   if (typeof document === 'undefined' || !document.fonts) return;
@@ -34,11 +34,14 @@ export async function ensureFontLoaded(style = {}) {
   try {
     const fontFamily = style.fontFamily || 'Montserrat';
     const fontWeight = style.fontWeight || '900';
+    const fontStyle = style.fontStyle === 'italic' ? 'italic' : 'normal';
     const fontSize = style.fontSize || 34;
+    
+    const fontSpec = `${fontStyle} ${fontWeight} ${fontSize}px "${fontFamily}"`;
     
     if (document.fonts.load) {
       await Promise.all([
-        document.fonts.load(`${fontWeight} ${fontSize}px "${fontFamily}"`, 'ABCDEFGHIKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'),
+        document.fonts.load(fontSpec, 'ABCDEFGHIKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'),
         document.fonts.ready
       ]);
     } else if (document.fonts.ready) {
@@ -54,32 +57,40 @@ export async function ensureFontLoaded(style = {}) {
  * relative to the outer caption container center.
  */
 export function measureSegmentLines(words, style = {}, previewWidth = 310) {
+  const containerWidthPercent = Math.max(40, Math.min(100, Number(style.containerWidthPercent ?? 90)));
+  const boxWidthPx = previewWidth * (containerWidthPercent / 100.0);
+  const paddingPx = Number(style.backgroundPadding ?? 0);
+  const wordMarginPx = Number(style.wordSpacing ?? 8) / 2.0;
+  const letterSpacingVal = Number(style.letterSpacing ?? (style.fontFamily === 'Bebas Neue' ? 1.0 : -0.5));
+  const lineHeightVal = Number(style.lineHeight ?? 1.15);
+  const fontWeightVal = String(style.fontWeight || '900');
+  const fontStyleVal = style.fontStyle === 'italic' ? 'italic' : 'normal';
+  const textAlignVal = style.textAlign || 'center';
+
   if (!words || words.length === 0) {
     return {
       lines: [[]],
       lineOffsets: [0],
       lineHeight: 0,
       wordBoxes: [],
-      outerRect: { width: previewWidth * 0.9, height: 40 }
+      outerRect: { width: boxWidthPx, height: 40 }
     };
   }
 
   const host = getOrCreateHost();
-  const boxWidthPx = previewWidth * 0.9;
-  const paddingPx = Number(style.backgroundPadding ?? 0);
 
   if (!host) {
     return {
       lines: [words.map((_, i) => i)],
       lineOffsets: [0],
-      lineHeight: (style.fontSize || 34) * 1.15,
+      lineHeight: (style.fontSize || 34) * lineHeightVal,
       wordBoxes: words.map((_, i) => ({
         index: i,
         line: 0,
         center_x: 0,
         center_y: 0,
         width: 50,
-        height: (style.fontSize || 34) * 1.15
+        height: (style.fontSize || 34) * lineHeightVal
       })),
       outerRect: { width: boxWidthPx, height: 40 }
     };
@@ -90,7 +101,7 @@ export function measureSegmentLines(words, style = {}, previewWidth = 310) {
   outer.style.width = `${Math.floor(boxWidthPx)}px`;
   outer.style.maxWidth = `${Math.floor(boxWidthPx)}px`;
   outer.style.boxSizing = 'border-box';
-  outer.style.textAlign = 'center';
+  outer.style.textAlign = textAlignVal;
   outer.style.padding = paddingPx > 0 ? `${paddingPx}px` : '0px';
 
   // 2. Replicate inner text container
@@ -98,11 +109,12 @@ export function measureSegmentLines(words, style = {}, previewWidth = 310) {
   inner.style.width = '100%';
   inner.style.fontFamily = style.fontFamily || 'Montserrat';
   inner.style.fontSize = `${style.fontSize || 34}px`;
-  inner.style.fontWeight = style.fontWeight || '900';
-  inner.style.lineHeight = '1.15';
+  inner.style.fontWeight = fontWeightVal;
+  inner.style.fontStyle = fontStyleVal;
+  inner.style.lineHeight = String(lineHeightVal);
   inner.style.textTransform = style.textTransform || 'uppercase';
-  inner.style.letterSpacing = style.fontFamily === 'Bebas Neue' ? '1px' : '-0.5px';
-  inner.style.textAlign = 'center';
+  inner.style.letterSpacing = `${letterSpacingVal}px`;
+  inner.style.textAlign = textAlignVal;
   inner.style.whiteSpace = 'normal';
   inner.style.boxSizing = 'border-box';
 
@@ -111,10 +123,13 @@ export function measureSegmentLines(words, style = {}, previewWidth = 310) {
 
   const spans = words.map((w, idx) => {
     const span = document.createElement('span');
-    span.textContent = w.word;
+    span.textContent = (w.word || '').trim();
     span.dataset.idx = idx;
     span.style.display = 'inline-block';
-    span.style.margin = '0 4px';
+    span.style.margin = `0 ${wordMarginPx}px`;
+    span.style.letterSpacing = `${letterSpacingVal}px`;
+    span.style.fontStyle = fontStyleVal;
+    span.style.fontWeight = fontWeightVal;
     span.style.boxSizing = 'border-box';
     span.style.paintOrder = 'stroke fill';
     span.style.transformOrigin = 'center center';
@@ -197,7 +212,7 @@ export function measureSegmentLines(words, style = {}, previewWidth = 310) {
         const lHeight = l.infos.reduce((s, inf) => s + inf.rect.height, 0) / l.infos.length;
         return sum + lHeight;
       }, 0) / linesGroup.length
-    : (style.fontSize || 34) * 1.15;
+    : (style.fontSize || 34) * lineHeightVal;
 
   host.removeChild(outer);
 
@@ -220,7 +235,8 @@ export function measureSegmentLines(words, style = {}, previewWidth = 310) {
 export async function measureAllSegmentsLayout(segments, style, previewWidth, previewHeight) {
   await ensureFontLoaded(style);
 
-  const boxWidthPx = previewWidth * 0.9;
+  const containerWidthPercent = Math.max(40, Math.min(100, Number(style.containerWidthPercent ?? 90)));
+  const boxWidthPx = previewWidth * (containerWidthPercent / 100.0);
   let totalOuterHeight = 0;
 
   const measuredSegments = (segments || []).map((seg) => {
@@ -251,7 +267,13 @@ export async function measureAllSegmentsLayout(segments, style, previewWidth, pr
     shadow_offset_x: Number(style.shadowOffsetX ?? 0),
     shadow_offset_y: Number(style.shadowOffsetY ?? 4),
     position_x: Number(style.positionX ?? 50),
-    position_y: Number(style.positionY ?? 74)
+    position_y: Number(style.positionY ?? 74),
+    word_spacing: Number(style.wordSpacing ?? 8),
+    letter_spacing: Number(style.letterSpacing ?? 0),
+    line_height: Number(style.lineHeight ?? 1.15),
+    text_align: style.textAlign || 'center',
+    font_weight: style.fontWeight || '900',
+    font_style: style.fontStyle || 'normal'
   };
 
   return {
@@ -271,6 +293,7 @@ export function captureAndLogLayoutMetrics(segment, style, previewWidth, preview
   const scaledFontSize = Math.round((style.fontSize || 34) * scale);
   const strokeWidth = Number(style.strokeWidth ?? 0);
   const scaledStrokeWidth = Math.round((strokeWidth / 2) * scale);
+  const containerWidthPercent = Math.max(40, Math.min(100, Number(style.containerWidthPercent ?? 90)));
 
   const lineTexts = lines.map((lineIndices) =>
     lineIndices.map((i) => segment.words[i]?.word || '').join(' ')
@@ -279,12 +302,13 @@ export function captureAndLogLayoutMetrics(segment, style, previewWidth, preview
   const logData = {
     segment_text: segment.text,
     preview_viewport: `${previewWidth}px × ${previewHeight}px`,
-    caption_box_width: `${(previewWidth * 0.9).toFixed(1)}px (90% width)`,
+    caption_box_width: `${(previewWidth * (containerWidthPercent / 100.0)).toFixed(1)}px (${containerWidthPercent}% width)`,
     caption_outer_rect: `${outerRect.width}px × ${outerRect.height}px`,
-    font_style: `${style.fontSize}px ${style.fontFamily} (Weight: ${style.fontWeight}, Casing: ${style.textTransform})`,
+    font_style: `${style.fontSize}px ${style.fontFamily} (Weight: ${style.fontWeight}, Style: ${style.fontStyle || 'normal'}, Casing: ${style.textTransform}, Align: ${style.textAlign || 'center'})`,
+    spacing: `WordSpacing: ${style.wordSpacing ?? 8}px, LetterSpacing: ${style.letterSpacing ?? 0}px, Leading: ${style.lineHeight ?? 1.15}`,
     position: `X: ${style.positionX}%, Y: ${style.positionY}%`,
     stroke: `${strokeWidth}px ${style.strokeColor}`,
-    shadow: `Blur: ${style.shadowBlur}px ${style.shadowColor}`,
+    shadow: `Blur: ${style.shadowBlur}px ${style.shadowColor} (Offset: ${style.shadowOffsetX ?? 0}, ${style.shadowOffsetY ?? 4})`,
     measured_lines: lineTexts,
     measured_word_boxes: wordBoxes,
     export_scaling: {

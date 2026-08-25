@@ -77,17 +77,24 @@ export const useEditorStore = create((set, get) => ({
   activePresetId: DEFAULT_PRESET.id,
 
   // UI State
-  isTranscribing: false,
-  transcribeProgress: '',
-  isRendering: false,
-  exportProgress: 0,
-  exportResult: null,
   backendAvailable: false,
   isUploadModalOpen: false,
   isExportModalOpen: false,
+  isSettingsModalOpen: false,
+
+  // AI Model Manager State
+  modelsData: { cache_dir: '', models: [] },
+  modelsLoading: false,
+  modelDownloadStates: {},
 
   // Actions
   setBackendAvailable: (available) => set({ backendAvailable: available }),
+  setSettingsModalOpen: (isOpen) => {
+    set({ isSettingsModalOpen: isOpen });
+    if (isOpen) {
+      get().fetchModelsStatus();
+    }
+  },
   
   setVideo: (file, url, filename, duration = 0) =>
     set({
@@ -304,6 +311,98 @@ export const useEditorStore = create((set, get) => ({
   setExportResult: (result) => set({ exportResult: result }),
   setUploadModalOpen: (isOpen) => set({ isUploadModalOpen: isOpen }),
   setExportModalOpen: (isOpen) => set({ isExportModalOpen: isOpen }),
+
+  fetchModelsStatus: async () => {
+    try {
+      set({ modelsLoading: true });
+      const res = await fetch('http://127.0.0.1:8000/api/models/status');
+      if (res.ok) {
+        const data = await res.json();
+        set({ modelsData: data });
+      }
+    } catch (err) {
+      console.error('Failed to fetch model status:', err);
+    } finally {
+      set({ modelsLoading: false });
+    }
+  },
+
+  downloadModel: async (modelName) => {
+    try {
+      set((state) => ({
+        modelDownloadStates: {
+          ...state.modelDownloadStates,
+          [modelName]: { status: 'downloading', percent: 2, downloaded_mb: '0.0 MB', error: null }
+        }
+      }));
+
+      const res = await fetch('http://127.0.0.1:8000/api/models/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model_name: modelName })
+      });
+
+      if (!res.ok) {
+        throw new Error('Download request failed');
+      }
+
+      // Fast responsive polling (500ms) for progress bar and percentage updates
+      const pollInterval = setInterval(async () => {
+        try {
+          const pollRes = await fetch(`http://127.0.0.1:8000/api/models/download-progress/${modelName}`);
+          if (pollRes.ok) {
+            const statusData = await pollRes.json();
+            set((state) => ({
+              modelDownloadStates: {
+                ...state.modelDownloadStates,
+                [modelName]: statusData
+              }
+            }));
+
+            if (statusData.status === 'completed' || statusData.status === 'error') {
+              clearInterval(pollInterval);
+              get().fetchModelsStatus();
+            }
+          }
+        } catch {
+          // ignore poll errors
+        }
+      }, 500);
+    } catch (err) {
+      set((state) => ({
+        modelDownloadStates: {
+          ...state.modelDownloadStates,
+          [modelName]: { status: 'error', percent: 0, error: err.message }
+        }
+      }));
+    }
+  },
+
+  deleteModel: async (modelName) => {
+    try {
+      set({ modelsLoading: true });
+      const res = await fetch(`http://127.0.0.1:8000/api/models/${modelName}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        set({
+          modelsData: {
+            cache_dir: data.cache_dir,
+            models: data.models
+          },
+          modelDownloadStates: {
+            ...get().modelDownloadStates,
+            [modelName]: { status: 'idle', error: null }
+          }
+        });
+      }
+    } catch (err) {
+      console.error('Failed to delete model:', err);
+    } finally {
+      set({ modelsLoading: false });
+    }
+  },
 
   loadDemoData: () => {
     set({

@@ -67,14 +67,20 @@ export const VideoPlayer = () => {
     };
   }, [seekRequestTime, segments]);
 
-  // Capture and log DOM layout metrics when active segment or style changes
+  // Debounced layout measurement for active segment (only triggers on actual geometry changes, never on color changes)
+  const geometryKey = activeSegment
+    ? `${activeSegment.id}_${style.fontFamily}_${style.fontSize}_${style.fontWeight}_${style.wordSpacing}_${style.letterSpacing}_${style.lineHeight}_${style.containerWidthPercent}_${style.textTransform}_${style.textAlign}`
+    : null;
+
   useEffect(() => {
-    if (activeSegment) {
+    if (!activeSegment || !geometryKey) return;
+    const timer = setTimeout(() => {
       const w = containerRef.current?.clientWidth || 310;
       const h = containerRef.current?.clientHeight || 550;
       captureAndLogLayoutMetrics(activeSegment, style, w, h);
-    }
-  }, [activeSegment?.id, style]);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [geometryKey]);
 
   // Sync video duration when media loads
   const handleMediaLoaded = () => {
@@ -396,86 +402,140 @@ export const VideoPlayer = () => {
           )}
 
           {/* Dynamic Animated Caption Overlay */}
-          {activeSegment && (
-            <div
-              ref={captionBoxRef}
-              className="caption-drag-handle"
-              onMouseDown={handleMouseDown}
-              style={{
-                position: 'absolute',
-                top: `${style.positionY}%`,
-                left: `${style.positionX}%`,
-                transform: 'translate(-50%, -50%)',
-                width: '90%',
-                textAlign: 'center',
-                zIndex: 20,
-                backgroundColor: style.backgroundColor || 'transparent',
-                padding: style.backgroundPadding ? `${style.backgroundPadding}px` : '0px',
-                borderRadius: style.borderRadius ? `${style.borderRadius}px` : '0px',
-                backdropFilter: style.backgroundColor && style.backgroundColor !== 'transparent' ? 'blur(8px)' : 'none',
-                cursor: isDraggingCaption ? 'grabbing' : 'grab'
-              }}
-            >
-              {/* Drag Handle Tag */}
-              <div style={{
-                position: 'absolute',
-                top: '-16px',
-                left: '50%',
-                transform: 'translateX(-50%)',
-                background: 'rgba(15, 23, 42, 0.85)',
-                padding: '1px 7px',
-                borderRadius: '999px',
-                fontSize: '9px',
-                color: 'var(--text-muted)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                pointerEvents: 'none'
-              }}>
-                <MoveVertical size={10} /> {Math.round(style.positionY)}%
-              </div>
+          {activeSegment && (() => {
+            const isBgActive = style.backgroundEnabled || (style.backgroundColor && style.backgroundColor !== 'transparent');
+            let bgCss = 'transparent';
+            if (isBgActive) {
+              const hex = style.backgroundColor || '#0F172A';
+              const opacity = (style.backgroundOpacity ?? 85) / 100;
+              if (hex.startsWith('#') && hex.length === 7) {
+                const r = parseInt(hex.slice(1, 3), 16);
+                const g = parseInt(hex.slice(3, 5), 16);
+                const b = parseInt(hex.slice(5, 7), 16);
+                bgCss = `rgba(${r}, ${g}, ${b}, ${opacity})`;
+              } else {
+                bgCss = hex;
+              }
+            }
 
-              {/* Word Tokens */}
-              <div style={{
-                fontFamily: style.fontFamily,
-                fontSize: `${style.fontSize}px`,
-                fontWeight: style.fontWeight,
-                lineHeight: 1.15,
-                textTransform: style.textTransform,
-                letterSpacing: style.fontFamily === 'Bebas Neue' ? '1px' : '-0.5px',
-                paintOrder: 'stroke fill'
-              }}>
-                {activeSegment.words.map((w, idx) => {
-                  const isActive = idx === activeWordIndex;
-                  const animClass = isActive ? `anim-${style.animationType}` : '';
-                  
-                  return (
-                    <span
-                      key={w.id || idx}
-                      className={`word-token ${isActive ? 'is-active' : ''} ${animClass}`}
-                      style={{
-                        color: isActive ? style.activeColor : style.primaryColor,
-                        // Halve stroke width to match CSS paint-order: stroke fill behavior (50% outward)
-                        // This ensures preview matches final render output
-                        WebkitTextStroke: style.strokeWidth ? `${(style.strokeWidth / 2)}px ${style.strokeColor}` : 'none',
-                        // Use proper shadow format with blur radius
-                        textShadow: style.shadowBlur 
-                          ? `0 4px ${style.shadowBlur}px ${style.shadowColor}` 
-                          : 'none',
-                        display: 'inline-block',
-                        margin: '0 4px',
-                        paintOrder: 'stroke fill',
-                        strokeLinejoin: 'round',
-                        WebkitTextStrokeLinejoin: 'round'
-                      }}
-                    >
-                      {w.word}
-                    </span>
-                  );
-                })}
+            const padX = style.backgroundPaddingX ?? (style.backgroundPadding ?? 16);
+            const padY = style.backgroundPaddingY ?? (style.backgroundPadding ?? 8);
+            const radius = style.borderRadius ?? 12;
+            const borderCss = (isBgActive && style.backgroundBorderEnabled) 
+              ? `${style.backgroundBorderWidth ?? 2}px solid ${style.backgroundBorderColor || 'rgba(255,255,255,0.25)'}` 
+              : 'none';
+            const blurCss = (isBgActive && (style.backgroundBlur ?? 12) > 0) 
+              ? `blur(${style.backgroundBlur ?? 12}px)` 
+              : 'none';
+
+            // Combined Text Shadow (Shadow + Glow)
+            const shadowParts = [];
+            if (style.shadowEnabled !== false && Number(style.shadowBlur ?? 8) > 0 && style.shadowColor !== 'transparent') {
+              const offX = Number(style.shadowOffsetX ?? 0);
+              const offY = Number(style.shadowOffsetY ?? 4);
+              const blur = Number(style.shadowBlur ?? 8);
+              const col = style.shadowColor || '#000000';
+              shadowParts.push(`${offX}px ${offY}px ${blur}px ${col}`);
+            }
+            if (style.glowEnabled && Number(style.glowBlur ?? 14) > 0 && style.glowColor && style.glowColor !== 'transparent') {
+              const glowBlur = Number(style.glowBlur ?? 14);
+              const glowCol = style.glowColor || '#38BDF8';
+              shadowParts.push(`0 0 ${glowBlur}px ${glowCol}`);
+              shadowParts.push(`0 0 ${Math.round(glowBlur * 1.6)}px ${glowCol}`);
+            }
+            const combinedTextShadow = shadowParts.join(', ') || 'none';
+
+            // Stroke
+            const isStrokeActive = (style.strokeEnabled !== false) && Number(style.strokeWidth ?? 6) > 0;
+            const strokeCss = isStrokeActive ? `${Number(style.strokeWidth ?? 6) / 2}px ${style.strokeColor || '#000000'}` : 'none';
+
+            return (
+              <div
+                ref={captionBoxRef}
+                className="caption-drag-handle"
+                onMouseDown={handleMouseDown}
+                style={{
+                  position: 'absolute',
+                  top: `${style.positionY}%`,
+                  left: `${style.positionX}%`,
+                  transform: 'translate(-50%, -50%)',
+                  width: isBgActive ? 'auto' : `${style.containerWidthPercent || 90}%`,
+                  maxWidth: `${style.containerWidthPercent || 90}%`,
+                  textAlign: style.textAlign || 'center',
+                  zIndex: 20,
+                  backgroundColor: bgCss,
+                  padding: isBgActive ? `${padY}px ${padX}px` : '0px',
+                  borderRadius: isBgActive ? `${radius}px` : '0px',
+                  border: borderCss,
+                  backdropFilter: blurCss,
+                  WebkitBackdropFilter: blurCss,
+                  cursor: isDraggingCaption ? 'grabbing' : 'grab',
+                  display: isBgActive ? 'inline-block' : 'block'
+                }}
+              >
+                {/* Drag Handle Tag */}
+                <div style={{
+                  position: 'absolute',
+                  top: '-16px',
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  background: 'rgba(15, 23, 42, 0.85)',
+                  padding: '1px 7px',
+                  borderRadius: '999px',
+                  fontSize: '9px',
+                  color: 'var(--text-muted)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  pointerEvents: 'none',
+                  whiteSpace: 'nowrap'
+                }}>
+                  <MoveVertical size={10} /> {Math.round(style.positionY)}%
+                </div>
+
+                {/* Word Tokens */}
+                <div style={{
+                  fontFamily: style.fontFamily,
+                  fontSize: `${style.fontSize}px`,
+                  fontWeight: style.fontWeight || '900',
+                  fontStyle: style.fontStyle || 'normal',
+                  lineHeight: style.lineHeight || 1.02,
+                  textTransform: style.textTransform,
+                  letterSpacing: `${style.letterSpacing ?? (style.fontFamily === 'Bebas Neue' ? 1.0 : -0.5)}px`,
+                  textAlign: style.textAlign || 'center',
+                  paintOrder: 'stroke fill'
+                }}>
+                  {activeSegment.words.map((w, idx) => {
+                    const isActive = idx === activeWordIndex;
+                    const animClass = isActive ? `anim-${style.animationType}` : '';
+                    const wordMargin = (Number(style.wordSpacing ?? 8) / 2.0);
+                    
+                    return (
+                      <span
+                        key={w.id || idx}
+                        className={`word-token ${isActive ? 'is-active' : ''} ${animClass}`}
+                        style={{
+                          color: isActive ? style.activeColor : style.primaryColor,
+                          WebkitTextStroke: strokeCss,
+                          textShadow: combinedTextShadow,
+                          display: 'inline-block',
+                          margin: `0 ${wordMargin}px`,
+                          letterSpacing: `${style.letterSpacing ?? (style.fontFamily === 'Bebas Neue' ? 1.0 : -0.5)}px`,
+                          fontStyle: style.fontStyle || 'normal',
+                          fontWeight: style.fontWeight || '900',
+                          paintOrder: 'stroke fill',
+                          strokeLinejoin: 'round',
+                          WebkitTextStrokeLinejoin: 'round'
+                        }}
+                      >
+                        {(w.word || '').trim()}
+                      </span>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       </div>
 

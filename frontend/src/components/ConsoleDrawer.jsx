@@ -99,14 +99,18 @@ export const ConsoleDrawer = () => {
           {/* CPU Pill */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
             <Cpu size={13} color="var(--accent-primary)" />
-            <span>CPU: <strong style={{ color: '#FFF' }}>{stats ? `${stats.cpu_percent}%` : '--'}</strong></span>
+            <span>CPU: <strong style={{ color: '#FFF' }}>
+              {stats ? `${stats.cpu_percent ?? stats.cpu_usage_percent ?? 0}%` : '--'}
+            </strong></span>
           </div>
 
           {/* RAM Pill */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
             <HardDrive size={13} color="#F59E0B" />
             <span>RAM: <strong style={{ color: '#FFF' }}>
-              {stats ? `${stats.ram_used_gb} / ${stats.ram_total_gb} GB (${stats.ram_percent}%)` : '--'}
+              {stats && stats.ram_total_gb ? (
+                `${stats.ram_used_gb ?? (stats.ram_available_gb !== undefined ? (stats.ram_total_gb - stats.ram_available_gb).toFixed(1) : '0')} / ${stats.ram_total_gb} GB (${stats.ram_percent ?? stats.ram_usage_percent ?? 0}%)`
+              ) : '--'}
             </strong></span>
           </div>
 

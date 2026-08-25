@@ -110,7 +110,65 @@ render_captioned_video(
     preview_metrics={"container_width": 310, "container_height": 550}
 )
 
+# Test 3: Spacing, Leading & Typography Test (Custom Tracking, Word Gap, Leading, Italic)
+out_vid_3 = os.path.abspath("scratch/test_typography_spacing.mp4")
+out_png_3 = os.path.abspath("scratch/test_typography_spacing.png")
+
+segments_3 = [
+    {
+        "id": "seg-3",
+        "start": 0.0,
+        "end": 3.0,
+        "text": "EXPANDED WORD SPACING AND LEADING",
+        "words": [
+            {"word": "EXPANDED", "start": 0.0, "end": 0.75},
+            {"word": "WORD", "start": 0.75, "end": 1.5},
+            {"word": "SPACING", "start": 1.5, "end": 2.25},
+            {"word": "LEADING", "start": 2.25, "end": 3.0}
+        ],
+        "measured_word_boxes": [
+            {"index": 0, "line": 0, "center_x": -60.0, "center_y": -35.0, "width": 100.0, "height": 38.0},
+            {"index": 1, "line": 0, "center_x": 60.0, "center_y": -35.0, "width": 60.0, "height": 38.0},
+            {"index": 2, "line": 1, "center_x": -55.0, "center_y": 35.0, "width": 90.0, "height": 38.0},
+            {"index": 3, "line": 1, "center_x": 55.0, "center_y": 35.0, "width": 90.0, "height": 38.0}
+        ]
+    }
+]
+
+style_typography = {
+    "fontFamily": "Outfit",
+    "fontSize": 32,
+    "fontWeight": "800",
+    "fontStyle": "italic",
+    "wordSpacing": 16,
+    "letterSpacing": 3.0,
+    "lineHeight": 1.45,
+    "primaryColor": "#FFFFFF",
+    "activeColor": "#00FF66",
+    "strokeColor": "#000000",
+    "strokeWidth": 6,
+    "shadowColor": "#000000",
+    "shadowBlur": 10,
+    "shadowOffsetX": 2,
+    "shadowOffsetY": 5,
+    "positionX": 50,
+    "positionY": 70,
+    "textTransform": "uppercase",
+    "animationType": "pop"
+}
+
+render_captioned_video(
+    source_video_path=source_vid,
+    output_video_path=out_vid_3,
+    segments=segments_3,
+    style=style_typography,
+    video_width=1080,
+    video_height=1920,
+    preview_metrics={"container_width": 310, "container_height": 550}
+)
+
 ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
 subprocess.run([ffmpeg_exe, "-y", "-ss", "1.5", "-i", out_vid_1, "-vframes", "1", out_png_1], check=True)
 subprocess.run([ffmpeg_exe, "-y", "-ss", "1.5", "-i", out_vid_2, "-vframes", "1", out_png_2], check=True)
-print("Saved verification frames:", out_png_1, out_png_2)
+subprocess.run([ffmpeg_exe, "-y", "-ss", "1.5", "-i", out_vid_3, "-vframes", "1", out_png_3], check=True)
+print("Saved verification frames:", out_png_1, out_png_2, out_png_3)

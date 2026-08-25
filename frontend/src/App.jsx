@@ -7,6 +7,7 @@ import { HorizontalTimeline } from './components/HorizontalTimeline';
 import { ConsoleDrawer } from './components/ConsoleDrawer';
 import { UploadModal } from './components/UploadModal';
 import { ExportModal } from './components/ExportModal';
+import { SettingsModal } from './components/SettingsModal';
 import { useEditorStore } from './store/useEditorStore';
 
 const BACKEND_URL = 'http://127.0.0.1:8000';
@@ -139,6 +140,7 @@ export function App() {
       {/* Modals */}
       <UploadModal />
       <ExportModal />
+      <SettingsModal />
     </div>
   );
 }

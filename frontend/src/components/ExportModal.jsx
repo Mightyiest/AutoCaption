@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   Download, 
   X, 
@@ -12,7 +12,7 @@ import {
   ExternalLink,
   Zap,
   Cpu,
-  Palette
+  Ban
 } from 'lucide-react';
 import { useEditorStore } from '../store/useEditorStore';
 import { measureAllSegmentsLayout } from '../engine/layoutMeasurer';
@@ -36,15 +36,32 @@ export const ExportModal = () => {
     aspectRatio === '9:16' ? '1080x1920' : aspectRatio === '1:1' ? '1080x1080' : '1920x1080'
   );
   const [encoderMode, setEncoderMode] = useState('cpu'); // 'cpu' (Option A) | 'gpu_nvenc' (Option B)
-  const [useCanvasRenderer, setUseCanvasRenderer] = useState(false); // CapCut-style exact preview matching
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [exportResultUrl, setExportResultUrl] = useState(null);
   const [errorMessage, setErrorMessage] = useState(null);
 
-  // Reset all export state every time the modal opens so user can re-export
-  React.useEffect(() => {
+  const pollIntervalRef = useRef(null);
+  const activeJobIdRef = useRef(null);
+
+  // Clear polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+    };
+  }, []);
+
+  // Reset export state when modal opens
+  useEffect(() => {
     if (isExportModalOpen) {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+      activeJobIdRef.current = null;
       setIsExporting(false);
       setExportProgress(0);
       setExportResultUrl(null);
@@ -54,7 +71,44 @@ export const ExportModal = () => {
 
   if (!isExportModalOpen) return null;
 
+  const handleCancelExport = async () => {
+    const currentJobId = activeJobIdRef.current;
+    
+    // Clear poller immediately
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+
+    if (currentJobId && backendAvailable) {
+      try {
+        await fetch(`${BACKEND_URL}/api/render-cancel/${currentJobId}`, {
+          method: 'POST'
+        });
+      } catch (err) {
+        console.warn('Cancel render request error:', err);
+      }
+    }
+
+    activeJobIdRef.current = null;
+    setIsExporting(false);
+    setExportProgress(0);
+    setErrorMessage('Export cancelled by user.');
+  };
+
+  const handleClose = () => {
+    if (isExporting) {
+      handleCancelExport();
+    }
+    setExportModalOpen(false);
+  };
+
   const handleExport = async () => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+
     setIsExporting(true);
     setExportProgress(5);
     setErrorMessage(null);
@@ -87,7 +141,6 @@ export const ExportModal = () => {
             height: h,
             video_duration: duration || 10.0,
             encoder_mode: encoderMode,
-            use_canvas_renderer: useCanvasRenderer,
             preview_metrics
           })
         });
@@ -99,23 +152,42 @@ export const ExportModal = () => {
 
         const data = await response.json();
         const jobId = data.job_id;
+        activeJobIdRef.current = jobId;
 
-        // Poll progress
-        const pollInterval = setInterval(async () => {
+        // Poll progress with ref tracking
+        pollIntervalRef.current = setInterval(async () => {
           try {
             const progRes = await fetch(`${BACKEND_URL}/api/render-progress/${jobId}`);
             if (progRes.ok) {
               const progData = await progRes.json();
-              setExportProgress(progData.percent || 0);
+              
+              if (progData.status === 'cancelled') {
+                if (pollIntervalRef.current) {
+                  clearInterval(pollIntervalRef.current);
+                  pollIntervalRef.current = null;
+                }
+                setIsExporting(false);
+                setExportProgress(0);
+                return;
+              }
+
+              const pct = typeof progData.percent === 'number' ? progData.percent : 0;
+              setExportProgress((prev) => Math.max(prev, pct));
 
               if (progData.status === 'done') {
-                clearInterval(pollInterval);
+                if (pollIntervalRef.current) {
+                  clearInterval(pollIntervalRef.current);
+                  pollIntervalRef.current = null;
+                }
                 setExportProgress(100);
                 setIsExporting(false);
                 const fullUrl = `${BACKEND_URL}${progData.download_url}`;
                 setExportResultUrl(fullUrl);
               } else if (progData.status === 'error') {
-                clearInterval(pollInterval);
+                if (pollIntervalRef.current) {
+                  clearInterval(pollIntervalRef.current);
+                  pollIntervalRef.current = null;
+                }
                 setIsExporting(false);
                 setErrorMessage(progData.error || 'FFmpeg render error');
               }
@@ -123,7 +195,7 @@ export const ExportModal = () => {
           } catch (err) {
             // Polling error
           }
-        }, 350);
+        }, 300);
       } else {
         // Fallback simulation
         for (let p = 10; p <= 100; p += 20) {
@@ -160,7 +232,7 @@ export const ExportModal = () => {
     }}>
       <div className="glass-panel" style={{
         width: '100%',
-        maxWidth: '540px',
+        maxWidth: '520px',
         borderRadius: '20px',
         overflow: 'hidden',
         boxShadow: '0 25px 60px rgba(0,0,0,0.8)',
@@ -180,8 +252,9 @@ export const ExportModal = () => {
             <span style={{ fontSize: '15px', fontWeight: '800' }}>Export Subtitled Video</span>
           </div>
           <button
-            onClick={() => setExportModalOpen(false)}
+            onClick={handleClose}
             style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+            title={isExporting ? 'Cancel & Close' : 'Close'}
           >
             <X size={18} />
           </button>
@@ -189,43 +262,6 @@ export const ExportModal = () => {
 
         {/* Body */}
         <div style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          {/* Canvas Renderer Toggle - CapCut-style exact preview matching */}
-          <div>
-            <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-muted)', display: 'block', marginBottom: '8px' }}>
-              Rendering Quality Mode
-            </label>
-
-            <div
-              onClick={() => !isExporting && setUseCanvasRenderer(!useCanvasRenderer)}
-              className="glass-card"
-              style={{
-                padding: '12px',
-                borderRadius: '10px',
-                cursor: isExporting ? 'not-allowed' : 'pointer',
-                border: useCanvasRenderer ? '2px solid #FBBF24' : '1px solid var(--border-color)',
-                background: useCanvasRenderer ? 'rgba(251, 191, 36, 0.12)' : 'rgba(31, 41, 55, 0.5)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between'
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <Palette size={18} color={useCanvasRenderer ? '#FBBF24' : 'var(--text-muted)'} />
-                <div>
-                  <div style={{ fontSize: '12px', fontWeight: '800', color: useCanvasRenderer ? '#FBBF24' : '#FFF' }}>
-                    {useCanvasRenderer ? 'CapCut-Style Exact Match (Canvas)' : 'Fast ASS Subtitle'}
-                  </div>
-                  <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-                    {useCanvasRenderer 
-                      ? 'Pixel-perfect preview match using Pillow rendering (slower)' 
-                      : 'Fast libass filter (~1s render), minor stroke/shadow differences'}
-                  </div>
-                </div>
-              </div>
-              {useCanvasRenderer && <CheckCircle2 size={18} color="#FBBF24" />}
-            </div>
-          </div>
-
           {/* Encoder Selection: Option A vs Option B */}
           <div>
             <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-muted)', display: 'block', marginBottom: '8px' }}>
@@ -249,19 +285,17 @@ export const ExportModal = () => {
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '800', color: '#FFF' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: '800' }}>
                     <Cpu size={15} color="var(--accent-primary)" />
-                    <span>Option A (CPU)</span>
+                    <span>Option A</span>
                   </div>
                   {encoderMode === 'cpu' && <CheckCircle2 size={15} color="var(--accent-primary)" />}
                 </div>
-                <span style={{ fontSize: '11px', color: '#38BDF8', fontWeight: '700' }}>RECOMMENDED</span>
-                <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-                  100% fail-proof, ultra-fast `libx264` (~1s render), zero GPU session limits.
-                </span>
+                <div style={{ fontSize: '12px', fontWeight: '700', color: '#FFF' }}>CPU Ultra-Fast</div>
+                <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>libx264 Ultrafast • Compatible with all CPUs</div>
               </div>
 
-              {/* Option B: GPU NVENC */}
+              {/* Option B: NVIDIA GPU NVENC */}
               <div
                 onClick={() => !isExporting && setEncoderMode('gpu_nvenc')}
                 className="glass-card"
@@ -269,7 +303,7 @@ export const ExportModal = () => {
                   padding: '12px',
                   borderRadius: '10px',
                   cursor: isExporting ? 'not-allowed' : 'pointer',
-                  border: encoderMode === 'gpu_nvenc' ? '2px solid #4ADE80' : '1px solid var(--border-color)',
+                  border: encoderMode === 'gpu_nvenc' ? '2px solid #22C55E' : '1px solid var(--border-color)',
                   background: encoderMode === 'gpu_nvenc' ? 'rgba(34, 197, 94, 0.12)' : 'rgba(31, 41, 55, 0.5)',
                   display: 'flex',
                   flexDirection: 'column',
@@ -277,30 +311,28 @@ export const ExportModal = () => {
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '800', color: '#FFF' }}>
-                    <Zap size={15} color="#4ADE80" />
-                    <span>Option B (GPU)</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: '800' }}>
+                    <Zap size={15} color="#22C55E" />
+                    <span>Option B</span>
                   </div>
-                  {encoderMode === 'gpu_nvenc' && <CheckCircle2 size={15} color="#4ADE80" />}
+                  {encoderMode === 'gpu_nvenc' && <CheckCircle2 size={15} color="#22C55E" />}
                 </div>
-                <span style={{ fontSize: '11px', color: '#4ADE80', fontWeight: '700' }}>NVIDIA RTX 4060</span>
-                <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-                  Hardware NVENC acceleration with non-blocking pipe & CPU auto-fallback.
-                </span>
+                <div style={{ fontSize: '12px', fontWeight: '700', color: '#FFF' }}>NVIDIA GPU</div>
+                <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>h264_nvenc • Hardware accelerated</div>
               </div>
             </div>
           </div>
 
-          {/* Resolution Options */}
+          {/* Resolution Presets */}
           <div>
             <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-muted)', display: 'block', marginBottom: '8px' }}>
-              Select Output Format
+              Export Resolution
             </label>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
               {[
-                { id: '1080x1920', label: '9:16 Vertical (1080 × 1920)', sub: 'TikTok, Reels, Shorts', icon: <Smartphone size={16} /> },
-                { id: '1080x1080', label: '1:1 Square (1080 × 1080)', sub: 'Instagram Feed', icon: <Square size={16} /> },
-                { id: '1920x1080', label: '16:9 Landscape (1920 × 1080)', sub: 'YouTube Standard', icon: <Tv size={16} /> }
+                { id: '1080x1920', label: '9:16 Shorts / Reels', sub: '1080 × 1920', icon: <Smartphone size={14} /> },
+                { id: '1080x1080', label: '1:1 Square', sub: '1080 × 1080', icon: <Square size={14} /> },
+                { id: '1920x1080', label: '16:9 Landscape', sub: '1920 × 1080', icon: <Tv size={14} /> }
               ].map((res) => {
                 const isSelected = resolution === res.id;
                 return (
@@ -309,39 +341,34 @@ export const ExportModal = () => {
                     onClick={() => !isExporting && setResolution(res.id)}
                     className="glass-card"
                     style={{
-                      padding: '10px 14px',
-                      borderRadius: '10px',
+                      padding: '10px 8px',
+                      borderRadius: '8px',
                       cursor: isExporting ? 'not-allowed' : 'pointer',
-                      border: isSelected ? '1px solid var(--accent-primary)' : '1px solid var(--border-color)',
-                      background: isSelected ? 'rgba(56, 189, 248, 0.12)' : 'rgba(31, 41, 55, 0.5)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between'
+                      border: isSelected ? '2px solid var(--accent-viral-yellow)' : '1px solid var(--border-color)',
+                      background: isSelected ? 'rgba(255, 230, 0, 0.08)' : 'rgba(31, 41, 55, 0.3)',
+                      textAlign: 'center'
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <div style={{ color: isSelected ? 'var(--accent-primary)' : 'var(--text-muted)' }}>
-                        {res.icon}
-                      </div>
-                      <div>
-                        <div style={{ fontSize: '13px', fontWeight: '700' }}>{res.label}</div>
-                        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{res.sub}</div>
-                      </div>
+                    <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '4px', color: isSelected ? 'var(--accent-viral-yellow)' : 'var(--text-muted)' }}>
+                      {res.icon}
                     </div>
-                    {isSelected && <CheckCircle2 size={16} color="var(--accent-primary)" />}
+                    <div style={{ fontSize: '11px', fontWeight: '700', color: isSelected ? 'var(--accent-viral-yellow)' : '#FFF' }}>
+                      {res.label}
+                    </div>
+                    <div style={{ fontSize: '9px', color: 'var(--text-muted)', marginTop: '2px' }}>{res.sub}</div>
                   </div>
                 );
               })}
             </div>
           </div>
 
-          {/* Error Message */}
+          {/* Error Banner */}
           {errorMessage && (
             <div style={{
               display: 'flex',
               alignItems: 'center',
               gap: '8px',
-              padding: '10px',
+              padding: '10px 14px',
               borderRadius: '8px',
               background: 'rgba(239, 68, 68, 0.15)',
               border: '1px solid rgba(239, 68, 68, 0.3)',
@@ -359,7 +386,7 @@ export const ExportModal = () => {
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: '700' }}>
                 <span style={{ color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <Loader2 size={14} className="animate-spin" />
-                  Rendering ({useCanvasRenderer ? 'CapCut-Style Canvas' : (encoderMode === 'cpu' ? 'Option A: CPU' : 'Option B: GPU NVENC')})...
+                  Rendering ({encoderMode === 'cpu' ? 'Option A: CPU' : 'Option B: GPU NVENC'})...
                 </span>
                 <span style={{ color: '#FFF', fontFamily: 'monospace' }}>{exportProgress}%</span>
               </div>
@@ -440,22 +467,31 @@ export const ExportModal = () => {
           gap: '10px',
           background: 'rgba(0,0,0,0.2)'
         }}>
-          <button
-            onClick={() => setExportModalOpen(false)}
-            className="btn-secondary"
-            disabled={isExporting}
-          >
-            {exportResultUrl ? 'Back to Editor' : 'Cancel'}
-          </button>
+          {isExporting ? (
+            <button
+              onClick={handleCancelExport}
+              className="btn-secondary"
+              style={{ color: '#F87171', borderColor: 'rgba(239, 68, 68, 0.4)' }}
+            >
+              <Ban size={14} />
+              <span>Cancel Export</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => setExportModalOpen(false)}
+              className="btn-secondary"
+            >
+              {exportResultUrl ? 'Back to Editor' : 'Cancel'}
+            </button>
+          )}
 
-          {!exportResultUrl && (
+          {!exportResultUrl && !isExporting && (
             <button
               onClick={handleExport}
               className="btn-viral"
-              disabled={isExporting}
             >
-              {useCanvasRenderer ? <Palette size={15} /> : (encoderMode === 'gpu_nvenc' ? <Zap size={15} /> : <Cpu size={15} />)}
-              <span>{isExporting ? `Rendering (${exportProgress}%)` : `Export (${useCanvasRenderer ? 'CapCut-Style Canvas' : (encoderMode === 'cpu' ? 'Option A: CPU' : 'Option B: GPU')})`}</span>
+              {encoderMode === 'gpu_nvenc' ? <Zap size={15} /> : <Cpu size={15} />}
+              <span>Export ({encoderMode === 'cpu' ? 'Option A: CPU' : 'Option B: GPU'})</span>
             </button>
           )}
         </div>

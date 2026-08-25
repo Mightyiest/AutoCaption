@@ -141,19 +141,21 @@ def generate_ass_subtitle(
     
     pri_col = hex_to_ass_color(style.get("primaryColor", "#FFFFFF"))
     act_col = hex_to_ass_color(style.get("activeColor", "#FFE600"))
+    
+    # Stroke Outline
+    stroke_enabled = style.get("strokeEnabled", True)
     stroke_col = hex_to_ass_color(style.get("strokeColor", "#000000"))
-    
-    # Decoupled Shadow Styling
-    raw_shadow = float(style.get("shadowBlur", 8))
-    raw_shadow_col = style.get("shadowColor", "#000000")
-    shadow_col = hex_to_ass_color(raw_shadow_col, alpha_hex="30")
-    
-    # CSS paint-order: stroke fill exposes 50% outward
-    raw_stroke = float(style.get("strokeWidth", 6))
+    raw_stroke = float(style.get("strokeWidth", 6)) if stroke_enabled else 0.0
     ass_stroke_width = max(1, int(round((raw_stroke / 2.0) * uniform_scale))) if raw_stroke > 0 else 0
     
+    # Directional Drop Shadow
+    shadow_enabled = style.get("shadowEnabled", True)
+    raw_shadow = float(style.get("shadowBlur", 8)) if shadow_enabled else 0.0
+    raw_shadow_col = style.get("shadowColor", "#000000") if shadow_enabled else "transparent"
+    shadow_col = hex_to_ass_color(raw_shadow_col, alpha_hex="30")
+    
     # Scaled Letter-spacing
-    css_letter_spacing = 1.0 if raw_font_family == "Bebas Neue" else -0.5
+    css_letter_spacing = float(style.get("letterSpacing", 1.0 if raw_font_family == "Bebas Neue" else -0.5))
     ass_spacing = int(round(css_letter_spacing * uniform_scale))
     
     # Shadow offset & blur
@@ -163,7 +165,14 @@ def generate_ass_subtitle(
     shadow_offset_x = int(round(shadow_offset_x_css * scale_x))
     ass_blur = max(0.0, round(raw_shadow * 0.35, 1)) if raw_shadow > 0 else 0.0
     
-    has_shadow = raw_shadow > 0 and raw_shadow_col.lower() != "transparent"
+    # Outer Glow (Separated from Drop Shadow)
+    glow_enabled = bool(style.get("glowEnabled", False))
+    raw_glow = float(style.get("glowBlur", 14)) if glow_enabled else 0.0
+    raw_glow_col = style.get("glowColor", "#38BDF8")
+    if glow_enabled and raw_glow > 0:
+        ass_blur = max(ass_blur, round(raw_glow * 0.4, 1))
+    
+    has_shadow = shadow_enabled and raw_shadow > 0 and raw_shadow_col.lower() != "transparent"
     
     pos_x = int(round(video_width * (float(style.get("positionX", 50)) / 100.0)))
     pos_y = int(round(video_height * (float(style.get("positionY", 74)) / 100.0)))
@@ -175,6 +184,11 @@ def generate_ass_subtitle(
     is_heavy_font = any(k in font_family.lower() for k in ["black", "extrabold", "bold", "russo", "bangers", "bebas"])
     ass_bold_flag = 0 if is_heavy_font else -1
     
+    # Italic styling
+    is_italic = style.get("fontStyle") == "italic"
+    ass_italic_flag = -1 if is_italic else 0
+    italic_tag = "\\i1" if is_italic else ""
+    
     def transform_word(txt: str) -> str:
         txt = (txt or "").strip()
         if text_transform == "uppercase":
@@ -185,7 +199,11 @@ def generate_ass_subtitle(
             return txt.lower()
         return txt
 
-    # Dual Styles: MainStyle (Layer 1/2) and ShadowStyle (Layer 0)
+    # Native Single-Layer Style with stroke and drop-shadow
+    ass_shadow_depth = int(round(max(abs(shadow_offset_x), abs(shadow_offset_y), 4))) if has_shadow else 0
+    back_col = shadow_col if has_shadow else "&H00000000&"
+    blur_tag = f"\\blur{ass_blur}" if ass_blur > 0 else ""
+
     ass_content = [
         "[Script Info]",
         "ScriptType: v4.00+",
@@ -195,8 +213,7 @@ def generate_ass_subtitle(
         "",
         "[V4+ Styles]",
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-        f"Style: MainStyle,{font_family},{ass_font_size},{pri_col},{act_col},{stroke_col},&H00000000&,{ass_bold_flag},0,0,0,100,100,{ass_spacing},0,1,{ass_stroke_width},0,5,0,0,0,1",
-        f"Style: ShadowStyle,{font_family},{ass_font_size},{shadow_col},{shadow_col},&H00000000&,&H00000000&,{ass_bold_flag},0,0,0,100,100,{ass_spacing},0,1,0,0,5,0,0,0,1",
+        f"Style: MainStyle,{font_family},{ass_font_size},{pri_col},{act_col},{stroke_col},{back_col},{ass_bold_flag},{ass_italic_flag},0,0,100,100,{ass_spacing},0,1,{ass_stroke_width},{ass_shadow_depth},5,0,0,0,1",
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
@@ -209,99 +226,60 @@ def generate_ass_subtitle(
             
         n_words = len(words)
         intervals = get_word_display_intervals(seg)
-        word_boxes = seg.get("measured_word_boxes")
         
-        # Branch A: Exact Per-Word Bounding Box Placement (v2 Engine)
-        if word_boxes and isinstance(word_boxes, list) and len(word_boxes) == n_words:
-            for interval in intervals:
-                act_idx = interval["active_index"]
-                start_ts = format_ass_timestamp(interval["start"])
-                end_ts = format_ass_timestamp(interval["end"])
-                dur_ms = int((interval["end"] - interval["start"]) * 1000)
-                
-                for idx, word_data in enumerate(words):
-                    box = word_boxes[idx]
-                    wx = int(round(pos_x + (float(box.get("center_x", 0)) * scale_x)))
-                    wy = int(round(pos_y + (float(box.get("center_y", 0)) * scale_y)))
-                    
-                    is_active = (idx == act_idx)
-                    raw_txt = word_data.get("word", "")
-                    word_escaped = escape_ass_text(transform_word(raw_txt))
-                    
-                    anim_tag = build_animation_tags(anim_type, dur_ms, wx, wy) if is_active else ""
-                    
-                    # 1. Shadow Underlay (Layer 0)
-                    if has_shadow:
-                        sx = wx + shadow_offset_x
-                        sy = wy + shadow_offset_y
-                        blur_str = f"\\blur{ass_blur}" if ass_blur > 0 else ""
-                        shad_anim = anim_tag if is_active else ""
-                        ass_content.append(
-                            f"Dialogue: 0,{start_ts},{end_ts},ShadowStyle,,0,0,0,,{{\\an5\\pos({sx},{sy})\\fsp{ass_spacing}{blur_str}{shad_anim}}}{word_escaped}"
-                        )
-                        
-                    # 2. Main Foreground Word (Layer 1 for inactive, Layer 2 for active)
-                    layer = 2 if is_active else 1
-                    col_tag = f"\\c{act_col}" if is_active else f"\\c{pri_col}"
-                    ass_content.append(
-                        f"Dialogue: {layer},{start_ts},{end_ts},MainStyle,,0,0,0,,{{\\an5\\pos({wx},{wy})\\fsp{ass_spacing}{col_tag}{anim_tag}}}{word_escaped}"
-                    )
+        # Unified Line-Stream Architecture (Natural Font Kerning & Tight Spacing)
+        measured_lines = seg.get("measured_lines")
+        if measured_lines and isinstance(measured_lines, list) and len(measured_lines) > 0:
+            lines = []
+            for line_indices in measured_lines:
+                lw = [words[i] for i in line_indices if 0 <= i < n_words]
+                if lw:
+                    lines.append(lw)
+            if not lines:
+                lines = [words]
         else:
-            # Branch B: Fallback Line-Offset Engine (v1 Backward-Compatibility)
-            measured_lines = seg.get("measured_lines")
-            if measured_lines and isinstance(measured_lines, list) and len(measured_lines) > 0:
-                lines = []
-                for line_indices in measured_lines:
-                    lw = [words[i] for i in line_indices if 0 <= i < n_words]
-                    if lw:
-                        lines.append(lw)
-                if not lines:
-                    lines = [words]
-            else:
-                mid = (n_words + 1) // 2
-                lines = [words[:mid], words[mid:]] if n_words > 3 else [words]
+            mid = (n_words + 1) // 2
+            lines = [words[:mid], words[mid:]] if n_words > 3 else [words]
 
-            num_lines = len(lines)
-            measured_offsets = seg.get("measured_line_offsets")
-            if measured_offsets and isinstance(measured_offsets, list) and len(measured_offsets) == num_lines:
-                y_offsets = [int(round(pos_y + (measured_offsets[i] * scale_y))) for i in range(num_lines)]
-            else:
-                fallback_line_h = int(round(ass_font_size * 1.15))
-                y_offsets = [int(round(pos_y + (i - (num_lines - 1) / 2.0) * fallback_line_h)) for i in range(num_lines)]
+        num_lines = len(lines)
+        measured_offsets = seg.get("measured_line_offsets")
+        if measured_offsets and isinstance(measured_offsets, list) and len(measured_offsets) == num_lines:
+            y_offsets = [int(round(pos_y + (measured_offsets[i] * scale_y))) for i in range(num_lines)]
+        else:
+            fallback_line_h = int(round(ass_font_size * float(style.get("lineHeight", 1.02))))
+            y_offsets = [int(round(pos_y + (i - (num_lines - 1) / 2.0) * fallback_line_h)) for i in range(num_lines)]
 
-            for interval in intervals:
-                act_idx = interval["active_index"]
-                start_ts = format_ass_timestamp(interval["start"])
-                end_ts = format_ass_timestamp(interval["end"])
-                dur_ms = int((interval["end"] - interval["start"]) * 1000)
+        text_align = style.get("textAlign", "center")
+        align_num = 4 if text_align == "left" else (6 if text_align == "right" else 5)
 
-                global_counter = 0
-                for line_idx, line_words in enumerate(lines):
-                    line_y = y_offsets[line_idx]
-                    tokens = []
-                    for w in line_words:
-                        is_active = (global_counter == act_idx)
-                        global_counter += 1
+        for interval in intervals:
+            act_idx = interval["active_index"]
+            start_ts = format_ass_timestamp(interval["start"])
+            end_ts = format_ass_timestamp(interval["end"])
+            dur_ms = int((interval["end"] - interval["start"]) * 1000)
 
-                        raw_txt = w.get("word", "").strip()
-                        word_txt = escape_ass_text(transform_word(raw_txt))
+            global_counter = 0
+            for line_idx, line_words in enumerate(lines):
+                line_y = y_offsets[line_idx]
+                tokens = []
+                for w in line_words:
+                    is_active = (global_counter == act_idx)
+                    global_counter += 1
 
-                        if is_active:
-                            anim_tag = build_animation_tags(anim_type, dur_ms, pos_x, line_y)
-                            tok = f"{{\\c{act_col}{anim_tag}}}{word_txt}{{\\rMainStyle}}"
-                        else:
-                            tok = f"{{\\c{pri_col}}}{word_txt}{{\\rMainStyle}}"
-                        tokens.append(tok)
+                    raw_txt = (w.get("word", "") if isinstance(w, dict) else str(w)).strip()
+                    word_txt = escape_ass_text(transform_word(raw_txt))
 
-                    line_str = "   ".join(tokens)
-                    if has_shadow:
-                        blur_str = f"\\blur{ass_blur}" if ass_blur > 0 else ""
-                        ass_content.append(
-                            f"Dialogue: 0,{start_ts},{end_ts},ShadowStyle,,0,0,0,,{{\\an5\\pos({pos_x + shadow_offset_x},{line_y + shadow_offset_y})\\fsp{ass_spacing}{blur_str}}}{line_str}"
-                        )
-                    ass_content.append(
-                        f"Dialogue: 1,{start_ts},{end_ts},MainStyle,,0,0,0,,{{\\an5\\pos({pos_x},{line_y})\\fsp{ass_spacing}}}{line_str}"
-                    )
+                    if is_active:
+                        anim_tag = build_animation_tags(anim_type, dur_ms, pos_x, line_y)
+                        tok = f"{{\\c{act_col}{italic_tag}{anim_tag}}}{word_txt}{{\\rMainStyle}}"
+                    else:
+                        tok = f"{{\\c{pri_col}{italic_tag}}}{word_txt}{{\\rMainStyle}}"
+                    tokens.append(tok)
+
+                line_str = " ".join(tokens)
+                ass_content.append(
+                    f"Dialogue: 1,{start_ts},{end_ts},MainStyle,,0,0,0,,{{\\an{align_num}\\pos({pos_x},{line_y})\\fsp{ass_spacing}{italic_tag}{blur_tag}}}{line_str}"
+                )
 
     return "\n".join(ass_content)
 
@@ -312,8 +290,10 @@ def render_captioned_video(
     style: dict,
     video_width: int = 1080,
     video_height: int = 1920,
+    video_duration: float = None,
     encoder_mode: str = "cpu",
     preview_metrics: dict = None,
+    on_proc_ready=None,
     progress_callback=None
 ) -> None:
     ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
@@ -343,10 +323,10 @@ def render_captioned_video(
         f.write(ass_text)
         
     try:
-        escaped_ass_path = temp_ass_path.replace("\\", "/").replace(":", "\\:")
-        escaped_fonts_dir = FONTS_DIR.replace("\\", "/").replace(":", "\\:")
+        escaped_ass_path = temp_ass_path.replace("\\", "/").replace(":", "\\\\:")
+        escaped_fonts_dir = FONTS_DIR.replace("\\", "/").replace(":", "\\\\:")
         
-        vf_filter = f"ass='{escaped_ass_path}':fontsdir='{escaped_fonts_dir}'"
+        vf_filter = f"ass={escaped_ass_path}:fontsdir={escaped_fonts_dir}"
         
         if encoder_mode == "gpu_nvenc":
             v_codec = ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "19"]
@@ -373,7 +353,15 @@ def render_captioned_video(
             universal_newlines=True
         )
         
-        duration = 0.0
+        if on_proc_ready:
+            try:
+                on_proc_ready(proc)
+            except Exception:
+                pass
+        
+        duration = float(video_duration) if video_duration and float(video_duration) > 0 else 0.0
+        last_pct = 5
+        
         while True:
             line = proc.stdout.readline()
             if not line and proc.poll() is not None:
@@ -387,20 +375,23 @@ def render_captioned_video(
                     out_ms = int(line.split("=")[1])
                     if progress_callback and duration > 0:
                         pct = min(99, int((out_ms / 1000000.0) / duration * 100))
-                        progress_callback(pct)
+                        last_pct = max(last_pct, pct)
+                        progress_callback(last_pct)
                 except Exception:
                     pass
             elif line.startswith("duration="):
                 try:
-                    duration = float(line.split("=")[1])
+                    dur_val = float(line.split("=")[1])
+                    if dur_val > 0:
+                        duration = dur_val
                 except Exception:
                     pass
                     
         proc.wait()
-        if proc.returncode != 0:
+        if proc.returncode != 0 and proc.returncode not in [-15, -9, 1]:
             raise RuntimeError(f"FFmpeg process failed with exit code {proc.returncode}")
             
-        if progress_callback:
+        if progress_callback and proc.returncode == 0:
             progress_callback(100)
             
     finally:

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   UploadCloud, 
   X, 
@@ -7,7 +7,8 @@ import {
   Play, 
   AlertCircle,
   Loader2,
-  CheckCircle2
+  CheckCircle2,
+  Settings
 } from 'lucide-react';
 import { useEditorStore } from '../store/useEditorStore';
 
@@ -17,6 +18,9 @@ export const UploadModal = () => {
   const {
     isUploadModalOpen,
     setUploadModalOpen,
+    setSettingsModalOpen,
+    modelsData,
+    fetchModelsStatus,
     setVideo,
     setSegments,
     setIsTranscribing,
@@ -32,6 +36,12 @@ export const UploadModal = () => {
   const [wordsPerChunk, setWordsPerChunk] = useState(3);
   const [errorMsg, setErrorMsg] = useState(null);
   const [isUploadingPreview, setIsUploadingPreview] = useState(false);
+
+  useEffect(() => {
+    if (isUploadModalOpen) {
+      fetchModelsStatus();
+    }
+  }, [isUploadModalOpen]);
 
   if (!isUploadModalOpen) return null;
 
@@ -210,9 +220,33 @@ export const UploadModal = () => {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
             {/* Whisper Model Size */}
             <div>
-              <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>
-                Whisper AI Model
-              </label>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-muted)' }}>
+                  Whisper AI Model
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUploadModalOpen(false);
+                    setSettingsModalOpen(true);
+                  }}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--accent-primary)',
+                    fontSize: '11px',
+                    fontWeight: '700',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '3px',
+                    padding: 0
+                  }}
+                >
+                  <Settings size={11} />
+                  <span>Manage</span>
+                </button>
+              </div>
               <select
                 value={modelSize}
                 onChange={(e) => setModelSize(e.target.value)}
@@ -227,10 +261,22 @@ export const UploadModal = () => {
                   cursor: 'pointer'
                 }}
               >
-                <option value="base">Base (Recommended - Fast & Accurate)</option>
-                <option value="tiny">Tiny (Ultra-Fast)</option>
-                <option value="small">Small (High Accuracy)</option>
-                <option value="medium">Medium (Studio Quality)</option>
+                {modelsData?.models && modelsData.models.length > 0 ? (
+                  modelsData.models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name} {m.is_downloaded ? '✓ [Ready]' : `[Download ${m.size_label}]`}
+                    </option>
+                  ))
+                ) : (
+                  <>
+                    <option value="base">Base (Recommended - Fast & Accurate)</option>
+                    <option value="tiny">Tiny (Ultra-Fast)</option>
+                    <option value="small">Small (High Accuracy)</option>
+                    <option value="medium">Medium (Studio Quality)</option>
+                    <option value="large-v3-turbo">Large v3 Turbo (Fast Large)</option>
+                    <option value="large-v3">Large v3 (Maximum Accuracy)</option>
+                  </>
+                )}
               </select>
             </div>
 

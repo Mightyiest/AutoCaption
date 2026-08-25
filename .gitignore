@@ -38,6 +38,12 @@ coverage/
 htmlcov/
 .pytest_cache/
 .mypy_cache/
+scratch/tmp_chrome_data/
+scratch/batch_html/
+scratch/batch_png/
+scratch/*.html
+scratch/*.png
+scratch/*.mp4
 
 # Editors & OS
 .vscode/

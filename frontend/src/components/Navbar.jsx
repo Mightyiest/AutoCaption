@@ -11,7 +11,8 @@ import {
   EyeOff, 
   RotateCcw,
   Film,
-  Loader2
+  Loader2,
+  Settings
 } from 'lucide-react';
 import { useEditorStore } from '../store/useEditorStore';
 
@@ -26,6 +27,7 @@ export const Navbar = () => {
     toggleSafeZones,
     setUploadModalOpen,
     setExportModalOpen,
+    setSettingsModalOpen,
     loadDemoData,
     isTranscribing,
     setIsTranscribing,
@@ -230,6 +232,16 @@ export const Navbar = () => {
 
       {/* Right Action CTAs */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <button
+          onClick={() => setSettingsModalOpen(true)}
+          className="btn-secondary"
+          title="Studio Settings & AI Model Manager"
+          style={{ fontSize: '12px', padding: '6px 12px' }}
+        >
+          <Settings size={14} />
+          <span>Settings</span>
+        </button>
+
         <button
           onClick={loadDemoData}
           className="btn-secondary"
