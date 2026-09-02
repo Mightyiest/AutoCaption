@@ -1,29 +1,36 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { 
-  Play, 
-  Pause, 
-  RotateCcw, 
-  RotateCw, 
-  Volume2, 
-  VolumeX, 
-  MoveVertical,
-  Maximize2,
-  ZoomIn,
-  ZoomOut,
-  RotateCcw as ResetZoom
+  UploadCloud, 
+  Sparkles, 
+  Film, 
+  Eye, 
+  EyeOff, 
+  Maximize, 
+  Music,
+  RotateCcw,
+  Hand
 } from 'lucide-react';
 import { useEditorStore } from '../store/useEditorStore';
-import { getActiveSegmentAndWord, formatTimecode } from '../engine/animator';
-import { captureAndLogLayoutMetrics } from '../engine/layoutMeasurer';
+import { renderPreviewOverlay } from '../engine/captionCanvasRenderer';
+import { createCaptionScene } from '../engine/captionScene';
+import { getActiveSegmentAndWord } from '../engine/animator';
+import { TransportControls } from './TransportControls';
+import { CaptionDragHandle } from './CaptionDragHandle';
 
 export const VideoPlayer = () => {
   const videoRef = useRef(null);
+  const canvasRef = useRef(null);
   const containerRef = useRef(null);
-  const captionBoxRef = useRef(null);
+  const stageViewportRef = useRef(null);
   const rafSeekRef = useRef(null);
+  const isRenderingRef = useRef(false);
+  const lastDrawnTimeRef = useRef(-1);
 
   const {
+    videoFile,
     videoUrl,
+    videoFilename,
+    videoFps,
     currentTime,
     seekRequestTime,
     duration,
@@ -41,143 +48,336 @@ export const VideoPlayer = () => {
     setVolume,
     setIsMuted,
     setPlaybackRate,
-    updateStyle
+    updateStyle,
+    setUploadModalOpen,
+    loadDemoData,
+    setMediaElement,
+    togglePlay
   } = useEditorStore();
 
-  const [activeSegment, setActiveSegment] = useState(null);
-  const [activeWordIndex, setActiveWordIndex] = useState(-1);
+  // Display Viewport & Zoom State
+  const [viewportDims, setViewportDims] = useState({ width: 380, height: 560 });
+  const [previewZoom, setPreviewZoom] = useState(1.0); // 1.0 = Fit scale
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [spacePressed, setSpacePressed] = useState(false);
   const [isDraggingCaption, setIsDraggingCaption] = useState(false);
-  const [zoomLevel, setZoomLevel] = useState(1.0); // 0.75, 1.0, 1.25, 1.5, 2.0
+  const panStartRef = useRef({ x: 0, y: 0 });
 
-  // Sync external seek requests (e.g. from Horizontal Timeline dragging/clicking)
+  // Determine media type (Video vs Audio-Only)
+  const isAudioOnly = Boolean(
+    (videoFile && videoFile.type && videoFile.type.startsWith('audio/')) ||
+    (videoFilename && (videoFilename.endsWith('.wav') || videoFilename.endsWith('.mp3') || videoFilename.endsWith('.m4a') || videoFilename.endsWith('.aac'))) ||
+    (videoUrl && (videoUrl.includes('.wav') || videoUrl.includes('.mp3') || videoUrl.includes('demo_audio')))
+  );
+
+  // ResizeObserver for the exact middle stage viewport area (No cyclic reflows)
+  useEffect(() => {
+    const el = stageViewportRef.current;
+    if (!el) return;
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const newW = Math.floor(entry.contentRect.width);
+        const newH = Math.floor(entry.contentRect.height);
+        if (newW > 50 && newH > 50) {
+          setViewportDims((prev) => {
+            if (Math.abs(prev.width - newW) > 2 || Math.abs(prev.height - newH) > 2) {
+              return { width: newW, height: newH };
+            }
+            return prev;
+          });
+        }
+      }
+    });
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // Canonical resolution metrics
+  const canonical = useMemo(() => {
+    switch (aspectRatio) {
+      case '16:9':
+        return { aspect: '16/9', exportW: 1920, exportH: 1080, cssAspect: 16 / 9 };
+      case '1:1':
+        return { aspect: '1/1', exportW: 1080, exportH: 1080, cssAspect: 1 / 1 };
+      case '4:5':
+        return { aspect: '4/5', exportW: 1080, exportH: 1350, cssAspect: 4 / 5 };
+      case '9:16':
+      default:
+        return { aspect: '9/16', exportW: 1080, exportH: 1920, cssAspect: 9 / 16 };
+    }
+  }, [aspectRatio]);
+
+  // Scaled Stage Transform (Maximized full-bleed canvas)
+  const transform = useMemo(() => {
+    const padding = 10;
+    const availW = Math.max(80, viewportDims.width - padding * 2);
+    const availH = Math.max(80, viewportDims.height - padding * 2);
+
+    let fitW, fitH;
+    if (availW / availH > canonical.cssAspect) {
+      fitH = availH;
+      fitW = fitH * canonical.cssAspect;
+    } else {
+      fitW = availW;
+      fitH = fitW / canonical.cssAspect;
+    }
+
+    const scale = previewZoom;
+    const displayW = Math.round(fitW * scale);
+    const displayH = Math.round(fitH * scale);
+
+    return {
+      displayW,
+      displayH,
+      pan: panOffset
+    };
+  }, [viewportDims, canonical, previewZoom, panOffset]);
+
+  // Handle Wheel Zoom
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const onWheel = (e) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const delta = e.deltaY < 0 ? 0.15 : -0.15;
+        setPreviewZoom((prev) => Math.max(0.5, Math.min(3.0, prev + delta)));
+      }
+    };
+
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
+
+  // Handle Spacebar Pan toggle with capture phase to avoid global play/pause conflict
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.code === 'Space' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+        if (previewZoom > 1.05) {
+          // Intercept in capture phase so global shortcuts don't toggle playback
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          if (!spacePressed) {
+            setSpacePressed(true);
+          }
+        }
+      }
+    };
+
+    const handleKeyUp = (e) => {
+      if (e.code === 'Space') {
+        if (previewZoom > 1.05) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+        }
+        setSpacePressed(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown, { capture: true });
+    window.addEventListener('keyup', handleKeyUp, { capture: true });
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, { capture: true });
+      window.removeEventListener('keyup', handleKeyUp, { capture: true });
+    };
+  }, [previewZoom, spacePressed]);
+
+  // Render Canvas Caption Overlay Frame
+  const drawOverlay = useCallback((time) => {
+    if (!canvasRef.current) return;
+
+    try {
+      const scene = createCaptionScene({
+        style,
+        segments,
+        canvasSize: { width: canonical.exportW, height: canonical.exportH, fps: videoFps || 30 },
+        currentTime: time,
+        videoInfo: {
+          file: videoFile,
+          url: videoUrl,
+          duration
+        }
+      });
+
+      renderPreviewOverlay({
+        canvas: canvasRef.current,
+        scene,
+        currentTime: time
+      });
+    } catch (err) {
+      console.warn('Canvas render error:', err);
+    }
+  }, [style, segments, canonical.exportW, canonical.exportH, videoFile, videoUrl, duration, videoFps]);
+
+  // Re-render canvas on state / style changes
+  useEffect(() => {
+    drawOverlay(currentTime);
+  }, [drawOverlay, currentTime, style, segments, aspectRatio]);
+
+  // Keep drawOverlay ref updated for animation loop without recreating RAF
+  const drawOverlayRef = useRef(drawOverlay);
+  useEffect(() => {
+    drawOverlayRef.current = drawOverlay;
+  }, [drawOverlay]);
+
+  // Sync external seek requests (consumed immediately so style changes never re-seek)
   useEffect(() => {
     if (seekRequestTime !== null && videoRef.current) {
+      const targetTime = seekRequestTime;
+      useEditorStore.setState({ seekRequestTime: null });
       if (rafSeekRef.current) cancelAnimationFrame(rafSeekRef.current);
       rafSeekRef.current = requestAnimationFrame(() => {
         if (videoRef.current) {
-          videoRef.current.currentTime = seekRequestTime;
-          const match = getActiveSegmentAndWord(segments, seekRequestTime);
-          setActiveSegment(match.activeSegment);
-          setActiveWordIndex(match.activeWordIndex);
+          videoRef.current.currentTime = targetTime;
+          if (drawOverlayRef.current) {
+            drawOverlayRef.current(targetTime);
+          }
         }
       });
     }
     return () => {
       if (rafSeekRef.current) cancelAnimationFrame(rafSeekRef.current);
     };
-  }, [seekRequestTime, segments]);
+  }, [seekRequestTime]);
 
-  // Debounced layout measurement for active segment (only triggers on actual geometry changes, never on color changes)
-  const geometryKey = activeSegment
-    ? `${activeSegment.id}_${style.fontFamily}_${style.fontSize}_${style.fontWeight}_${style.wordSpacing}_${style.letterSpacing}_${style.lineHeight}_${style.containerWidthPercent}_${style.textTransform}_${style.textAlign}`
-    : null;
-
+  // Sync audio properties
   useEffect(() => {
-    if (!activeSegment || !geometryKey) return;
-    const timer = setTimeout(() => {
-      const w = containerRef.current?.clientWidth || 310;
-      const h = containerRef.current?.clientHeight || 550;
-      captureAndLogLayoutMetrics(activeSegment, style, w, h);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [geometryKey]);
+    const video = videoRef.current;
+    if (!video) return;
+    video.volume = Math.max(0, Math.min(1, volume));
+    video.muted = isMuted;
+    video.playbackRate = playbackRate;
+  }, [volume, isMuted, playbackRate]);
+
+  // Guard against dual-play promise collisions
+  const isPlayPendingRef = useRef(false);
+
+  // Sync isPlaying state to media element (handles external play/pause triggers)
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !videoUrl) return;
+
+    if (isPlaying && video.paused && !isPlayPendingRef.current) {
+      if (video.currentTime >= (video.duration || duration || 0) - 0.05) {
+        video.currentTime = 0;
+        setCurrentTime(0);
+      }
+      isPlayPendingRef.current = true;
+      video.play()
+        .catch((err) => {
+          console.warn('Auto play recovery:', err);
+          if (err.name === 'NotAllowedError') {
+            video.muted = true;
+            setIsMuted(true);
+            video.play().catch(() => {});
+          }
+        })
+        .finally(() => {
+          isPlayPendingRef.current = false;
+        });
+    } else if (!isPlaying && !video.paused) {
+      video.pause();
+    }
+  }, [isPlaying, videoUrl, duration, setCurrentTime, setIsMuted]);
+
+  // Callback ref to guarantee media element is always registered in store
+  const handleMediaRef = useCallback((el) => {
+    videoRef.current = el;
+    setMediaElement(el);
+  }, [setMediaElement]);
 
   // Sync video duration when media loads
   const handleMediaLoaded = () => {
     const video = videoRef.current;
     if (!video) return;
+    setMediaElement(video);
     if (video.duration && !isNaN(video.duration) && video.duration > 0) {
       setDuration(video.duration);
     }
-    video.volume = volume;
+    video.volume = Math.max(0, Math.min(1, volume));
+    video.muted = isMuted;
     video.playbackRate = playbackRate;
   };
 
-  // Sync state with HTML5 video playback
+  // Playback animation frame loop (Hardware Video + Software fallback)
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
     let animFrameId;
-    const updateLoop = () => {
-      if (!video.paused && !video.ended) {
-        const time = video.currentTime;
-        setCurrentTime(time);
-        const match = getActiveSegmentAndWord(segments, time);
-        setActiveSegment(match.activeSegment);
-        setActiveWordIndex(match.activeWordIndex);
+    let lastTs = performance.now();
+
+    const updateLoop = (now) => {
+      const video = videoRef.current;
+      if (video && videoUrl) {
+        if (!video.paused && !video.ended) {
+          const time = video.currentTime;
+          setCurrentTime(time);
+          if (drawOverlayRef.current) {
+            drawOverlayRef.current(time);
+          }
+        }
+      } else if (isPlaying) {
+        const delta = (now - lastTs) / 1000;
+        const maxDur = duration > 0 ? duration : (segments.length > 0 ? Math.max(...segments.map(s => s.end)) : 10);
+        const cur = useEditorStore.getState().currentTime;
+        const nextTime = cur + delta * (playbackRate || 1.0);
+        if (nextTime >= maxDur) {
+          setCurrentTime(0);
+          if (drawOverlayRef.current) drawOverlayRef.current(0);
+        } else {
+          setCurrentTime(nextTime);
+          if (drawOverlayRef.current) drawOverlayRef.current(nextTime);
+        }
       }
+      lastTs = now;
       animFrameId = requestAnimationFrame(updateLoop);
     };
 
-    animFrameId = requestAnimationFrame(updateLoop);
-    return () => cancelAnimationFrame(animFrameId);
-  }, [segments, setCurrentTime]);
-
-  // Handle Play/Pause toggle
-  const togglePlay = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    if (video.paused) {
-      video.play().then(() => setIsPlaying(true)).catch(() => {});
-    } else {
-      video.pause();
-      setIsPlaying(false);
+    if (isPlaying || (videoRef.current && !videoRef.current.paused)) {
+      animFrameId = requestAnimationFrame(updateLoop);
     }
-  }, [setIsPlaying]);
-
-  // Keyboard shortcuts (Spacebar play/pause, Left/Right skip)
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
-      if (e.code === 'Space') {
-        e.preventDefault();
-        togglePlay();
-      } else if (e.code === 'ArrowLeft') {
-        e.preventDefault();
-        seek(Math.max(0, (videoRef.current?.currentTime || 0) - 2));
-      } else if (e.code === 'ArrowRight') {
-        e.preventDefault();
-        seek(Math.min(duration || 100, (videoRef.current?.currentTime || 0) + 2));
-      }
+    return () => {
+      if (animFrameId) cancelAnimationFrame(animFrameId);
     };
+  }, [isPlaying, videoUrl, duration, playbackRate, segments, setCurrentTime]);
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [togglePlay, duration]);
-
+  // Seek helper
   const seek = (time) => {
-    if (!videoRef.current) return;
-    const safeTime = Math.max(0, Math.min(duration || 1000, time));
-    if (rafSeekRef.current) cancelAnimationFrame(rafSeekRef.current);
-    rafSeekRef.current = requestAnimationFrame(() => {
-      if (videoRef.current) {
-        videoRef.current.currentTime = safeTime;
-        setCurrentTime(safeTime);
-        const match = getActiveSegmentAndWord(segments, safeTime);
-        setActiveSegment(match.activeSegment);
-        setActiveWordIndex(match.activeWordIndex);
-      }
-    });
+    const maxDur = duration > 0 ? duration : 1000;
+    const safeTime = Math.max(0, Math.min(maxDur, time));
+    if (videoRef.current && videoUrl) {
+      if (rafSeekRef.current) cancelAnimationFrame(rafSeekRef.current);
+      rafSeekRef.current = requestAnimationFrame(() => {
+        if (videoRef.current) {
+          videoRef.current.currentTime = safeTime;
+          setCurrentTime(safeTime);
+          drawOverlay(safeTime);
+        }
+      });
+    } else {
+      setCurrentTime(safeTime);
+      drawOverlay(safeTime);
+    }
   };
 
   const handleSeekChange = (e) => {
-    const time = parseFloat(e.target.value);
-    seek(time);
+    seek(parseFloat(e.target.value));
   };
 
   // Drag-to-position caption overlay
-  const handleMouseDown = (e) => {
+  const handleCaptionMouseDown = (e) => {
     e.preventDefault();
+    e.stopPropagation();
     setIsDraggingCaption(true);
 
     const handleMouseMove = (moveEvent) => {
-      if (!containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      const relativeY = ((moveEvent.clientY - rect.top) / rect.height) * 100;
-      const clampedY = Math.max(10, Math.min(90, Math.round(relativeY)));
-      updateStyle({ positionY: clampedY });
+      if (!canvasRef.current) return;
+      const rect = canvasRef.current.getBoundingClientRect();
+      const relativeY = moveEvent.clientY - rect.top;
+      const pctY = Math.max(10, Math.min(90, (relativeY / rect.height) * 100));
+      updateStyle({ positionY: Math.round(pctY) });
     };
 
     const handleMouseUp = () => {
@@ -190,446 +390,484 @@ export const VideoPlayer = () => {
     window.addEventListener('mouseup', handleMouseUp);
   };
 
-  // Compute container dimensions based on selected aspect ratio
-  const getAspectRatioDimensions = () => {
-    if (aspectRatio === '9:16') {
-      return { width: 310, height: 550, aspect: '9 / 16' };
+  // Pan stage handling
+  const handleStageMouseDown = (e) => {
+    if (spacePressed || previewZoom > 1.05) {
+      if (e.button === 0 || e.button === 1) {
+        setIsPanning(true);
+        panStartRef.current = {
+          x: e.clientX - panOffset.x,
+          y: e.clientY - panOffset.y
+        };
+      }
     }
-    if (aspectRatio === '1:1') {
-      return { width: 420, height: 420, aspect: '1 / 1' };
-    }
-    return { width: 540, height: 304, aspect: '16 / 9' };
   };
 
-  const dims = getAspectRatioDimensions();
+  const handleStageMouseMove = (e) => {
+    if (!isPanning) return;
+    setPanOffset({
+      x: e.clientX - panStartRef.current.x,
+      y: e.clientY - panStartRef.current.y
+    });
+  };
 
-  // Zoom handlers
-  const handleZoomIn = () => setZoomLevel((prev) => Math.min(2.0, +(prev + 0.25).toFixed(2)));
-  const handleZoomOut = () => setZoomLevel((prev) => Math.max(0.5, +(prev - 0.25).toFixed(2)));
-  const handleResetZoom = () => setZoomLevel(1.0);
+  const handleStageMouseUp = () => {
+    setIsPanning(false);
+  };
+
+  const handleResetPanZoom = () => {
+    setPreviewZoom(1.0);
+    setPanOffset({ x: 0, y: 0 });
+  };
+
+  const handleFullscreen = () => {
+    if (!containerRef.current) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else {
+      containerRef.current.requestFullscreen().catch(() => {});
+    }
+  };
+
+  const { activeSegment } = getActiveSegmentAndWord(segments, currentTime);
+  const hasActiveSegment = Boolean(activeSegment);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', width: '100%' }}>
-      {/* Canvas Viewport Zoom & Inspection Toolbar */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        width: `${dims.width}px`,
-        maxWidth: '100%',
-        padding: '3px 8px',
-        borderRadius: '8px',
-        background: 'rgba(15, 23, 42, 0.75)',
-        border: '1px solid var(--border-color)',
-        fontSize: '11px'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-muted)' }}>
-          <span style={{ fontWeight: '700', color: 'var(--text-main)', fontSize: '10px' }}>CANVAS</span>
-          <span style={{ fontSize: '9px', opacity: 0.6 }}>({aspectRatio})</span>
-        </div>
-
-        {/* Zoom Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <button
-            onClick={handleZoomOut}
-            disabled={zoomLevel <= 0.5}
-            className="btn-secondary"
-            style={{ padding: '2px 5px', fontSize: '10px', height: '22px' }}
-            title="Zoom Out (-25%)"
-          >
-            <ZoomOut size={11} />
-          </button>
-
-          <select
-            value={zoomLevel}
-            onChange={(e) => setZoomLevel(parseFloat(e.target.value))}
-            style={{
-              background: 'rgba(0,0,0,0.4)',
-              border: '1px solid var(--border-color)',
-              color: 'var(--accent-primary)',
-              fontSize: '10px',
-              fontWeight: '800',
-              padding: '2px 4px',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              height: '22px'
-            }}
-          >
-            <option value="0.5">50%</option>
-            <option value="0.75">75%</option>
-            <option value="1.0">100%</option>
-            <option value="1.25">125%</option>
-            <option value="1.5">150%</option>
-            <option value="2.0">200%</option>
-          </select>
-
-          <button
-            onClick={handleZoomIn}
-            disabled={zoomLevel >= 2.0}
-            className="btn-secondary"
-            style={{ padding: '2px 5px', fontSize: '10px', height: '22px' }}
-            title="Zoom In (+25%)"
-          >
-            <ZoomIn size={11} />
-          </button>
-
-          {zoomLevel !== 1.0 && (
-            <button
-              onClick={handleResetZoom}
-              className="btn-secondary"
-              style={{ padding: '2px 5px', fontSize: '9px', height: '22px', color: 'var(--accent-viral-yellow)' }}
-              title="Reset Zoom to 100%"
-            >
-              <ResetZoom size={10} /> 1x
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Outer Scalable Viewport Host with Smooth Scrolling when Zoomed */}
-      <div style={{
-        width: `${dims.width}px`,
-        height: `${dims.height}px`,
+    <div
+      ref={containerRef}
+      className="studio-panel"
+      onMouseMove={handleStageMouseMove}
+      onMouseUp={handleStageMouseUp}
+      onMouseLeave={handleStageMouseUp}
+      style={{
+        width: '100%',
+        height: '100%',
+        position: 'relative',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        overflow: zoomLevel > 1.0 ? 'auto' : 'visible',
-        borderRadius: '16px',
-        position: 'relative'
+        overflow: 'hidden',
+        cursor: spacePressed ? 'grab' : isPanning ? 'grabbing' : 'default',
+        backgroundColor: '#0a0a0c',
+        userSelect: 'none'
+      }}
+    >
+      {/* Top Floating Viewport Glass Overlay Bar */}
+      <div style={{
+        position: 'absolute',
+        top: '12px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        zIndex: 35,
+        pointerEvents: 'auto'
       }}>
-        {/* Scaled Video Viewport Container */}
-        <div
-          ref={containerRef}
+        {/* Aspect Ratio Badge */}
+        <div style={{
+          background: 'rgba(18, 18, 20, 0.88)',
+          backdropFilter: 'blur(16px)',
+          WebkitBackdropFilter: 'blur(16px)',
+          border: '1px solid rgba(255, 255, 255, 0.14)',
+          borderRadius: 'var(--radius-pill)',
+          padding: '3px 9px',
+          fontSize: '11px',
+          fontWeight: '600',
+          color: 'var(--text-secondary)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '4px',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.4)'
+        }}>
+          <span>{aspectRatio}</span>
+          <span style={{ opacity: 0.4 }}>•</span>
+          <span style={{ fontSize: '10px', opacity: 0.8 }}>
+            {canonical.exportW}x{canonical.exportH}
+          </span>
+        </div>
+
+        {/* Safe Zones Toggle */}
+        <button
+          onClick={() => useEditorStore.getState().toggleSafeZones()}
+          className="btn-ghost"
           style={{
-            position: 'relative',
-            width: `${dims.width}px`,
-            height: `${dims.height}px`,
-            aspectRatio: dims.aspect,
-            backgroundColor: '#000000',
-            borderRadius: '16px',
-            overflow: 'hidden',
-            boxShadow: '0 20px 50px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.1)',
+            padding: '4px 8px',
+            borderRadius: 'var(--radius-pill)',
+            background: showSafeZones ? 'rgba(0, 113, 227, 0.25)' : 'rgba(18, 18, 20, 0.88)',
+            backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
+            border: showSafeZones ? '1px solid rgba(0, 113, 227, 0.6)' : '1px solid rgba(255, 255, 255, 0.14)',
+            color: showSafeZones ? 'var(--accent-bright-blue)' : 'var(--text-tertiary)',
+            fontSize: '11px',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.4)'
+          }}
+          title={showSafeZones ? 'Hide Safe Zone Overlay' : 'Show Safe Zone Overlay'}
+        >
+          {showSafeZones ? <Eye size={12} /> : <EyeOff size={12} />}
+          <span style={{ marginLeft: '4px' }}>Safe Zones</span>
+        </button>
+
+        {/* Zoom Reset */}
+        {previewZoom !== 1.0 && (
+          <button
+            onClick={handleResetPanZoom}
+            className="btn-ghost"
+            style={{
+              padding: '3px 8px',
+              borderRadius: 'var(--radius-pill)',
+              background: 'rgba(18, 18, 20, 0.88)',
+              backdropFilter: 'blur(16px)',
+              WebkitBackdropFilter: 'blur(16px)',
+              border: '1px solid rgba(255, 255, 255, 0.14)',
+              fontSize: '11px',
+              color: 'var(--accent-bright-blue)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              boxShadow: '0 4px 16px rgba(0,0,0,0.4)'
+            }}
+            title="Reset Zoom to Fit (Ctrl + 0)"
+          >
+            <RotateCcw size={11} />
+            <span>Fit ({Math.round(previewZoom * 100)}%)</span>
+          </button>
+        )}
+
+        {/* Space Pan Help Badge */}
+        {previewZoom > 1.05 && (
+          <div style={{
+            background: spacePressed ? 'var(--accent-primary)' : 'rgba(18, 18, 20, 0.88)',
+            backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
+            color: spacePressed ? '#FFFFFF' : 'var(--text-tertiary)',
+            borderRadius: 'var(--radius-pill)',
+            padding: '3px 8px',
+            border: '1px solid rgba(255, 255, 255, 0.14)',
+            fontSize: '10px',
+            fontWeight: '500',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center',
-            transform: `scale(${zoomLevel})`,
-            transformOrigin: 'center center',
-            transition: 'transform 180ms cubic-bezier(0.4, 0, 0.2, 1)',
+            gap: '4px',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.4)'
+          }}>
+            <Hand size={11} />
+            <span>Space + Drag</span>
+          </div>
+        )}
+
+        {/* Fullscreen Button */}
+        <button
+          onClick={handleFullscreen}
+          className="btn-ghost"
+          style={{
+            padding: '4px 6px',
+            borderRadius: 'var(--radius-pill)',
+            background: 'rgba(18, 18, 20, 0.88)',
+            backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
+            border: '1px solid rgba(255, 255, 255, 0.14)',
+            color: 'var(--text-secondary)',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.4)'
+          }}
+          title="Toggle Fullscreen"
+        >
+          <Maximize size={12} />
+        </button>
+      </div>
+
+      {/* Full-Height Scaled Stage Area */}
+      <div
+        ref={stageViewportRef}
+        onMouseDown={handleStageMouseDown}
+        style={{
+          width: '100%',
+          height: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          position: 'relative',
+          overflow: 'hidden'
+        }}
+      >
+        {/* Dynamic Scaled Canvas Stage */}
+        <div
+          style={{
+            position: 'relative',
+            width: `${transform.displayW}px`,
+            height: `${transform.displayH}px`,
+            aspectRatio: canonical.aspect,
+            backgroundColor: isAudioOnly ? '#FFFFFF' : '#000000',
+            borderRadius: '12px',
+            overflow: 'hidden',
+            boxShadow: isAudioOnly 
+              ? '0 12px 40px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.15)'
+              : '0 12px 40px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.08)',
+            transform: `translate(${transform.pan.x}px, ${transform.pan.y}px)`,
             flexShrink: 0
           }}
         >
+          {/* HTML5 Media Player Layer (Audio or Video) */}
           {videoUrl ? (
-            <video
-              ref={videoRef}
-              src={videoUrl}
-              playsInline
-              muted={isMuted}
-              onClick={togglePlay}
-              onLoadedMetadata={handleMediaLoaded}
-              onDurationChange={handleMediaLoaded}
-              onEnded={() => setIsPlaying(false)}
-              style={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'cover',
-                cursor: 'pointer'
-              }}
-            />
+            <>
+              {isAudioOnly ? (
+                <>
+                  <audio
+                    ref={handleMediaRef}
+                    src={videoUrl}
+                    preload="auto"
+                    muted={isMuted}
+                    onPlay={() => setIsPlaying(true)}
+                    onPause={() => setIsPlaying(false)}
+                    onLoadedMetadata={handleMediaLoaded}
+                    onDurationChange={handleMediaLoaded}
+                    onEnded={() => {
+                      setIsPlaying(false);
+                      setCurrentTime(0);
+                      if (videoRef.current) videoRef.current.currentTime = 0;
+                    }}
+                  />
+                  {/* Clean White Audio Stage Background */}
+                  <div 
+                    onClick={togglePlay}
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      backgroundColor: '#FFFFFF',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'flex-start',
+                      padding: '16px',
+                      zIndex: 1
+                    }}
+                  >
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      background: 'rgba(0, 0, 0, 0.06)',
+                      padding: '4px 10px',
+                      borderRadius: 'var(--radius-pill)',
+                      fontSize: '11px',
+                      fontWeight: '600',
+                      color: '#1C1C1E',
+                      userSelect: 'none',
+                      alignSelf: 'flex-start',
+                      border: '1px solid rgba(0, 0, 0, 0.08)'
+                    }}>
+                      <Music size={12} color="var(--accent-bright-blue)" />
+                      <span>{videoFilename || 'demo_audio.wav'}</span>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <video
+                  ref={handleMediaRef}
+                  src={videoUrl}
+                  playsInline
+                  crossOrigin="anonymous"
+                  preload="auto"
+                  muted={isMuted}
+                  onClick={togglePlay}
+                  onPlay={() => setIsPlaying(true)}
+                  onPause={() => setIsPlaying(false)}
+                  onLoadedMetadata={handleMediaLoaded}
+                  onDurationChange={handleMediaLoaded}
+                  onEnded={() => {
+                    setIsPlaying(false);
+                    setCurrentTime(0);
+                    if (videoRef.current) videoRef.current.currentTime = 0;
+                  }}
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                    cursor: 'pointer'
+                  }}
+                />
+              )}
+            </>
           ) : (
-            <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px' }}>
-              <p style={{ fontSize: '13px', fontWeight: '700' }}>No Video Loaded</p>
-              <p style={{ fontSize: '11px', marginTop: '4px' }}>Click "Upload" or "Demo" to begin</p>
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              height: '100%',
+              color: 'var(--text-tertiary)',
+              padding: '24px',
+              textAlign: 'center',
+              gap: '12px'
+            }}>
+              <div style={{
+                width: '48px',
+                height: '48px',
+                borderRadius: 'var(--radius-lg)',
+                background: 'rgba(0, 113, 227, 0.12)',
+                border: '1px solid rgba(0, 113, 227, 0.25)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <Film size={24} color="var(--accent-bright-blue)" />
+              </div>
+
+              <div>
+                <p style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-primary)', margin: 0 }}>
+                  No Video Loaded
+                </p>
+                <p style={{ fontSize: '11px', marginTop: '4px', color: 'var(--text-tertiary)', maxWidth: '240px', lineHeight: '1.4' }}>
+                  Upload your video footage or load the sample demo audio to get started.
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                <button
+                  onClick={() => setUploadModalOpen(true)}
+                  className="btn-primary"
+                  style={{ fontSize: '11px', padding: '6px 12px' }}
+                >
+                  <UploadCloud size={13} />
+                  <span>Upload Video</span>
+                </button>
+
+                <button
+                  onClick={() => loadDemoData()}
+                  className="btn-secondary"
+                  style={{ fontSize: '11px', padding: '6px 12px' }}
+                >
+                  <Sparkles size={13} color="var(--accent-bright-blue)" />
+                  <span>Load Demo</span>
+                </button>
+              </div>
             </div>
           )}
 
-          {/* TikTok / Shorts UI Safe Zones Overlay */}
-          {showSafeZones && aspectRatio === '9:16' && (
-            <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 10 }}>
-              {/* Top Bar Safe Zone */}
+          {/* Canvas 2D Caption Overlay */}
+          <canvas
+            ref={canvasRef}
+            width={canonical.exportW}
+            height={canonical.exportH}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              width: '100%',
+              height: '100%',
+              pointerEvents: 'none',
+              zIndex: 15
+            }}
+          />
+
+          {/* Caption Drag Position Handle */}
+          {hasActiveSegment && (
+            <CaptionDragHandle
+              style={style}
+              isDragging={isDraggingCaption}
+              onMouseDown={handleCaptionMouseDown}
+            />
+          )}
+
+          {/* Social Safe Zones Overlay (TikTok / Reels / Shorts) */}
+          {showSafeZones && (
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              pointerEvents: 'none',
+              zIndex: 20
+            }}>
+              {/* Top Profile / Header Safe Zone */}
               <div style={{
                 position: 'absolute',
                 top: 0,
                 left: 0,
                 right: 0,
-                height: '65px',
-                borderBottom: '1px dashed rgba(239, 68, 68, 0.4)',
-                background: 'rgba(239, 68, 68, 0.05)',
+                height: '12%',
+                borderBottom: '1px dashed rgba(255, 255, 255, 0.25)',
+                background: 'rgba(255, 255, 255, 0.03)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center'
               }}>
-                <span style={{ fontSize: '9px', color: 'rgba(239, 68, 68, 0.8)', fontWeight: '600', letterSpacing: '1px' }}>
+                <span style={{ fontSize: '9px', color: 'rgba(255, 255, 255, 0.4)', fontWeight: '500', letterSpacing: '0.04em' }}>
                   HEADER SAFE ZONE
                 </span>
               </div>
 
-              {/* Right Action Buttons Safe Zone */}
+              {/* Right Action Icons Safe Zone */}
               <div style={{
                 position: 'absolute',
-                top: '100px',
+                top: '12%',
+                bottom: '15%',
                 right: 0,
-                bottom: '100px',
-                width: '55px',
-                borderLeft: '1px dashed rgba(239, 68, 68, 0.4)',
-                background: 'rgba(239, 68, 68, 0.05)',
+                width: '15%',
+                borderLeft: '1px dashed rgba(255, 255, 255, 0.25)',
+                background: 'rgba(255, 255, 255, 0.03)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center'
               }}>
-                <span style={{ fontSize: '9px', color: 'rgba(239, 68, 68, 0.8)', fontWeight: '600', transform: 'rotate(90deg)', whiteSpace: 'nowrap' }}>
-                  LIKE / SHARE
+                <span style={{ fontSize: '8px', color: 'rgba(255, 255, 255, 0.4)', fontWeight: '500', transform: 'rotate(90deg)', letterSpacing: '0.04em' }}>
+                  ACTIONS
                 </span>
               </div>
 
-              {/* Bottom Caption & Audio Safe Zone */}
+              {/* Bottom Caption Safe Zone */}
               <div style={{
                 position: 'absolute',
                 bottom: 0,
                 left: 0,
                 right: 0,
-                height: '95px',
-                borderTop: '1px dashed rgba(239, 68, 68, 0.4)',
-                background: 'rgba(239, 68, 68, 0.05)',
+                height: '15%',
+                borderTop: '1px dashed rgba(255, 255, 255, 0.25)',
+                background: 'rgba(255, 255, 255, 0.03)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center'
               }}>
-                <span style={{ fontSize: '9px', color: 'rgba(239, 68, 68, 0.8)', fontWeight: '600', letterSpacing: '1px' }}>
-                  SOUND / CAPTION SAFE ZONE
+                <span style={{ fontSize: '9px', color: 'rgba(255, 255, 255, 0.4)', fontWeight: '500', letterSpacing: '0.04em' }}>
+                  UI / CAPTIONS
                 </span>
               </div>
             </div>
           )}
-
-          {/* Dynamic Animated Caption Overlay */}
-          {activeSegment && (() => {
-            const isBgActive = style.backgroundEnabled || (style.backgroundColor && style.backgroundColor !== 'transparent');
-            let bgCss = 'transparent';
-            if (isBgActive) {
-              const hex = style.backgroundColor || '#0F172A';
-              const opacity = (style.backgroundOpacity ?? 85) / 100;
-              if (hex.startsWith('#') && hex.length === 7) {
-                const r = parseInt(hex.slice(1, 3), 16);
-                const g = parseInt(hex.slice(3, 5), 16);
-                const b = parseInt(hex.slice(5, 7), 16);
-                bgCss = `rgba(${r}, ${g}, ${b}, ${opacity})`;
-              } else {
-                bgCss = hex;
-              }
-            }
-
-            const padX = style.backgroundPaddingX ?? (style.backgroundPadding ?? 16);
-            const padY = style.backgroundPaddingY ?? (style.backgroundPadding ?? 8);
-            const radius = style.borderRadius ?? 12;
-            const borderCss = (isBgActive && style.backgroundBorderEnabled) 
-              ? `${style.backgroundBorderWidth ?? 2}px solid ${style.backgroundBorderColor || 'rgba(255,255,255,0.25)'}` 
-              : 'none';
-            const blurCss = (isBgActive && (style.backgroundBlur ?? 12) > 0) 
-              ? `blur(${style.backgroundBlur ?? 12}px)` 
-              : 'none';
-
-            // Combined Text Shadow (Shadow + Glow)
-            const shadowParts = [];
-            if (style.shadowEnabled !== false && Number(style.shadowBlur ?? 8) > 0 && style.shadowColor !== 'transparent') {
-              const offX = Number(style.shadowOffsetX ?? 0);
-              const offY = Number(style.shadowOffsetY ?? 4);
-              const blur = Number(style.shadowBlur ?? 8);
-              const col = style.shadowColor || '#000000';
-              shadowParts.push(`${offX}px ${offY}px ${blur}px ${col}`);
-            }
-            if (style.glowEnabled && Number(style.glowBlur ?? 14) > 0 && style.glowColor && style.glowColor !== 'transparent') {
-              const glowBlur = Number(style.glowBlur ?? 14);
-              const glowCol = style.glowColor || '#38BDF8';
-              shadowParts.push(`0 0 ${glowBlur}px ${glowCol}`);
-              shadowParts.push(`0 0 ${Math.round(glowBlur * 1.6)}px ${glowCol}`);
-            }
-            const combinedTextShadow = shadowParts.join(', ') || 'none';
-
-            // Stroke
-            const isStrokeActive = (style.strokeEnabled !== false) && Number(style.strokeWidth ?? 6) > 0;
-            const strokeCss = isStrokeActive ? `${Number(style.strokeWidth ?? 6) / 2}px ${style.strokeColor || '#000000'}` : 'none';
-
-            return (
-              <div
-                ref={captionBoxRef}
-                className="caption-drag-handle"
-                onMouseDown={handleMouseDown}
-                style={{
-                  position: 'absolute',
-                  top: `${style.positionY}%`,
-                  left: `${style.positionX}%`,
-                  transform: 'translate(-50%, -50%)',
-                  width: isBgActive ? 'auto' : `${style.containerWidthPercent || 90}%`,
-                  maxWidth: `${style.containerWidthPercent || 90}%`,
-                  textAlign: style.textAlign || 'center',
-                  zIndex: 20,
-                  backgroundColor: bgCss,
-                  padding: isBgActive ? `${padY}px ${padX}px` : '0px',
-                  borderRadius: isBgActive ? `${radius}px` : '0px',
-                  border: borderCss,
-                  backdropFilter: blurCss,
-                  WebkitBackdropFilter: blurCss,
-                  cursor: isDraggingCaption ? 'grabbing' : 'grab',
-                  display: isBgActive ? 'inline-block' : 'block'
-                }}
-              >
-                {/* Drag Handle Tag */}
-                <div style={{
-                  position: 'absolute',
-                  top: '-16px',
-                  left: '50%',
-                  transform: 'translateX(-50%)',
-                  background: 'rgba(15, 23, 42, 0.85)',
-                  padding: '1px 7px',
-                  borderRadius: '999px',
-                  fontSize: '9px',
-                  color: 'var(--text-muted)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  pointerEvents: 'none',
-                  whiteSpace: 'nowrap'
-                }}>
-                  <MoveVertical size={10} /> {Math.round(style.positionY)}%
-                </div>
-
-                {/* Word Tokens */}
-                <div style={{
-                  fontFamily: style.fontFamily,
-                  fontSize: `${style.fontSize}px`,
-                  fontWeight: style.fontWeight || '900',
-                  fontStyle: style.fontStyle || 'normal',
-                  lineHeight: style.lineHeight || 1.02,
-                  textTransform: style.textTransform,
-                  letterSpacing: `${style.letterSpacing ?? (style.fontFamily === 'Bebas Neue' ? 1.0 : -0.5)}px`,
-                  textAlign: style.textAlign || 'center',
-                  paintOrder: 'stroke fill'
-                }}>
-                  {activeSegment.words.map((w, idx) => {
-                    const isActive = idx === activeWordIndex;
-                    const animClass = isActive ? `anim-${style.animationType}` : '';
-                    const wordMargin = (Number(style.wordSpacing ?? 8) / 2.0);
-                    
-                    return (
-                      <span
-                        key={w.id || idx}
-                        className={`word-token ${isActive ? 'is-active' : ''} ${animClass}`}
-                        style={{
-                          color: isActive ? style.activeColor : style.primaryColor,
-                          WebkitTextStroke: strokeCss,
-                          textShadow: combinedTextShadow,
-                          display: 'inline-block',
-                          margin: `0 ${wordMargin}px`,
-                          letterSpacing: `${style.letterSpacing ?? (style.fontFamily === 'Bebas Neue' ? 1.0 : -0.5)}px`,
-                          fontStyle: style.fontStyle || 'normal',
-                          fontWeight: style.fontWeight || '900',
-                          paintOrder: 'stroke fill',
-                          strokeLinejoin: 'round',
-                          WebkitTextStrokeLinejoin: 'round'
-                        }}
-                      >
-                        {(w.word || '').trim()}
-                      </span>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })()}
         </div>
       </div>
 
-      {/* Playback Controls & Scrubber */}
-      <div className="glass-card" style={{ width: `${dims.width}px`, maxWidth: '100%', padding: '10px 14px', borderRadius: '12px' }}>
-        {/* Scrubber Range */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-          <span style={{ fontSize: '11px', fontFamily: 'monospace', color: 'var(--accent-primary)', minWidth: '46px' }}>
-            {formatTimecode(currentTime)}
-          </span>
-          <input
-            type="range"
-            min={0}
-            max={Math.max(0.1, duration || 1)}
-            step={0.02}
-            value={currentTime}
-            onChange={handleSeekChange}
-            style={{
-              flex: 1,
-              accentColor: 'var(--accent-primary)',
-              cursor: 'pointer',
-              height: '5px'
+      {/* Docked Floating Glass Transport Controls Overlay */}
+      {videoUrl && (
+        <div style={{
+          position: 'absolute',
+          bottom: '14px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 35,
+          pointerEvents: 'auto',
+          width: 'calc(100% - 28px)',
+          maxWidth: `${Math.max(340, Math.min(transform.displayW, 460))}px`,
+          display: 'flex',
+          justifyContent: 'center'
+        }}>
+          <TransportControls
+            currentTime={currentTime}
+            duration={duration}
+            isPlaying={isPlaying}
+            volume={volume}
+            isMuted={isMuted}
+            playbackRate={playbackRate}
+            onTogglePlay={togglePlay}
+            onSeek={seek}
+            onSeekChange={handleSeekChange}
+            onSetVolume={setVolume}
+            onSetIsMuted={setIsMuted}
+            onSetPlaybackRate={(rate) => {
+              setPlaybackRate(rate);
+              if (videoRef.current) videoRef.current.playbackRate = rate;
             }}
           />
-          <span style={{ fontSize: '11px', fontFamily: 'monospace', color: 'var(--text-muted)', minWidth: '46px', textAlign: 'right' }}>
-            {formatTimecode(duration)}
-          </span>
         </div>
-
-        {/* Buttons Row */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <button
-              onClick={() => seek(Math.max(0, currentTime - 2))}
-              className="btn-secondary"
-              style={{ padding: '5px 7px' }}
-              title="Back 2s"
-            >
-              <RotateCcw size={13} />
-            </button>
-            <button
-              onClick={togglePlay}
-              className="btn-primary"
-              style={{ padding: '5px 12px', borderRadius: '6px' }}
-            >
-              {isPlaying ? <Pause size={15} /> : <Play size={15} />}
-            </button>
-            <button
-              onClick={() => seek(Math.min(duration, currentTime + 2))}
-              className="btn-secondary"
-              style={{ padding: '5px 7px' }}
-              title="Forward 2s"
-            >
-              <RotateCw size={13} />
-            </button>
-          </div>
-
-          {/* Volume & Speed Controls */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <button
-              onClick={() => setIsMuted(!isMuted)}
-              style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
-            >
-              {isMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
-            </button>
-
-            <select
-              value={playbackRate}
-              onChange={(e) => {
-                const rate = parseFloat(e.target.value);
-                setPlaybackRate(rate);
-                if (videoRef.current) videoRef.current.playbackRate = rate;
-              }}
-              style={{
-                background: 'rgba(0,0,0,0.3)',
-                border: '1px solid var(--border-color)',
-                color: 'var(--text-main)',
-                fontSize: '11px',
-                fontWeight: '600',
-                padding: '3px 5px',
-                borderRadius: '6px',
-                cursor: 'pointer'
-              }}
-            >
-              <option value="0.5">0.5x</option>
-              <option value="0.75">0.75x</option>
-              <option value="1">1.0x</option>
-              <option value="1.25">1.25x</option>
-              <option value="1.5">1.5x</option>
-              <option value="2.0">2.0x</option>
-            </select>
-          </div>
-        </div>
-      </div>
+      )}
     </div>
   );
 };

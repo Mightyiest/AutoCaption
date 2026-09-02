@@ -4,198 +4,190 @@ import {
   Type, 
   Sparkles, 
   Sliders, 
-  Layers, 
   Check,
   Zap,
   AlignLeft,
   AlignCenter,
   AlignRight,
   Italic,
-  Maximize2,
-  CheckSquare,
-  Square,
+  Box,
   Sun,
   Shield,
-  Eye,
-  SlidersHorizontal,
-  Box
+  Layers,
+  Smile,
+  Flame,
+  Wand2,
+  Star,
+  BookOpen
 } from 'lucide-react';
 import { useEditorStore } from '../store/useEditorStore';
 import { PRESETS } from '../engine/presets';
+import { getAppleEmojiUrl } from '../engine/appleEmojiHelper';
 
 const FONTS = [
   { 
     name: 'Montserrat', 
-    badge: 'VIRAL HEAVY', 
+    badge: 'BOLD SANS', 
     value: 'Montserrat', 
-    sampleText: 'VIRAL HOOK 99%',
-    desc: 'The gold-standard font for MrBeast, Alex Hormozi & Shorts creators' 
+    sampleText: 'VIRAL HOOK',
+    desc: 'Impactful geometric sans with strong readability' 
   },
   { 
     name: 'Russo One', 
-    badge: 'PUNCHY IMPACT', 
+    badge: 'HEAVY PUNCH', 
     value: 'Russo One', 
     sampleText: 'EXPLOSIVE HOOK',
-    desc: 'Heavy geometric weight with ultra-high contrast readability' 
+    desc: 'Heavy geometric weight with ultra-high contrast' 
   },
   { 
     name: 'Bebas Neue', 
-    badge: 'TALL CONDENSED', 
+    badge: 'CONDENSED', 
     value: 'Bebas Neue', 
-    sampleText: 'CINEMA SHORT 4K',
-    desc: 'Clean, cinematic vertical letterforms that maximize screen real-estate' 
+    sampleText: 'CINEMATIC SHORT',
+    desc: 'Tall vertical letterforms that maximize screen area' 
   },
   { 
     name: 'Outfit', 
-    badge: 'MODERN TECH', 
+    badge: 'TECH SANS', 
     value: 'Outfit', 
-    sampleText: 'CLEAN STUDIO AI',
-    desc: 'Futuristic rounded neo-grotesque typography for sleek aesthetic videos' 
+    sampleText: 'STUDIO PRO',
+    desc: 'Clean rounded neo-grotesque typography' 
   },
   { 
     name: 'Bangers', 
-    badge: 'COMIC POP', 
+    badge: 'EXPRESSIVE', 
     value: 'Bangers', 
-    sampleText: 'CRAZY STORY TIME!',
-    desc: 'Expressive comic-book style with energetic hand-drawn impact' 
+    sampleText: 'STORY POP!',
+    desc: 'Dynamic hand-drawn comic style' 
   },
   { 
     name: 'Plus Jakarta Sans', 
-    badge: 'SLEEK LUXURY', 
+    badge: 'GEOMETRIC', 
     value: 'Plus Jakarta Sans', 
-    sampleText: 'PRO LUXURY VIBE',
+    sampleText: 'PRO LUXURY',
     desc: 'Contemporary geometric sans with elegant proportions' 
   },
   { 
     name: 'Inter', 
-    badge: 'MINIMAL CLEAN', 
+    badge: 'CLEAN', 
     value: 'Inter', 
-    sampleText: 'NEUTRAL VOICE 100',
-    desc: 'High-legibility interface typography for minimalist creator styles' 
+    sampleText: 'NEUTRAL VOICE',
+    desc: 'High-legibility interface typography' 
   }
 ];
 
 const FONT_WEIGHTS = [
-  { label: '400', name: 'Regular', value: '400' },
-  { label: '600', name: 'Semi', value: '600' },
-  { label: '700', name: 'Bold', value: '700' },
-  { label: '800', name: 'Extra', value: '800' },
-  { label: '900', name: 'Black', value: '900' }
+  { label: 'Regular', value: '400' },
+  { label: 'Semi', value: '600' },
+  { label: 'Bold', value: '700' },
+  { label: 'Extra', value: '800' },
+  { label: 'Black', value: '900' }
 ];
 
 export const StyleInspector = () => {
-  const [activeTab, setActiveTab] = useState('presets'); // 'presets' | 'typography' | 'colors' | 'animation'
+  const [activeTab, setActiveTab] = useState('presets'); // 'presets' | 'typography' | 'colors' | 'animation' | 'ai_effects'
+  const [enhancedSuccessToast, setEnhancedSuccessToast] = useState(false);
 
-  const {
-    style,
+  const { 
+    style, 
     activePresetId,
-    applyPreset,
-    updateStyle
+    updateStyle, 
+    applyPreset, 
+    pushHistoryState,
+    stripAllPunctuation,
+    rechunkSegments,
+    removePunctuation,
+    setRemovePunctuation,
+    autoEnhanceWithAI,
+    customKeywordRules,
+    setKeywordLibraryModalOpen
   } = useEditorStore();
 
+  const handleStyleChange = (key, value) => {
+    updateStyle({ [key]: value });
+  };
+
+  const handleRunAIEnhance = (e) => {
+    if (e && e.currentTarget) {
+      e.currentTarget.blur();
+    }
+    autoEnhanceWithAI();
+    setEnhancedSuccessToast(true);
+    setTimeout(() => setEnhancedSuccessToast(false), 2500);
+  };
+
   return (
-    <div className="glass-panel" style={{ borderRadius: '16px', display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      {/* Tab Navigation */}
+    <aside className="studio-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+      {/* Top Segmented Tab Switcher */}
       <div style={{
-        display: 'flex',
-        borderBottom: '1px solid var(--border-color)',
-        background: 'rgba(0,0,0,0.2)',
-        padding: '6px'
+        padding: '6px 8px',
+        borderBottom: '1px solid var(--border-subtle)',
+        flexShrink: 0
       }}>
-        <button
-          onClick={() => setActiveTab('presets')}
-          style={{
-            flex: 1,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '6px',
-            padding: '8px 4px',
-            fontSize: '12px',
-            fontWeight: '700',
-            borderRadius: '8px',
-            border: 'none',
-            cursor: 'pointer',
-            background: activeTab === 'presets' ? 'var(--accent-primary)' : 'transparent',
-            color: activeTab === 'presets' ? '#000000' : 'var(--text-muted)',
-            transition: 'all 150ms ease'
-          }}
-        >
-          <Sparkles size={14} /> Presets
-        </button>
+        <div className="segmented-control" style={{ width: '100%', display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '2px' }}>
+          <button
+            onClick={() => setActiveTab('presets')}
+            className={`segmented-control-item ${activeTab === 'presets' ? 'active' : ''}`}
+            title="Style Presets"
+            style={{ padding: '6px 2px', fontSize: '10.5px' }}
+          >
+            <Sparkles size={11} />
+            <span>Presets</span>
+          </button>
 
-        <button
-          onClick={() => setActiveTab('typography')}
-          style={{
-            flex: 1,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '6px',
-            padding: '8px 4px',
-            fontSize: '12px',
-            fontWeight: '700',
-            borderRadius: '8px',
-            border: 'none',
-            cursor: 'pointer',
-            background: activeTab === 'typography' ? 'var(--accent-primary)' : 'transparent',
-            color: activeTab === 'typography' ? '#000000' : 'var(--text-muted)',
-            transition: 'all 150ms ease'
-          }}
-        >
-          <Type size={14} /> Typography
-        </button>
+          <button
+            onClick={() => setActiveTab('typography')}
+            className={`segmented-control-item ${activeTab === 'typography' ? 'active' : ''}`}
+            title="Typography Settings"
+            style={{ padding: '6px 2px', fontSize: '10.5px' }}
+          >
+            <Type size={11} />
+            <span>Type</span>
+          </button>
 
-        <button
-          onClick={() => setActiveTab('colors')}
-          style={{
-            flex: 1,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '6px',
-            padding: '8px 4px',
-            fontSize: '12px',
-            fontWeight: '700',
-            borderRadius: '8px',
-            border: 'none',
-            cursor: 'pointer',
-            background: activeTab === 'colors' ? 'var(--accent-primary)' : 'transparent',
-            color: activeTab === 'colors' ? '#000000' : 'var(--text-muted)',
-            transition: 'all 150ms ease'
-          }}
-        >
-          <Palette size={14} /> Effects
-        </button>
+          <button
+            onClick={() => setActiveTab('colors')}
+            className={`segmented-control-item ${activeTab === 'colors' ? 'active' : ''}`}
+            title="Colors & Effects"
+            style={{ padding: '6px 2px', fontSize: '10.5px' }}
+          >
+            <Palette size={11} />
+            <span>Styles</span>
+          </button>
 
-        <button
-          onClick={() => setActiveTab('animation')}
-          style={{
-            flex: 1,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '6px',
-            padding: '8px 4px',
-            fontSize: '12px',
-            fontWeight: '700',
-            borderRadius: '8px',
-            border: 'none',
-            cursor: 'pointer',
-            background: activeTab === 'animation' ? 'var(--accent-primary)' : 'transparent',
-            color: activeTab === 'animation' ? '#000000' : 'var(--text-muted)',
-            transition: 'all 150ms ease'
-          }}
-        >
-          <Zap size={14} /> Motion
-        </button>
+          <button
+            onClick={() => setActiveTab('animation')}
+            className={`segmented-control-item ${activeTab === 'animation' ? 'active' : ''}`}
+            title="Motion & Layout"
+            style={{ padding: '6px 2px', fontSize: '10.5px' }}
+          >
+            <Zap size={11} />
+            <span>Motion</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('ai_effects')}
+            className={`segmented-control-item ${activeTab === 'ai_effects' ? 'active' : ''}`}
+            title="AI Viral Emojis & Keyword Emphasis"
+            style={{ padding: '6px 2px', fontSize: '10.5px', color: activeTab === 'ai_effects' ? 'var(--accent-bright-blue)' : '#00FF66' }}
+          >
+            <Wand2 size={11} />
+            <span>AI Viral</span>
+          </button>
+        </div>
       </div>
 
-      {/* Tab Body */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
-        {/* PRESETS TAB */}
+      {/* Tab Content Body */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        {/* =========================================================================
+            TAB 1: PRESETS
+           ========================================================================= */}
         {activeTab === 'presets' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <span style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              Built-in Styles
+            </span>
+
             {PRESETS.map((preset) => {
               const isSelected = activePresetId === preset.id;
 
@@ -203,27 +195,30 @@ export const StyleInspector = () => {
                 <div
                   key={preset.id}
                   onClick={() => applyPreset(preset.id)}
-                  className="glass-card"
                   style={{
-                    padding: '12px 14px',
-                    borderRadius: '12px',
+                    padding: '10px 12px',
+                    borderRadius: 'var(--radius-md)',
                     cursor: 'pointer',
-                    border: isSelected ? '2px solid var(--accent-primary)' : '1px solid var(--border-color)',
-                    background: isSelected ? 'rgba(56, 189, 248, 0.1)' : 'rgba(31, 41, 55, 0.6)',
+                    border: isSelected ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+                    background: isSelected ? 'rgba(0, 113, 227, 0.12)' : 'var(--bg-surface)',
+                    boxShadow: isSelected ? '0 1px 4px rgba(0, 113, 227, 0.2)' : 'none',
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: '6px'
+                    gap: '6px',
+                    transition: 'all var(--transition-fast)'
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: '13px', fontWeight: '800' }}>{preset.name}</span>
+                    <span style={{ fontSize: '12px', fontWeight: isSelected ? '600' : '500', color: isSelected ? 'var(--accent-bright-blue)' : 'var(--text-primary)' }}>
+                      {preset.name}
+                    </span>
                     <span style={{
-                      fontSize: '9px',
-                      fontWeight: '800',
-                      padding: '2px 6px',
-                      borderRadius: '4px',
-                      background: preset.badge === 'VIRAL' ? 'var(--accent-viral-yellow)' : 'rgba(255,255,255,0.1)',
-                      color: preset.badge === 'VIRAL' ? '#000000' : '#FFFFFF'
+                      fontSize: '8px',
+                      fontWeight: '600',
+                      padding: '1px 5px',
+                      borderRadius: '3px',
+                      background: 'rgba(255, 255, 255, 0.08)',
+                      color: 'var(--text-secondary)'
                     }}>
                       {preset.badge}
                     </span>
@@ -231,12 +226,12 @@ export const StyleInspector = () => {
 
                   {/* Visual Style Mini Preview */}
                   <div style={{
-                    padding: '8px',
-                    borderRadius: '8px',
-                    backgroundColor: preset.style.backgroundColor || '#0F172A',
+                    padding: '8px 10px',
+                    borderRadius: 'var(--radius-sm)',
+                    backgroundColor: preset.style.backgroundColor || '#000000',
                     textAlign: preset.style.textAlign || 'center',
                     fontFamily: preset.style.fontFamily,
-                    fontSize: '18px',
+                    fontSize: '16px',
                     fontWeight: preset.style.fontWeight,
                     fontStyle: preset.style.fontStyle || 'normal',
                     textTransform: preset.style.textTransform,
@@ -247,233 +242,210 @@ export const StyleInspector = () => {
                     <span style={{
                       color: preset.style.primaryColor,
                       WebkitTextStroke: preset.style.strokeWidth ? `${(preset.style.strokeWidth / 2)}px ${preset.style.strokeColor}` : 'none',
-                      paintOrder: 'stroke fill',
-                      strokeLinejoin: 'round',
-                      WebkitTextStrokeLinejoin: 'round',
-                      display: 'inline-block',
-                      margin: `0 ${(Number(preset.style.wordSpacing ?? 8) / 2)}px`
+                      paintOrder: 'stroke fill'
                     }}>
-                      STOP
+                      CAPTION{' '}
                     </span>
-                    {' '}
                     <span style={{
                       color: preset.style.activeColor,
                       WebkitTextStroke: preset.style.strokeWidth ? `${(preset.style.strokeWidth / 2)}px ${preset.style.strokeColor}` : 'none',
-                      paintOrder: 'stroke fill',
-                      strokeLinejoin: 'round',
-                      WebkitTextStrokeLinejoin: 'round',
-                      textShadow: preset.style.shadowBlur ? `${preset.style.shadowOffsetX ?? 0}px ${preset.style.shadowOffsetY ?? 4}px ${preset.style.shadowBlur}px ${preset.style.shadowColor}` : 'none',
-                      display: 'inline-block',
-                      margin: `0 ${(Number(preset.style.wordSpacing ?? 8) / 2)}px`
+                      paintOrder: 'stroke fill'
                     }}>
-                      SCROLLING
+                      STYLE
                     </span>
                   </div>
 
-                  <p style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{preset.description}</p>
+                  <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', lineHeight: '1.3' }}>
+                    {preset.description}
+                  </span>
                 </div>
               );
             })}
           </div>
         )}
 
-        {/* TYPOGRAPHY & SPACING TAB */}
+        {/* =========================================================================
+            TAB 2: TYPOGRAPHY
+           ========================================================================= */}
         {activeTab === 'typography' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            {/* Section 1: Font Family Visual Preview Cards */}
-            <div className="glass-card" style={{ padding: '12px', borderRadius: '10px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: '11px', fontWeight: '800', color: 'var(--accent-primary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  Font Family Preview
-                </span>
-                <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-                  {FONTS.length} Fonts Available
-                </span>
-              </div>
-
-              {/* Visual Font Cards Grid */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {/* Font Family Selection */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <span style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Font Family
+              </span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                 {FONTS.map((f) => {
                   const isSelected = style.fontFamily === f.value;
-
                   return (
-                    <div
+                    <button
                       key={f.value}
-                      onClick={() => updateStyle({ fontFamily: f.value })}
+                      onClick={() => handleStyleChange('fontFamily', f.value)}
                       style={{
-                        padding: '10px 12px',
-                        borderRadius: '10px',
+                        padding: '6px 8px',
+                        borderRadius: 'var(--radius-sm)',
+                        border: isSelected ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+                        background: isSelected ? 'rgba(0, 113, 227, 0.14)' : 'var(--bg-surface)',
                         cursor: 'pointer',
-                        border: isSelected ? '2px solid var(--accent-primary)' : '1px solid var(--border-color)',
-                        background: isSelected ? 'rgba(56, 189, 248, 0.12)' : 'rgba(0,0,0,0.28)',
                         display: 'flex',
-                        flexDirection: 'column',
-                        gap: '4px',
-                        transition: 'all 150ms ease',
-                        boxShadow: isSelected ? '0 0 12px rgba(56, 189, 248, 0.2)' : 'none'
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        textAlign: 'left'
                       }}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span style={{ fontSize: '13px', fontWeight: '800', color: isSelected ? 'var(--accent-primary)' : 'var(--text-main)' }}>
-                            {f.name}
-                          </span>
-                          <span style={{
-                            fontSize: '9px',
-                            fontWeight: '800',
-                            padding: '1px 5px',
-                            borderRadius: '4px',
-                            background: isSelected ? 'var(--accent-primary)' : 'rgba(255,255,255,0.08)',
-                            color: isSelected ? '#000000' : 'var(--text-muted)'
-                          }}>
-                            {f.badge}
-                          </span>
-                        </div>
-                        {isSelected && (
-                          <div style={{
-                            width: '16px',
-                            height: '16px',
-                            borderRadius: '999px',
-                            background: 'var(--accent-primary)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center'
-                          }}>
-                            <Check size={10} color="#000000" strokeWidth={3} />
-                          </div>
-                        )}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ 
+                          fontFamily: f.value, 
+                          fontSize: '13px', 
+                          fontWeight: '700',
+                          color: isSelected ? 'var(--accent-bright-blue)' : 'var(--text-primary)' 
+                        }}>
+                          {f.name}
+                        </span>
                       </div>
-
-                      {/* Actual Rendered Typography Preview Strip */}
-                      <div style={{
-                        padding: '6px 8px',
-                        borderRadius: '6px',
-                        background: 'rgba(0,0,0,0.4)',
-                        border: '1px solid rgba(255,255,255,0.04)',
-                        fontFamily: f.value,
-                        fontSize: f.value === 'Bebas Neue' ? '18px' : '16px',
-                        fontWeight: '900',
-                        fontStyle: style.fontStyle || 'normal',
-                        color: isSelected ? 'var(--accent-viral-yellow)' : '#FFFFFF',
-                        letterSpacing: f.value === 'Bebas Neue' ? '1px' : '0px',
-                        lineHeight: 1.1,
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis'
-                      }}>
-                        {f.sampleText}
-                      </div>
-
-                      <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-                        {f.desc}
-                      </span>
-                    </div>
+                      <span style={{ fontSize: '8px', color: 'var(--text-tertiary)' }}>{f.badge}</span>
+                    </button>
                   );
                 })}
               </div>
             </div>
 
-            {/* Section 2: Weight & Size */}
-            <div className="glass-card" style={{ padding: '12px', borderRadius: '10px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <span style={{ fontSize: '11px', fontWeight: '800', color: 'var(--accent-primary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                Weight & Scale
+            {/* Font Weight & Style Row */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <span style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Weight & Formatting
               </span>
-
-              {/* Font Weight & Italic Toggle */}
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                  <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-muted)' }}>Weight & Style</label>
+              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                {FONT_WEIGHTS.map((w) => (
                   <button
-                    onClick={() => updateStyle({ fontStyle: style.fontStyle === 'italic' ? 'normal' : 'italic' })}
+                    key={w.value}
+                    onClick={() => handleStyleChange('fontWeight', w.value)}
+                    className="segmented-control-item"
                     style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      padding: '3px 8px',
+                      flex: 1,
+                      padding: '4px 2px',
                       fontSize: '11px',
-                      fontWeight: '700',
-                      borderRadius: '6px',
-                      border: 'none',
-                      cursor: 'pointer',
-                      background: style.fontStyle === 'italic' ? 'var(--accent-primary)' : 'rgba(255,255,255,0.08)',
-                      color: style.fontStyle === 'italic' ? '#000000' : 'var(--text-main)'
+                      background: style.fontWeight === w.value ? 'rgba(255, 255, 255, 0.16)' : 'var(--bg-surface)',
+                      color: style.fontWeight === w.value ? '#FFFFFF' : 'var(--text-secondary)',
+                      border: '1px solid var(--border-subtle)'
                     }}
-                    title="Toggle Italic"
                   >
-                    <Italic size={12} /> Italic
+                    {w.label}
                   </button>
-                </div>
-                <div style={{ display: 'flex', gap: '4px' }}>
-                  {FONT_WEIGHTS.map((fw) => {
-                    const isSelected = String(style.fontWeight || '900') === fw.value;
-                    return (
-                      <button
-                        key={fw.value}
-                        onClick={() => updateStyle({ fontWeight: fw.value })}
-                        style={{
-                          flex: 1,
-                          padding: '6px 2px',
-                          fontSize: '11px',
-                          fontWeight: '700',
-                          borderRadius: '6px',
-                          border: 'none',
-                          cursor: 'pointer',
-                          background: isSelected ? 'var(--accent-primary)' : 'rgba(255,255,255,0.06)',
-                          color: isSelected ? '#000000' : 'var(--text-main)'
-                        }}
-                      >
-                        {fw.label}
-                      </button>
-                    );
-                  })}
-                </div>
+                ))}
               </div>
 
-              {/* Font Size Slider */}
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                  <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-muted)' }}>Font Size</label>
-                  <span style={{ fontSize: '12px', fontFamily: 'monospace', color: 'var(--accent-primary)' }}>{style.fontSize}px</span>
+              {/* Text Alignment & Case */}
+              <div style={{ display: 'flex', gap: '4px', marginTop: '2px' }}>
+                {/* Alignment */}
+                <div className="segmented-control" style={{ flex: 1 }}>
+                  <button
+                    onClick={() => handleStyleChange('textAlign', 'left')}
+                    className={`segmented-control-item ${style.textAlign === 'left' ? 'active' : ''}`}
+                    style={{ flex: 1 }}
+                    title="Align Left"
+                  >
+                    <AlignLeft size={12} />
+                  </button>
+                  <button
+                    onClick={() => handleStyleChange('textAlign', 'center')}
+                    className={`segmented-control-item ${style.textAlign === 'center' ? 'active' : ''}`}
+                    style={{ flex: 1 }}
+                    title="Align Center"
+                  >
+                    <AlignCenter size={12} />
+                  </button>
+                  <button
+                    onClick={() => handleStyleChange('textAlign', 'right')}
+                    className={`segmented-control-item ${style.textAlign === 'right' ? 'active' : ''}`}
+                    style={{ flex: 1 }}
+                    title="Align Right"
+                  >
+                    <AlignRight size={12} />
+                  </button>
                 </div>
-                <input
-                  type="range"
-                  min={20}
-                  max={64}
-                  value={style.fontSize}
-                  onChange={(e) => updateStyle({ fontSize: parseInt(e.target.value) })}
-                  style={{ width: '100%', accentColor: 'var(--accent-primary)' }}
-                />
+
+                {/* Case */}
+                <div className="segmented-control" style={{ flex: 1 }}>
+                  <button
+                    onClick={() => handleStyleChange('textTransform', 'uppercase')}
+                    className={`segmented-control-item ${style.textTransform === 'uppercase' ? 'active' : ''}`}
+                    style={{ flex: 1, fontSize: '10px', fontWeight: '700' }}
+                    title="UPPERCASE"
+                  >
+                    AA
+                  </button>
+                  <button
+                    onClick={() => handleStyleChange('textTransform', 'capitalize')}
+                    className={`segmented-control-item ${style.textTransform === 'capitalize' ? 'active' : ''}`}
+                    style={{ flex: 1, fontSize: '10px' }}
+                    title="Capitalize Words"
+                  >
+                    Aa
+                  </button>
+                  <button
+                    onClick={() => handleStyleChange('textTransform', 'none')}
+                    className={`segmented-control-item ${style.textTransform === 'none' ? 'active' : ''}`}
+                    style={{ flex: 1, fontSize: '10px' }}
+                    title="As Typed"
+                  >
+                    aa
+                  </button>
+                </div>
+
+                {/* Italic */}
+                <button
+                  onClick={() => handleStyleChange('fontStyle', style.fontStyle === 'italic' ? 'normal' : 'italic')}
+                  className="btn-secondary"
+                  style={{
+                    padding: '4px 8px',
+                    background: style.fontStyle === 'italic' ? 'rgba(0, 113, 227, 0.2)' : 'var(--bg-surface)',
+                    borderColor: style.fontStyle === 'italic' ? 'var(--accent-primary)' : 'var(--border-subtle)',
+                    color: style.fontStyle === 'italic' ? 'var(--accent-bright-blue)' : 'var(--text-secondary)'
+                  }}
+                  title="Italic Toggle"
+                >
+                  <Italic size={12} />
+                </button>
               </div>
             </div>
 
-            {/* Section 3: Spacing & Leading Controls */}
-            <div className="glass-card" style={{ padding: '12px', borderRadius: '10px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <span style={{ fontSize: '11px', fontWeight: '800', color: 'var(--accent-primary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                Spacing & Leading
-              </span>
+            {/* Font Size Slider */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Font Size</span>
+                <span style={{ fontSize: '11px', fontFamily: 'SF Mono, monospace', color: 'var(--text-primary)' }}>{style.fontSize}px</span>
+              </div>
+              <input
+                type="range"
+                min={18}
+                max={90}
+                value={style.fontSize}
+                onChange={(e) => handleStyleChange('fontSize', parseInt(e.target.value))}
+              />
+            </div>
 
-              {/* Word Spacing */}
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                  <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-muted)' }}>Word Spacing (Gap)</label>
-                  <span style={{ fontSize: '12px', fontFamily: 'monospace', color: 'var(--accent-primary)' }}>{style.wordSpacing ?? 8}px</span>
+            {/* Word Spacing & Letter Spacing */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Word Spacing</span>
+                  <span style={{ fontSize: '10px', fontFamily: 'SF Mono, monospace', color: 'var(--text-tertiary)' }}>{style.wordSpacing ?? 8}px</span>
                 </div>
                 <input
                   type="range"
                   min={0}
-                  max={24}
+                  max={36}
                   step={1}
                   value={style.wordSpacing ?? 8}
-                  onChange={(e) => updateStyle({ wordSpacing: parseInt(e.target.value) })}
-                  style={{ width: '100%', accentColor: 'var(--accent-primary)' }}
+                  onChange={(e) => handleStyleChange('wordSpacing', parseInt(e.target.value))}
                 />
               </div>
 
-              {/* Letter Spacing (Tracking) */}
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                  <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-muted)' }}>Letter Spacing (Tracking)</label>
-                  <span style={{ fontSize: '12px', fontFamily: 'monospace', color: 'var(--accent-primary)' }}>{style.letterSpacing ?? 0}px</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Letter Spacing</span>
+                  <span style={{ fontSize: '10px', fontFamily: 'SF Mono, monospace', color: 'var(--text-tertiary)' }}>{style.letterSpacing ?? 0}px</span>
                 </div>
                 <input
                   type="range"
@@ -481,771 +453,714 @@ export const StyleInspector = () => {
                   max={12}
                   step={0.5}
                   value={style.letterSpacing ?? 0}
-                  onChange={(e) => updateStyle({ letterSpacing: parseFloat(e.target.value) })}
-                  style={{ width: '100%', accentColor: 'var(--accent-primary)' }}
-                />
-              </div>
-
-              {/* Line Height (Leading) */}
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                  <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-muted)' }}>Line Height (Leading)</label>
-                  <span style={{ fontSize: '12px', fontFamily: 'monospace', color: 'var(--accent-primary)' }}>{Number(style.lineHeight ?? 1.02).toFixed(2)}x</span>
-                </div>
-                <input
-                  type="range"
-                  min={0.85}
-                  max={2.0}
-                  step={0.05}
-                  value={style.lineHeight ?? 1.02}
-                  onChange={(e) => updateStyle({ lineHeight: parseFloat(e.target.value) })}
-                  style={{ width: '100%', accentColor: 'var(--accent-primary)' }}
+                  onChange={(e) => handleStyleChange('letterSpacing', parseFloat(e.target.value))}
                 />
               </div>
             </div>
 
-            {/* Section 4: Alignment & Casing */}
-            <div className="glass-card" style={{ padding: '12px', borderRadius: '10px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <span style={{ fontSize: '11px', fontWeight: '800', color: 'var(--accent-primary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                Alignment & Casing
-              </span>
-
-              {/* Text Alignment */}
-              <div>
-                <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
-                  Alignment
-                </label>
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  {[
-                    { id: 'left', label: 'Left', icon: <AlignLeft size={13} /> },
-                    { id: 'center', label: 'Center', icon: <AlignCenter size={13} /> },
-                    { id: 'right', label: 'Right', icon: <AlignRight size={13} /> }
-                  ].map((align) => {
-                    const isSelected = (style.textAlign || 'center') === align.id;
-                    return (
-                      <button
-                        key={align.id}
-                        onClick={() => updateStyle({ textAlign: align.id })}
-                        style={{
-                          flex: 1,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '6px',
-                          padding: '7px 4px',
-                          fontSize: '11px',
-                          fontWeight: '700',
-                          borderRadius: '6px',
-                          border: 'none',
-                          cursor: 'pointer',
-                          background: isSelected ? 'var(--accent-primary)' : 'rgba(255,255,255,0.06)',
-                          color: isSelected ? '#000000' : 'var(--text-main)'
-                        }}
-                      >
-                        {align.icon} {align.label}
-                      </button>
-                    );
-                  })}
-                </div>
+            {/* Line Height */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Line Height (Leading)</span>
+                <span style={{ fontSize: '10px', fontFamily: 'SF Mono, monospace', color: 'var(--text-tertiary)' }}>{style.lineHeight ?? 1.05}x</span>
               </div>
-
-              {/* Text Transform Casing */}
-              <div>
-                <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
-                  Casing
-                </label>
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  {['uppercase', 'capitalize', 'none'].map((caseType) => (
-                    <button
-                      key={caseType}
-                      onClick={() => updateStyle({ textTransform: caseType })}
-                      style={{
-                        flex: 1,
-                        padding: '6px 4px',
-                        fontSize: '11px',
-                        fontWeight: '700',
-                        borderRadius: '6px',
-                        border: 'none',
-                        cursor: 'pointer',
-                        background: style.textTransform === caseType ? 'var(--accent-primary)' : 'rgba(255,255,255,0.06)',
-                        color: style.textTransform === caseType ? '#000000' : 'var(--text-main)',
-                        textTransform: caseType
-                      }}
-                    >
-                      {caseType === 'none' ? 'Normal' : caseType}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <input
+                type="range"
+                min={0.85}
+                max={1.8}
+                step={0.05}
+                value={style.lineHeight ?? 1.05}
+                onChange={(e) => handleStyleChange('lineHeight', parseFloat(e.target.value))}
+              />
             </div>
 
-            {/* Section 5: Placement & Container Dimensions */}
-            <div className="glass-card" style={{ padding: '12px', borderRadius: '10px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <span style={{ fontSize: '11px', fontWeight: '800', color: 'var(--accent-primary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                Position & Box Width
-              </span>
-
-              {/* Vertical Position */}
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                  <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-muted)' }}>Vertical Position</label>
-                  <span style={{ fontSize: '12px', fontFamily: 'monospace', color: 'var(--accent-primary)' }}>{style.positionY}%</span>
-                </div>
-                <input
-                  type="range"
-                  min={15}
-                  max={88}
-                  value={style.positionY}
-                  onChange={(e) => updateStyle({ positionY: parseInt(e.target.value) })}
-                  style={{ width: '100%', accentColor: 'var(--accent-primary)' }}
-                />
+            {/* Max Words Per Segment */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Words Per Screen</span>
+                <span style={{ fontSize: '11px', fontFamily: 'SF Mono, monospace', color: 'var(--text-primary)' }}>{style.maxWordsPerSegment || 3}</span>
               </div>
+              <input
+                type="range"
+                min={1}
+                max={5}
+                value={style.maxWordsPerSegment || 3}
+                onChange={(e) => handleStyleChange('maxWordsPerSegment', parseInt(e.target.value))}
+              />
+            </div>
 
-              {/* Container Width Percent */}
+            {/* Quick Clean Action: Strip Punctuation */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '9px 12px',
+              background: 'rgba(255, 255, 255, 0.03)',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--border-subtle)',
+              marginTop: '4px'
+            }}>
               <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                  <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-muted)' }}>Caption Box Max Width</label>
-                  <span style={{ fontSize: '12px', fontFamily: 'monospace', color: 'var(--accent-primary)' }}>{style.containerWidthPercent ?? 90}%</span>
+                <div style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)' }}>
+                  Strip Punctuation
                 </div>
-                <input
-                  type="range"
-                  min={50}
-                  max={100}
-                  step={5}
-                  value={style.containerWidthPercent ?? 90}
-                  onChange={(e) => updateStyle({ containerWidthPercent: parseInt(e.target.value) })}
-                  style={{ width: '100%', accentColor: 'var(--accent-primary)' }}
-                />
-              </div>
-
-              {/* Quick Placement Presets */}
-              <div>
-                <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
-                  Safe Placement Presets
-                </label>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
-                  <button onClick={() => updateStyle({ positionY: 25 })} className="btn-secondary" style={{ fontSize: '11px', padding: '6px 8px', justifyContent: 'center' }}>
-                    Top (25%)
-                  </button>
-                  <button onClick={() => updateStyle({ positionY: 50 })} className="btn-secondary" style={{ fontSize: '11px', padding: '6px 8px', justifyContent: 'center' }}>
-                    Center (50%)
-                  </button>
-                  <button onClick={() => updateStyle({ positionY: 74 })} className="btn-secondary" style={{ fontSize: '11px', padding: '6px 8px', justifyContent: 'center' }}>
-                    Viral Sweetspot (74%)
-                  </button>
-                  <button onClick={() => updateStyle({ positionY: 84 })} className="btn-secondary" style={{ fontSize: '11px', padding: '6px 8px', justifyContent: 'center' }}>
-                    Subtitle (84%)
-                  </button>
+                <div style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>
+                  Remove commas, periods, & quotes
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={stripAllPunctuation}
+                className="btn-secondary"
+                style={{ fontSize: '10px', padding: '4px 8px', color: 'var(--accent-bright-blue)' }}
+                title="Remove all punctuation marks from existing captions"
+              >
+                Clean Text
+              </button>
             </div>
           </div>
         )}
 
-        {/* COLORS & EFFECTS TAB */}
+        {/* =========================================================================
+            TAB 3: COLORS & EFFECTS
+           ========================================================================= */}
         {activeTab === 'colors' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            
-            {/* 1. Word Colors */}
-            <div className="glass-card" style={{ padding: '12px', borderRadius: '10px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <span style={{ fontSize: '11px', fontWeight: '800', color: 'var(--accent-primary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                Text Fill Colors
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {/* Base Colors */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <span style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Text Colors
               </span>
-
-              {/* Active Word Highlight Color */}
-              <div>
-                <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
-                  Active Word Highlight
-                </label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <input
-                    type="color"
-                    value={style.activeColor}
-                    onChange={(e) => updateStyle({ activeColor: e.target.value })}
-                    style={{ width: '36px', height: '36px', borderRadius: '6px', border: 'none', cursor: 'pointer', background: 'none' }}
-                  />
-                  <input
-                    type="text"
-                    value={style.activeColor}
-                    onChange={(e) => updateStyle({ activeColor: e.target.value })}
-                    style={{ flex: 1, background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', color: '#FFF', padding: '7px 10px', borderRadius: '6px', fontSize: '12px', fontFamily: 'monospace' }}
-                  />
-                </div>
-              </div>
-
-              {/* Inactive Word Text Color */}
-              <div>
-                <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
-                  Inactive Words Fill
-                </label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                {/* Primary Color */}
+                <div style={{
+                  padding: '8px',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border-subtle)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between'
+                }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>Primary</span>
+                    <span style={{ fontSize: '11px', fontFamily: 'SF Mono, monospace', color: 'var(--text-primary)' }}>{style.primaryColor}</span>
+                  </div>
                   <input
                     type="color"
                     value={style.primaryColor}
-                    onChange={(e) => updateStyle({ primaryColor: e.target.value })}
-                    style={{ width: '36px', height: '36px', borderRadius: '6px', border: 'none', cursor: 'pointer', background: 'none' }}
+                    onChange={(e) => handleStyleChange('primaryColor', e.target.value)}
+                    style={{ width: '26px', height: '26px', border: 'none', borderRadius: '4px', cursor: 'pointer', background: 'none' }}
                   />
+                </div>
+
+                {/* Highlight Active Word Color */}
+                <div style={{
+                  padding: '8px',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border-subtle)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between'
+                }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>Active Word</span>
+                    <span style={{ fontSize: '11px', fontFamily: 'SF Mono, monospace', color: 'var(--text-primary)' }}>{style.activeColor}</span>
+                  </div>
                   <input
-                    type="text"
-                    value={style.primaryColor}
-                    onChange={(e) => updateStyle({ primaryColor: e.target.value })}
-                    style={{ flex: 1, background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', color: '#FFF', padding: '7px 10px', borderRadius: '6px', fontSize: '12px', fontFamily: 'monospace' }}
+                    type="color"
+                    value={style.activeColor}
+                    onChange={(e) => handleStyleChange('activeColor', e.target.value)}
+                    style={{ width: '26px', height: '26px', border: 'none', borderRadius: '4px', cursor: 'pointer', background: 'none' }}
                   />
                 </div>
               </div>
             </div>
 
-            {/* 2. Stroke Outline Section (With Checkbox Toggle) */}
-            <div className="glass-card" style={{ padding: '12px', borderRadius: '10px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {/* Stroke Outline */}
+            <div style={{
+              padding: '10px',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border-subtle)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px'
+            }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div 
-                  onClick={() => updateStyle({ strokeEnabled: !(style.strokeEnabled ?? true) })}
-                  style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={style.strokeEnabled ?? true}
-                    onChange={(e) => updateStyle({ strokeEnabled: e.target.checked })}
-                    style={{ accentColor: 'var(--accent-primary)', width: '15px', height: '15px', cursor: 'pointer' }}
-                  />
-                  <span style={{ fontSize: '12px', fontWeight: '800', color: (style.strokeEnabled ?? true) ? 'var(--text-main)' : 'var(--text-muted)' }}>
-                    Stroke Outline
-                  </span>
-                </div>
-                <span style={{ fontSize: '11px', fontFamily: 'monospace', color: (style.strokeEnabled ?? true) ? 'var(--accent-primary)' : 'var(--text-muted)' }}>
-                  {(style.strokeEnabled ?? true) ? `${style.strokeWidth || 6}px` : 'Disabled'}
+                <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)' }}>Stroke Outline</span>
+                <input
+                  type="color"
+                  value={style.strokeColor || '#000000'}
+                  onChange={(e) => handleStyleChange('strokeColor', e.target.value)}
+                  style={{ width: '22px', height: '22px', border: 'none', borderRadius: '4px', cursor: 'pointer', background: 'none' }}
+                />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <input
+                  type="range"
+                  min={0}
+                  max={16}
+                  value={style.strokeWidth ?? 6}
+                  onChange={(e) => handleStyleChange('strokeWidth', parseInt(e.target.value))}
+                  style={{ flex: 1 }}
+                />
+                <span style={{ fontSize: '10px', fontFamily: 'SF Mono, monospace', color: 'var(--text-tertiary)', minWidth: '24px' }}>
+                  {style.strokeWidth ?? 6}px
                 </span>
               </div>
-
-              {(style.strokeEnabled ?? true) && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', paddingTop: '4px' }}>
-                  <input
-                    type="range"
-                    min={1}
-                    max={16}
-                    value={style.strokeWidth || 6}
-                    onChange={(e) => updateStyle({ strokeWidth: parseInt(e.target.value) })}
-                    style={{ width: '100%', accentColor: 'var(--accent-primary)' }}
-                  />
-
-                  {/* Quick Width Chips */}
-                  <div style={{ display: 'flex', gap: '6px' }}>
-                    {[
-                      { label: 'Thin (2px)', val: 2 },
-                      { label: 'Bold (6px)', val: 6 },
-                      { label: 'Heavy (10px)', val: 10 },
-                      { label: 'Thick (14px)', val: 14 }
-                    ].map((w) => (
-                      <button
-                        key={w.val}
-                        type="button"
-                        onClick={() => updateStyle({ strokeWidth: w.val })}
-                        style={{
-                          flex: 1,
-                          padding: '4px 2px',
-                          fontSize: '10px',
-                          fontWeight: '700',
-                          borderRadius: '6px',
-                          border: 'none',
-                          cursor: 'pointer',
-                          background: (style.strokeWidth || 6) === w.val ? 'var(--accent-primary)' : 'rgba(255,255,255,0.06)',
-                          color: (style.strokeWidth || 6) === w.val ? '#000000' : 'var(--text-muted)'
-                        }}
-                      >
-                        {w.label}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <input
-                      type="color"
-                      value={style.strokeColor || '#000000'}
-                      onChange={(e) => updateStyle({ strokeColor: e.target.value })}
-                      style={{ width: '32px', height: '32px', borderRadius: '6px', border: 'none', cursor: 'pointer', background: 'none' }}
-                    />
-                    <input
-                      type="text"
-                      value={style.strokeColor || '#000000'}
-                      onChange={(e) => updateStyle({ strokeColor: e.target.value })}
-                      style={{ flex: 1, background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', color: '#FFF', padding: '6px 10px', borderRadius: '6px', fontSize: '11px', fontFamily: 'monospace' }}
-                    />
-                  </div>
-                </div>
-              )}
             </div>
 
-            {/* 3. Directional Drop Shadow Section (With Checkbox Toggle) */}
-            <div className="glass-card" style={{ padding: '12px', borderRadius: '10px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {/* Drop Shadow */}
+            <div style={{
+              padding: '10px',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border-subtle)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px'
+            }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div 
-                  onClick={() => updateStyle({ shadowEnabled: !(style.shadowEnabled ?? true) })}
-                  style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={style.shadowEnabled ?? true}
-                    onChange={(e) => updateStyle({ shadowEnabled: e.target.checked })}
-                    style={{ accentColor: 'var(--accent-primary)', width: '15px', height: '15px', cursor: 'pointer' }}
-                  />
-                  <span style={{ fontSize: '12px', fontWeight: '800', color: (style.shadowEnabled ?? true) ? 'var(--text-main)' : 'var(--text-muted)' }}>
-                    Drop Shadow
-                  </span>
-                </div>
-                <span style={{ fontSize: '11px', fontFamily: 'monospace', color: (style.shadowEnabled ?? true) ? 'var(--accent-primary)' : 'var(--text-muted)' }}>
-                  {(style.shadowEnabled ?? true) ? `Blur ${style.shadowBlur || 8}px` : 'Disabled'}
+                <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)' }}>Drop Shadow</span>
+                <input
+                  type="color"
+                  value={style.shadowColor === 'transparent' ? '#000000' : (style.shadowColor || '#000000')}
+                  onChange={(e) => handleStyleChange('shadowColor', e.target.value)}
+                  style={{ width: '22px', height: '22px', border: 'none', borderRadius: '4px', cursor: 'pointer', background: 'none' }}
+                />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <input
+                  type="range"
+                  min={0}
+                  max={24}
+                  value={style.shadowBlur ?? 8}
+                  onChange={(e) => handleStyleChange('shadowBlur', parseInt(e.target.value))}
+                  style={{ flex: 1 }}
+                />
+                <span style={{ fontSize: '10px', fontFamily: 'SF Mono, monospace', color: 'var(--text-tertiary)', minWidth: '24px' }}>
+                  {style.shadowBlur ?? 8}px
                 </span>
               </div>
-
-              {(style.shadowEnabled ?? true) && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', paddingTop: '4px' }}>
-                  {/* Blur Slider */}
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                      <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Shadow Softness (Blur)</span>
-                      <span style={{ fontSize: '11px', fontFamily: 'monospace', color: 'var(--accent-primary)' }}>{style.shadowBlur || 8}px</span>
-                    </div>
-                    <input
-                      type="range"
-                      min={1}
-                      max={30}
-                      value={style.shadowBlur || 8}
-                      onChange={(e) => updateStyle({ shadowBlur: parseInt(e.target.value) })}
-                      style={{ width: '100%', accentColor: 'var(--accent-primary)' }}
-                    />
-                  </div>
-
-                  {/* Offset X and Y */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                        <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Offset X</span>
-                        <span style={{ fontSize: '10px', fontFamily: 'monospace', color: 'var(--accent-primary)' }}>{style.shadowOffsetX ?? 0}px</span>
-                      </div>
-                      <input
-                        type="range"
-                        min={-15}
-                        max={15}
-                        value={style.shadowOffsetX ?? 0}
-                        onChange={(e) => updateStyle({ shadowOffsetX: parseInt(e.target.value) })}
-                        style={{ width: '100%', accentColor: 'var(--accent-primary)' }}
-                      />
-                    </div>
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                        <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Offset Y</span>
-                        <span style={{ fontSize: '10px', fontFamily: 'monospace', color: 'var(--accent-primary)' }}>{style.shadowOffsetY ?? 4}px</span>
-                      </div>
-                      <input
-                        type="range"
-                        min={-15}
-                        max={15}
-                        value={style.shadowOffsetY ?? 4}
-                        onChange={(e) => updateStyle({ shadowOffsetY: parseInt(e.target.value) })}
-                        style={{ width: '100%', accentColor: 'var(--accent-primary)' }}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Quick Direction Presets */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '4px' }}>
-                    {[
-                      { label: 'Down (0,4)', x: 0, y: 4 },
-                      { label: 'Deep (0,8)', x: 0, y: 8 },
-                      { label: 'Angle (4,4)', x: 4, y: 4 },
-                      { label: 'Halo (0,0)', x: 0, y: 0 }
-                    ].map((d) => (
-                      <button
-                        key={d.label}
-                        type="button"
-                        onClick={() => updateStyle({ shadowOffsetX: d.x, shadowOffsetY: d.y })}
-                        style={{
-                          padding: '4px 2px',
-                          fontSize: '10px',
-                          fontWeight: '700',
-                          borderRadius: '6px',
-                          border: 'none',
-                          cursor: 'pointer',
-                          background: (style.shadowOffsetX === d.x && style.shadowOffsetY === d.y) ? 'var(--accent-primary)' : 'rgba(255,255,255,0.06)',
-                          color: (style.shadowOffsetX === d.x && style.shadowOffsetY === d.y) ? '#000000' : 'var(--text-muted)'
-                        }}
-                      >
-                        {d.label}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <input
-                      type="color"
-                      value={style.shadowColor && style.shadowColor !== 'transparent' ? style.shadowColor : '#000000'}
-                      onChange={(e) => updateStyle({ shadowColor: e.target.value })}
-                      style={{ width: '32px', height: '32px', borderRadius: '6px', border: 'none', cursor: 'pointer', background: 'none' }}
-                    />
-                    <input
-                      type="text"
-                      value={style.shadowColor || '#000000'}
-                      onChange={(e) => updateStyle({ shadowColor: e.target.value })}
-                      style={{ flex: 1, background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', color: '#FFF', padding: '6px 10px', borderRadius: '6px', fontSize: '11px', fontFamily: 'monospace' }}
-                    />
-                  </div>
-                </div>
-              )}
             </div>
 
-            {/* 4. Outer Glow (Separated from Drop Shadow!) */}
-            <div className="glass-card" style={{ padding: '12px', borderRadius: '10px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {/* Background Pill */}
+            <div style={{
+              padding: '10px',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border-subtle)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px'
+            }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div 
-                  onClick={() => updateStyle({ glowEnabled: !style.glowEnabled })}
-                  style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={style.glowEnabled ?? false}
-                    onChange={(e) => updateStyle({ glowEnabled: e.target.checked })}
-                    style={{ accentColor: '#38BDF8', width: '15px', height: '15px', cursor: 'pointer' }}
-                  />
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <Sun size={14} color={style.glowEnabled ? '#38BDF8' : 'var(--text-muted)'} />
-                    <span style={{ fontSize: '12px', fontWeight: '800', color: style.glowEnabled ? 'var(--text-main)' : 'var(--text-muted)' }}>
-                      Outer Neon Glow
-                    </span>
-                  </div>
-                </div>
-                <span style={{ fontSize: '11px', fontFamily: 'monospace', color: style.glowEnabled ? '#38BDF8' : 'var(--text-muted)' }}>
-                  {style.glowEnabled ? `${style.glowBlur || 14}px` : 'Disabled'}
-                </span>
+                <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)' }}>Background Pill</span>
+                <input
+                  type="color"
+                  value={style.backgroundColor === 'transparent' ? '#1c1c1e' : (style.backgroundColor || '#1c1c1e')}
+                  onChange={(e) => handleStyleChange('backgroundColor', e.target.value)}
+                  style={{ width: '22px', height: '22px', border: 'none', borderRadius: '4px', cursor: 'pointer', background: 'none' }}
+                />
               </div>
-
-              {style.glowEnabled && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', paddingTop: '4px' }}>
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                      <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Glow Radius & Intensity</span>
-                      <span style={{ fontSize: '11px', fontFamily: 'monospace', color: '#38BDF8' }}>{style.glowBlur || 14}px</span>
-                    </div>
-                    <input
-                      type="range"
-                      min={4}
-                      max={40}
-                      value={style.glowBlur || 14}
-                      onChange={(e) => updateStyle({ glowBlur: parseInt(e.target.value) })}
-                      style={{ width: '100%', accentColor: '#38BDF8' }}
-                    />
-                  </div>
-
-                  {/* Neon Color Swatches */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <input
-                      type="color"
-                      value={style.glowColor || '#38BDF8'}
-                      onChange={(e) => updateStyle({ glowColor: e.target.value })}
-                      style={{ width: '32px', height: '32px', borderRadius: '6px', border: 'none', cursor: 'pointer', background: 'none' }}
-                    />
-                    <div style={{ display: 'flex', gap: '4px', flex: 1 }}>
-                      {[
-                        { name: 'Cyan', color: '#00FFFF' },
-                        { name: 'Yellow', color: '#FFE600' },
-                        { name: 'Green', color: '#00FF66' },
-                        { name: 'Pink', color: '#FF007F' },
-                        { name: 'White', color: '#FFFFFF' }
-                      ].map((swatch) => (
-                        <button
-                          key={swatch.color}
-                          type="button"
-                          onClick={() => updateStyle({ glowColor: swatch.color })}
-                          style={{
-                            flex: 1,
-                            height: '24px',
-                            borderRadius: '4px',
-                            border: style.glowColor === swatch.color ? '2px solid #FFFFFF' : '1px solid rgba(255,255,255,0.15)',
-                            background: swatch.color,
-                            cursor: 'pointer',
-                            boxShadow: style.glowColor === swatch.color ? `0 0 8px ${swatch.color}` : 'none'
-                          }}
-                          title={swatch.name}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* 5. Background Frosted Pill / Box (With Full Customization) */}
-            <div className="glass-card" style={{ padding: '12px', borderRadius: '10px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div 
-                  onClick={() => updateStyle({ backgroundEnabled: !style.backgroundEnabled })}
-                  style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <button
+                  onClick={() => handleStyleChange('backgroundColor', style.backgroundColor === 'transparent' ? '#1c1c1e' : 'transparent')}
+                  className="btn-secondary"
+                  style={{
+                    flex: 1,
+                    padding: '3px 8px',
+                    fontSize: '10px',
+                    background: style.backgroundColor !== 'transparent' ? 'rgba(0, 113, 227, 0.18)' : 'transparent',
+                    borderColor: style.backgroundColor !== 'transparent' ? 'var(--accent-primary)' : 'var(--border-subtle)'
+                  }}
                 >
-                  <input
-                    type="checkbox"
-                    checked={style.backgroundEnabled ?? false}
-                    onChange={(e) => updateStyle({ backgroundEnabled: e.target.checked })}
-                    style={{ accentColor: 'var(--accent-primary)', width: '15px', height: '15px', cursor: 'pointer' }}
-                  />
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <Box size={14} color={style.backgroundEnabled ? 'var(--accent-primary)' : 'var(--text-muted)'} />
-                    <span style={{ fontSize: '12px', fontWeight: '800', color: style.backgroundEnabled ? 'var(--text-main)' : 'var(--text-muted)' }}>
-                      Background Pill / Box
-                    </span>
-                  </div>
-                </div>
-                <span style={{ fontSize: '11px', fontFamily: 'monospace', color: style.backgroundEnabled ? 'var(--accent-primary)' : 'var(--text-muted)' }}>
-                  {style.backgroundEnabled ? `${style.backgroundOpacity ?? 85}% Opacity` : 'Disabled'}
-                </span>
+                  {style.backgroundColor !== 'transparent' ? 'Pill Enabled' : 'Pill Disabled'}
+                </button>
+                {style.backgroundColor !== 'transparent' && (
+                  <button
+                    onClick={() => handleStyleChange('borderRadius', style.borderRadius > 0 ? 0 : 12)}
+                    className="btn-secondary"
+                    style={{ padding: '3px 8px', fontSize: '10px' }}
+                  >
+                    {style.borderRadius > 0 ? 'Rounded' : 'Square'}
+                  </button>
+                )}
               </div>
-
-              {style.backgroundEnabled && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', paddingTop: '4px' }}>
-                  {/* Background Color & Opacity */}
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                      <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Fill Color & Opacity</span>
-                      <span style={{ fontSize: '11px', fontFamily: 'monospace', color: 'var(--accent-primary)' }}>{style.backgroundOpacity ?? 85}%</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <input
-                        type="color"
-                        value={style.backgroundColor && style.backgroundColor !== 'transparent' ? style.backgroundColor : '#0F172A'}
-                        onChange={(e) => updateStyle({ backgroundColor: e.target.value })}
-                        style={{ width: '32px', height: '32px', borderRadius: '6px', border: 'none', cursor: 'pointer', background: 'none' }}
-                      />
-                      <input
-                        type="range"
-                        min={10}
-                        max={100}
-                        value={style.backgroundOpacity ?? 85}
-                        onChange={(e) => updateStyle({ backgroundOpacity: parseInt(e.target.value) })}
-                        style={{ flex: 1, accentColor: 'var(--accent-primary)' }}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Padding X & Padding Y */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                        <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Horizontal (X)</span>
-                        <span style={{ fontSize: '10px', fontFamily: 'monospace', color: 'var(--accent-primary)' }}>{style.backgroundPaddingX ?? 16}px</span>
-                      </div>
-                      <input
-                        type="range"
-                        min={0}
-                        max={50}
-                        value={style.backgroundPaddingX ?? 16}
-                        onChange={(e) => updateStyle({ backgroundPaddingX: parseInt(e.target.value) })}
-                        style={{ width: '100%', accentColor: 'var(--accent-primary)' }}
-                      />
-                    </div>
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                        <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Vertical (Y)</span>
-                        <span style={{ fontSize: '10px', fontFamily: 'monospace', color: 'var(--accent-primary)' }}>{style.backgroundPaddingY ?? 8}px</span>
-                      </div>
-                      <input
-                        type="range"
-                        min={0}
-                        max={30}
-                        value={style.backgroundPaddingY ?? 8}
-                        onChange={(e) => updateStyle({ backgroundPaddingY: parseInt(e.target.value) })}
-                        style={{ width: '100%', accentColor: 'var(--accent-primary)' }}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Corner Radius & Pill Capsule Preset */}
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                      <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Corner Roundness</span>
-                      <span style={{ fontSize: '11px', fontFamily: 'monospace', color: 'var(--accent-primary)' }}>
-                        {(style.borderRadius ?? 12) >= 50 ? 'Capsule Pill' : `${style.borderRadius ?? 12}px`}
-                      </span>
-                    </div>
-                    <input
-                      type="range"
-                      min={0}
-                      max={60}
-                      value={Math.min(60, style.borderRadius ?? 12)}
-                      onChange={(e) => updateStyle({ borderRadius: parseInt(e.target.value) })}
-                      style={{ width: '100%', accentColor: 'var(--accent-primary)' }}
-                    />
-                    
-                    {/* Quick Shape Presets */}
-                    <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
-                      {[
-                        { label: 'Sharp (0px)', r: 0 },
-                        { label: 'Rounded (12px)', r: 12 },
-                        { label: 'Heavy (24px)', r: 24 },
-                        { label: 'Capsule Pill (999px)', r: 999 }
-                      ].map((shape) => (
-                        <button
-                          key={shape.label}
-                          type="button"
-                          onClick={() => updateStyle({ borderRadius: shape.r })}
-                          style={{
-                            flex: 1,
-                            padding: '4px 2px',
-                            fontSize: '9px',
-                            fontWeight: '700',
-                            borderRadius: '6px',
-                            border: 'none',
-                            cursor: 'pointer',
-                            background: style.borderRadius === shape.r ? 'var(--accent-primary)' : 'rgba(255,255,255,0.06)',
-                            color: style.borderRadius === shape.r ? '#000000' : 'var(--text-muted)'
-                          }}
-                        >
-                          {shape.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Border Outline Toggle & Thickness */}
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
-                      <div 
-                        onClick={() => updateStyle({ backgroundBorderEnabled: !style.backgroundBorderEnabled })}
-                        style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={style.backgroundBorderEnabled ?? false}
-                          onChange={(e) => updateStyle({ backgroundBorderEnabled: e.target.checked })}
-                          style={{ accentColor: 'var(--accent-primary)', width: '13px', height: '13px' }}
-                        />
-                        <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: '600' }}>
-                          Pill Outline Border
-                        </span>
-                      </div>
-                      {style.backgroundBorderEnabled && (
-                        <span style={{ fontSize: '10px', fontFamily: 'monospace', color: 'var(--accent-primary)' }}>
-                          {style.backgroundBorderWidth ?? 2}px
-                        </span>
-                      )}
-                    </div>
-
-                    {style.backgroundBorderEnabled && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
-                        <input
-                          type="color"
-                          value={style.backgroundBorderColor && style.backgroundBorderColor.startsWith('#') ? style.backgroundBorderColor : '#FFFFFF'}
-                          onChange={(e) => updateStyle({ backgroundBorderColor: e.target.value })}
-                          style={{ width: '28px', height: '28px', borderRadius: '4px', border: 'none', cursor: 'pointer', background: 'none' }}
-                        />
-                        <input
-                          type="range"
-                          min={1}
-                          max={8}
-                          value={style.backgroundBorderWidth ?? 2}
-                          onChange={(e) => updateStyle({ backgroundBorderWidth: parseInt(e.target.value) })}
-                          style={{ flex: 1, accentColor: 'var(--accent-primary)' }}
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Frosted Glass Backdrop Blur */}
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                      <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Frosted Glass Blur</span>
-                      <span style={{ fontSize: '11px', fontFamily: 'monospace', color: 'var(--accent-primary)' }}>{style.backgroundBlur ?? 12}px</span>
-                    </div>
-                    <input
-                      type="range"
-                      min={0}
-                      max={24}
-                      value={style.backgroundBlur ?? 12}
-                      onChange={(e) => updateStyle({ backgroundBlur: parseInt(e.target.value) })}
-                      style={{ width: '100%', accentColor: 'var(--accent-primary)' }}
-                    />
-                  </div>
-                </div>
-              )}
             </div>
-
           </div>
         )}
 
-        {/* MOTION & PACING TAB */}
+        {/* =========================================================================
+            TAB 4: MOTION & POSITION
+           ========================================================================= */}
         {activeTab === 'animation' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            {/* Animation Type */}
-            <div>
-              <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>
-                Word Animation Style
-              </label>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {/* Word Animation Mode */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <span style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Word Animation
+              </span>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
                 {[
-                  { id: 'pop', name: 'Spring Pop', desc: 'Punchy scale expansion' },
-                  { id: 'bounce', name: 'Viral Bounce', desc: 'Dynamic energetic jump' },
-                  { id: 'karaoke', name: 'Neon Glow', desc: 'Smooth radiant glow' },
-                  { id: 'fade', name: 'Subtle Fade', desc: 'Smooth opacity shift' }
+                  { id: 'pop', label: 'Pop Scale' },
+                  { id: 'bounce', label: 'Bounce Up' },
+                  { id: 'glow', label: 'Color Glow' },
+                  { id: 'fade', label: 'Clean Fade' },
+                  { id: 'none', label: 'Static' }
                 ].map((anim) => {
                   const isSelected = style.animationType === anim.id;
-
                   return (
                     <button
                       key={anim.id}
-                      onClick={() => updateStyle({ animationType: anim.id })}
-                      className="glass-card"
+                      onClick={() => handleStyleChange('animationType', anim.id)}
+                      className="segmented-control-item"
                       style={{
-                        padding: '10px',
-                        borderRadius: '8px',
-                        cursor: 'pointer',
-                        textAlign: 'left',
-                        border: isSelected ? '1px solid var(--accent-primary)' : '1px solid var(--border-color)',
-                        background: isSelected ? 'rgba(56, 189, 248, 0.12)' : 'rgba(31, 41, 55, 0.5)',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '2px'
+                        padding: '6px 8px',
+                        fontSize: '11px',
+                        background: isSelected ? 'rgba(0, 113, 227, 0.18)' : 'var(--bg-surface)',
+                        color: isSelected ? 'var(--accent-bright-blue)' : 'var(--text-secondary)',
+                        border: isSelected ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+                        borderRadius: 'var(--radius-sm)'
                       }}
                     >
-                      <span style={{ fontSize: '12px', fontWeight: '700', color: isSelected ? 'var(--accent-primary)' : 'var(--text-main)' }}>
-                        {anim.name}
-                      </span>
-                      <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{anim.desc}</span>
+                      {anim.label}
                     </button>
                   );
                 })}
               </div>
             </div>
 
-            {/* Max Words per Segment Setting */}
-            <div>
-              <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>
-                Chunk Pacing (Words per Line)
-              </label>
-              <div style={{ display: 'flex', gap: '6px' }}>
-                {[1, 2, 3, 4].map((count) => (
-                  <button
-                    key={count}
-                    onClick={() => updateStyle({ maxWordsPerSegment: count })}
-                    style={{
-                      flex: 1,
-                      padding: '8px 4px',
-                      fontSize: '12px',
-                      fontWeight: '800',
-                      borderRadius: '8px',
-                      border: 'none',
-                      cursor: 'pointer',
-                      background: style.maxWordsPerSegment === count ? 'var(--accent-primary)' : 'rgba(255,255,255,0.07)',
-                      color: style.maxWordsPerSegment === count ? '#000000' : 'var(--text-main)'
-                    }}
-                  >
-                    {count} {count === 1 ? 'Word' : 'Words'}
-                  </button>
-                ))}
+            {/* Vertical Position (Y) */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Vertical Position (Y)</span>
+                <span style={{ fontSize: '11px', fontFamily: 'SF Mono, monospace', color: 'var(--text-primary)' }}>{Math.round(style.positionY)}%</span>
               </div>
-              <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
-                1-2 words creates rapid high-retention hooks; 3-4 words provides standard readability.
+              <input
+                type="range"
+                min={10}
+                max={90}
+                value={style.positionY}
+                onChange={(e) => handleStyleChange('positionY', parseInt(e.target.value))}
+              />
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: 'var(--text-tertiary)' }}>
+                <span>Top (10%)</span>
+                <span>Center (50%)</span>
+                <span>Bottom (80%)</span>
+              </div>
+            </div>
+
+            {/* Horizontal Position (X) */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Horizontal Position (X)</span>
+                <span style={{ fontSize: '11px', fontFamily: 'SF Mono, monospace', color: 'var(--text-primary)' }}>{Math.round(style.positionX)}%</span>
+              </div>
+              <input
+                type="range"
+                min={10}
+                max={90}
+                value={style.positionX}
+                onChange={(e) => handleStyleChange('positionX', parseInt(e.target.value))}
+              />
+            </div>
+
+            {/* Container Max Width */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Container Width</span>
+                <span style={{ fontSize: '11px', fontFamily: 'SF Mono, monospace', color: 'var(--text-primary)' }}>{style.containerWidthPercent || 90}%</span>
+              </div>
+              <input
+                type="range"
+                min={50}
+                max={100}
+                value={style.containerWidthPercent || 90}
+                onChange={(e) => handleStyleChange('containerWidthPercent', parseInt(e.target.value))}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* =========================================================================
+            TAB 5: AI VIRAL EFFECTS (AUTO-EMOJI & KEYWORD EMPHASIS)
+           ========================================================================= */}
+        {activeTab === 'ai_effects' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {/* 1-Click AI Auto-Enhance Banner */}
+            <div style={{
+              background: 'linear-gradient(135deg, rgba(0, 255, 102, 0.12) 0%, rgba(0, 113, 227, 0.16) 100%)',
+              border: '1px solid rgba(0, 255, 102, 0.3)',
+              borderRadius: 'var(--radius-md)',
+              padding: '12px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Sparkles size={14} color="#00FF66" />
+                <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-primary)' }}>
+                  AI Instant Viral Enhancer
+                </span>
+              </div>
+              <p style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: '1.4', margin: 0 }}>
+                Automatically scans transcript to attach matching kinetic emojis &amp; highlight high-retention hook words.
               </p>
+              <button
+                onClick={handleRunAIEnhance}
+                className="btn-primary"
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  fontSize: '12px',
+                  fontWeight: '700',
+                  background: 'linear-gradient(135deg, #00FF66 0%, #00C853 100%)',
+                  color: '#000000',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  border: 'none',
+                  borderRadius: 'var(--radius-sm)',
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 8px rgba(0, 255, 102, 0.3)'
+                }}
+              >
+                {enhancedSuccessToast ? <Check size={14} /> : <Wand2 size={14} />}
+                <span>{enhancedSuccessToast ? 'Captions Enhanced!' : 'Auto-Enhance Captions (AI)'}</span>
+              </button>
+            </div>
+
+            {/* SECTION: Auto-Emoji & Kinetic Stickers */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--border-subtle)', paddingTop: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Smile size={13} color="var(--accent-bright-blue)" />
+                  <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    Auto-Emoji Stickers
+                  </span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={style.autoEmojiEnabled !== false}
+                  onChange={(e) => handleStyleChange('autoEmojiEnabled', e.target.checked)}
+                />
+              </div>
+
+              {style.autoEmojiEnabled !== false && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingLeft: '4px' }}>
+                  {/* Emoji Aesthetic (Apple iOS vs System) */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <span style={{ fontSize: '10.5px', color: 'var(--text-secondary)' }}>Emoji Aesthetic</span>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
+                      {[
+                        { id: 'apple', label: '🍎 Apple (iOS Glossy)' },
+                        { id: 'system', label: '🔤 System Font' }
+                      ].map((aes) => {
+                        const isSelected = (style.emojiStyle || 'apple') === aes.id;
+                        return (
+                          <button
+                            key={aes.id}
+                            type="button"
+                            onClick={() => handleStyleChange('emojiStyle', aes.id)}
+                            className="segmented-control-item"
+                            style={{
+                              padding: '5px 6px',
+                              fontSize: '10.5px',
+                              background: isSelected ? 'rgba(0, 113, 227, 0.18)' : 'var(--bg-surface)',
+                              color: isSelected ? 'var(--accent-bright-blue)' : 'var(--text-secondary)',
+                              border: isSelected ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+                              borderRadius: 'var(--radius-sm)'
+                            }}
+                          >
+                            {aes.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Emoji Animation Physics */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <span style={{ fontSize: '10.5px', color: 'var(--text-secondary)' }}>Emoji Motion Style</span>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
+                      {[
+                        { id: 'pop', label: '🚀 Pop Scale' },
+                        { id: 'bounce', label: '⬆️ Bounce Jump' },
+                        { id: 'float', label: '✨ Hover Float' },
+                        { id: 'none', label: 'Static' }
+                      ].map((anim) => {
+                        const isSelected = (style.emojiAnimation || 'pop') === anim.id;
+                        return (
+                          <button
+                            key={anim.id}
+                            onClick={() => handleStyleChange('emojiAnimation', anim.id)}
+                            className="segmented-control-item"
+                            style={{
+                              padding: '6px 8px',
+                              fontSize: '11px',
+                              background: isSelected ? 'rgba(0, 113, 227, 0.18)' : 'var(--bg-surface)',
+                              color: isSelected ? 'var(--accent-bright-blue)' : 'var(--text-secondary)',
+                              border: isSelected ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+                              borderRadius: 'var(--radius-sm)'
+                            }}
+                          >
+                            {anim.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Emoji Position */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <span style={{ fontSize: '10.5px', color: 'var(--text-secondary)' }}>Positioning</span>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '4px' }}>
+                      {[
+                        { id: 'above_word', label: 'Above Word' },
+                        { id: 'inline', label: 'Inline' },
+                        { id: 'top_center', label: 'Top Center' }
+                      ].map((pos) => {
+                        const isSelected = (style.emojiPosition || 'above_word') === pos.id;
+                        return (
+                          <button
+                            key={pos.id}
+                            onClick={() => handleStyleChange('emojiPosition', pos.id)}
+                            className="segmented-control-item"
+                            style={{
+                              padding: '5px 4px',
+                              fontSize: '10.5px',
+                              background: isSelected ? 'rgba(0, 113, 227, 0.18)' : 'var(--bg-surface)',
+                              color: isSelected ? 'var(--accent-bright-blue)' : 'var(--text-secondary)',
+                              border: isSelected ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+                              borderRadius: 'var(--radius-sm)'
+                            }}
+                          >
+                            {pos.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Emoji Size */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: '10.5px', color: 'var(--text-secondary)' }}>Sticker Size</span>
+                      <span style={{ fontSize: '10.5px', fontFamily: 'SF Mono, monospace', color: 'var(--text-primary)' }}>
+                        {style.emojiSize || 42}px
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={20}
+                      max={80}
+                      value={style.emojiSize || 42}
+                      onChange={(e) => handleStyleChange('emojiSize', parseInt(e.target.value))}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* SECTION: AI Keyword Emphasis */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--border-subtle)', paddingTop: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Flame size={13} color="#00FF66" />
+                  <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    Smart Keyword Emphasis
+                  </span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={style.autoEmphasisEnabled !== false}
+                  onChange={(e) => handleStyleChange('autoEmphasisEnabled', e.target.checked)}
+                />
+              </div>
+
+              {style.autoEmphasisEnabled !== false && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingLeft: '4px' }}>
+                  {/* Emphasis Highlight Accent Color */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <span style={{ fontSize: '10.5px', color: 'var(--text-secondary)' }}>Accent Punch Color</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                      {[
+                        { color: '#00FF66', label: 'Neon Green' },
+                        { color: '#FFE600', label: 'Cyber Yellow' },
+                        { color: '#FF3B30', label: 'Electric Red' },
+                        { color: '#00FFFF', label: 'Cyan Glow' },
+                        { color: '#FF9900', label: 'Hot Orange' },
+                        { color: '#FF007F', label: 'Punch Pink' },
+                        { color: '#FFFFFF', label: 'Crisp White' }
+                      ].map((swatch) => (
+                        <button
+                          key={swatch.color}
+                          onClick={() => handleStyleChange('emphasisColor', swatch.color)}
+                          style={{
+                            width: '22px',
+                            height: '22px',
+                            borderRadius: '50%',
+                            background: swatch.color,
+                            border: (style.emphasisColor || '#00FF66') === swatch.color ? '2px solid white' : '1px solid rgba(255,255,255,0.2)',
+                            boxShadow: (style.emphasisColor || '#00FF66') === swatch.color ? `0 0 8px ${swatch.color}` : 'none',
+                            cursor: 'pointer'
+                          }}
+                          title={swatch.label}
+                        />
+                      ))}
+                      <input
+                        type="color"
+                        value={style.emphasisColor || '#00FF66'}
+                        onChange={(e) => handleStyleChange('emphasisColor', e.target.value)}
+                        style={{
+                          width: '24px',
+                          height: '24px',
+                          padding: 0,
+                          borderRadius: '4px',
+                          border: '1px solid var(--border-subtle)',
+                          cursor: 'pointer',
+                          background: 'transparent'
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Emphasis Font Scale Multiplier */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: '10.5px', color: 'var(--text-secondary)' }}>Word Scale Boost</span>
+                      <span style={{ fontSize: '10.5px', fontFamily: 'SF Mono, monospace', color: 'var(--text-primary)' }}>
+                        {style.emphasisScale || 1.15}x
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={1.0}
+                      max={1.35}
+                      step={0.05}
+                      value={style.emphasisScale || 1.15}
+                      onChange={(e) => handleStyleChange('emphasisScale', parseFloat(e.target.value))}
+                    />
+                  </div>
+
+                  {/* Emphasis Timing Mode */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <span style={{ fontSize: '10.5px', color: 'var(--text-secondary)' }}>Emphasis Timing</span>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '4px' }}>
+                      {[
+                        { id: 'active_only', label: 'Spoken Punch' },
+                        { id: 'always', label: 'Always Visible' }
+                      ].map((mode) => {
+                        const isSelected = (style.emphasisMode || 'active_only') === mode.id;
+                        return (
+                          <button
+                            key={mode.id}
+                            type="button"
+                            onClick={() => handleStyleChange('emphasisMode', mode.id)}
+                            className="btn-ghost"
+                            style={{
+                              padding: '5px 4px',
+                              fontSize: '10px',
+                              fontWeight: isSelected ? '600' : '400',
+                              background: isSelected ? 'rgba(0, 255, 102, 0.15)' : 'var(--bg-surface)',
+                              color: isSelected ? '#00FF66' : 'var(--text-secondary)',
+                              border: isSelected ? '1px solid #00FF66' : '1px solid var(--border-subtle)',
+                              borderRadius: 'var(--radius-sm)'
+                            }}
+                          >
+                            {mode.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* SECTION: Custom Keyword Library Manager */}
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px',
+              borderTop: '1px solid var(--border-subtle)',
+              paddingTop: '10px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <BookOpen size={13} color="var(--accent-bright-blue)" />
+                  <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    Keyword & Emoji Library
+                  </span>
+                </div>
+                <span style={{
+                  fontSize: '9.5px',
+                  fontWeight: '600',
+                  padding: '2px 6px',
+                  borderRadius: '10px',
+                  background: 'rgba(0, 113, 227, 0.18)',
+                  color: 'var(--accent-bright-blue)'
+                }}>
+                  {customKeywordRules?.length || 0} Rules
+                </span>
+              </div>
+
+              <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', lineHeight: '1.4' }}>
+                Map custom words (e.g. CRACK, PAIN, SUDDEN) to specific Apple emojis & auto-emphasis highlights.
+              </p>
+
+              <button
+                type="button"
+                onClick={() => setKeywordLibraryModalOpen(true)}
+                className="btn-primary"
+                style={{
+                  padding: '6px 12px',
+                  fontSize: '11px',
+                  justifyContent: 'center',
+                  gap: '6px'
+                }}
+              >
+                <BookOpen size={13} />
+                <span>Open Keyword Library</span>
+              </button>
+
+              {/* Quick Tags Preview */}
+              {customKeywordRules && customKeywordRules.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', marginTop: '2px' }}>
+                  {customKeywordRules.slice(0, 6).map((r) => (
+                    <span
+                      key={r.id || r.keyword}
+                      style={{
+                        fontSize: '9.5px',
+                        padding: '2px 5px',
+                        borderRadius: '3px',
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        border: '1px solid var(--border-subtle)',
+                        color: r.isEmphasized ? '#00FF66' : 'var(--text-secondary)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '3px'
+                      }}
+                    >
+                      {r.emoji && <span>{r.emoji}</span>}
+                      <span>{r.keyword}</span>
+                    </span>
+                  ))}
+                  {customKeywordRules.length > 6 && (
+                    <span style={{ fontSize: '9px', color: 'var(--text-tertiary)', alignSelf: 'center' }}>
+                      +{customKeywordRules.length - 6} more
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
       </div>
-    </div>
+    </aside>
   );
 };

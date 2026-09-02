@@ -325,21 +325,28 @@ def log_msg(level: str, message: str) -> None:
 
 def setup_cuda_dlls():
     """
-    On Windows, adds nvidia-cublas and nvidia-cudnn directories from pip
-    packages to the DLL search path so CTranslate2 can locate cublas64_12.dll.
+    On Windows, adds nvidia-cublas, nvidia-cudnn, nvidia-cuda-nvrtc, etc.
+    directories from pip packages or environment paths to the DLL search path so CTranslate2 can locate cublas64_12.dll.
     """
     if sys.platform == "win32":
         import site
-        dirs_to_check = []
+        dirs_to_check = set()
         try:
-            dirs_to_check.extend(site.getsitepackages())
+            dirs_to_check.update(site.getsitepackages())
         except Exception:
             pass
         try:
-            dirs_to_check.append(site.getusersitepackages())
+            dirs_to_check.add(site.getusersitepackages())
         except Exception:
             pass
-            
+        try:
+            for p in sys.path:
+                if "site-packages" in p:
+                    dirs_to_check.add(p)
+        except Exception:
+            pass
+
+        added_paths = []
         for base in dirs_to_check:
             if not os.path.isdir(base):
                 continue
@@ -350,11 +357,13 @@ def setup_cuda_dlls():
                         bin_path = os.path.join(root, "bin")
                         try:
                             os.add_dll_directory(bin_path)
+                            added_paths.append(bin_path)
                         except Exception:
                             pass
                         if bin_path not in os.environ.get("PATH", ""):
                             os.environ["PATH"] = bin_path + os.pathsep + os.environ.get("PATH", "")
-        log_msg("SYSTEM", "NVIDIA CUDA DLL search directories initialized.")
+        if added_paths:
+            log_msg("SYSTEM", f"NVIDIA CUDA DLL search directories initialized ({len(added_paths)} dirs found).")
 
 # Initialize DLL paths on module import
 setup_cuda_dlls()
@@ -367,13 +376,16 @@ def get_whisper_model(model_size: str = "base", device: str = "auto", compute_ty
     if cache_key in _MODEL_CACHE:
         return _MODEL_CACHE[cache_key]
 
+    # Re-check CUDA DLLs before initializing
+    setup_cuda_dlls()
+
     # Attempt CUDA first
     if device in ("cuda", "auto"):
         try:
             log_msg("AI", f"Attempting to load Whisper '{model_size}' on NVIDIA GPU (CUDA float16)...")
             model = WhisperModel(model_size, device="cuda", compute_type="float16")
             _MODEL_CACHE[cache_key] = model
-            log_msg("AI", f"Successfully initialized Whisper '{model_size}' on NVIDIA GPU (CUDA).")
+            log_msg("AI", f"Initialized Whisper '{model_size}' on GPU.")
             return model
         except Exception as cuda_err:
             log_msg("WARN", f"CUDA init failed ({cuda_err}), falling back to CPU int8...")
@@ -383,7 +395,7 @@ def get_whisper_model(model_size: str = "base", device: str = "auto", compute_ty
         log_msg("AI", f"Loading Whisper '{model_size}' on CPU (int8 AVX)...")
         model = WhisperModel(model_size, device="cpu", compute_type="int8")
         _MODEL_CACHE[cache_key] = model
-        log_msg("AI", f"Whisper '{model_size}' initialized on CPU.")
+        log_msg("AI", f"Whisper '{model_size}' initialized on CPU (int8).")
         return model
     except Exception as cpu_err:
         log_msg("ERROR", f"CPU int8 init failed ({cpu_err}), using default CPU...")
@@ -410,7 +422,13 @@ def extract_audio(video_path: str, output_wav_path: str) -> None:
         raise RuntimeError(f"FFmpeg audio extraction failed: {result.stderr}")
     log_msg("FFMPEG", f"Audio extraction complete -> {os.path.basename(output_wav_path)}")
 
-def chunk_word_tokens(words_list: list, max_words: int = 3, max_gap: float = 0.35) -> list:
+def strip_punctuation_token(text: str) -> str:
+    if not text:
+        return ""
+    cleaned = text.strip()
+    return cleaned.strip(".,!?:;\"'—–-()[]{}/<>~`«»“”‘’")
+
+def chunk_word_tokens(words_list: list, max_words: int = 3, max_gap: float = 0.35, remove_punctuation: bool = False) -> list:
     if not words_list:
         return []
         
@@ -418,59 +436,69 @@ def chunk_word_tokens(words_list: list, max_words: int = 3, max_gap: float = 0.3
     current_words = []
     
     for word_obj in words_list:
-        clean_word = word_obj["word"].strip()
-        if not clean_word:
+        raw_word = word_obj["word"].strip()
+        if not raw_word:
             continue
-            
+
+        prev_text = current_words[-1]["word"].strip() if current_words else ""
+        has_ending_punct = prev_text[-1] in ".?!," if prev_text else False
+
+        word_entry = dict(word_obj)
+        if remove_punctuation:
+            word_entry["word"] = strip_punctuation_token(raw_word)
+
         if not current_words:
-            current_words.append(word_obj)
+            current_words.append(word_entry)
             continue
             
         prev_word = current_words[-1]
-        time_gap = word_obj["start"] - prev_word["end"]
-        prev_text = prev_word["word"].strip()
-        has_ending_punct = prev_text[-1] in ".?!," if prev_text else False
+        time_gap = word_entry["start"] - prev_word["end"]
         
         if len(current_words) >= max_words or time_gap > max_gap or has_ending_punct:
             seg_start = current_words[0]["start"]
             seg_end = current_words[-1]["end"]
-            seg_text = " ".join([w["word"].strip() for w in current_words])
+            seg_text = " ".join([w["word"].strip() for w in current_words if w["word"].strip()])
             segments.append({
                 "id": f"seg-{uuid.uuid4().hex[:8]}",
-                "start": round(seg_start, 3),
-                "end": round(seg_end, 3),
+                "start": round(float(seg_start), 3),
+                "end": round(float(seg_end), 3),
                 "text": seg_text,
                 "words": current_words
             })
-            current_words = [word_obj]
+            current_words = [word_entry]
         else:
-            current_words.append(word_obj)
+            current_words.append(word_entry)
             
     if current_words:
         seg_start = current_words[0]["start"]
         seg_end = current_words[-1]["end"]
-        seg_text = " ".join([w["word"].strip() for w in current_words])
+        seg_text = " ".join([w["word"].strip() for w in current_words if w["word"].strip()])
         segments.append({
             "id": f"seg-{uuid.uuid4().hex[:8]}",
-            "start": round(seg_start, 3),
-            "end": round(seg_end, 3),
+            "start": round(float(seg_start), 3),
+            "end": round(float(seg_end), 3),
             "text": seg_text,
             "words": current_words
         })
         
     return segments
 
-def transcribe_media(file_path: str, model_name: str = "base", language: str = None, max_words_per_segment: int = 3) -> dict:
+def transcribe_media(
+    file_path: str, 
+    model_name: str = "base", 
+    language: str = None, 
+    max_words_per_segment: int = 3,
+    remove_punctuation: bool = False
+) -> dict:
     t_start = time.time()
-    log_msg("TRANSCRIBE", f"Starting job for '{os.path.basename(file_path)}' (Model: {model_name}, Max words/line: {max_words_per_segment})")
+    punct_label = " (No Punctuation)" if remove_punctuation else ""
+    log_msg("TRANSCRIBE", f"Starting job for '{os.path.basename(file_path)}' (Model: {model_name}, Max words/line: {max_words_per_segment}{punct_label})")
     
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_audio:
         tmp_audio_path = tmp_audio.name
         
     try:
         extract_audio(file_path, tmp_audio_path)
-        
-        model = get_whisper_model(model_size=model_name, device="auto")
         
         transcribe_kwargs = {
             "vad_filter": True,
@@ -481,26 +509,45 @@ def transcribe_media(file_path: str, model_name: str = "base", language: str = N
             transcribe_kwargs["language"] = language
             
         log_msg("TRANSCRIBE", "Running Whisper inference with word timestamp alignment...")
-        raw_segments, info = model.transcribe(tmp_audio_path, **transcribe_kwargs)
+        
+        model = get_whisper_model(model_size=model_name, device="auto")
+        
+        try:
+            raw_segments, info = model.transcribe(tmp_audio_path, **transcribe_kwargs)
+            # Materialize generator to catch any CUDA / cuBLAS runtime loading failure early
+            segments_list = list(raw_segments)
+        except Exception as inf_err:
+            err_str = str(inf_err).lower()
+            if "cublas" in err_str or "cuda" in err_str or "cudnn" in err_str or "dll" in err_str or "not found" in err_str:
+                log_msg("WARN", f"CUDA execution failed ({inf_err}). Automatically falling back to CPU (int8)...")
+                cpu_model = get_whisper_model(model_size=model_name, device="cpu", compute_type="int8")
+                raw_segments, info = cpu_model.transcribe(tmp_audio_path, **transcribe_kwargs)
+                segments_list = list(raw_segments)
+            else:
+                raise
         
         all_words = []
         segment_count = 0
         
-        for segment in raw_segments:
+        for segment in segments_list:
             segment_count += 1
             log_msg("TRANSCRIBE", f"Processed speech segment {segment_count}: '{segment.text.strip()}' ({segment.start:.2f}s - {segment.end:.2f}s)")
             if segment.words:
                 for w in segment.words:
-                    all_words.append({
-                        "id": f"w-{uuid.uuid4().hex[:8]}",
-                        "word": w.word,
-                        "start": round(w.start, 3),
-                        "end": round(w.end, 3),
-                        "confidence": round(w.probability, 3)
-                    })
+                    word_str = w.word
+                    if remove_punctuation:
+                        word_str = strip_punctuation_token(w.word)
+                    if word_str.strip():
+                        all_words.append({
+                            "id": f"w-{uuid.uuid4().hex[:8]}",
+                            "word": word_str,
+                            "start": round(float(w.start), 3),
+                            "end": round(float(w.end), 3),
+                            "confidence": round(float(w.probability), 3)
+                        })
                     
         log_msg("TRANSCRIBE", f"Applying short-form viral chunking to {len(all_words)} total words...")
-        chunked_segments = chunk_word_tokens(all_words, max_words=max_words_per_segment)
+        chunked_segments = chunk_word_tokens(all_words, max_words=max_words_per_segment, remove_punctuation=remove_punctuation)
         
         t_elapsed = time.time() - t_start
         log_msg("SUCCESS", f"Transcription complete in {t_elapsed:.2f}s! ({len(chunked_segments)} caption segments generated)")
@@ -522,3 +569,4 @@ def transcribe_media(file_path: str, model_name: str = "base", language: str = N
                 os.remove(tmp_audio_path)
             except Exception:
                 pass
+

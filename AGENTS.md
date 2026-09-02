@@ -12,7 +12,7 @@ Welcome to the **AutoCaption** codebase. AutoCaption is a high-performance, real
 | [`backend/`](file:///c:/Users/ownin/Documents/Antigravity%20Projects/AutoCaption/backend) | AI speech-to-text & high-speed ASS/FFmpeg rendering | Python 3.10+, FastAPI, Faster-Whisper, libass |
 | [`backend/storage/`](file:///c:/Users/ownin/Documents/Antigravity%20Projects/AutoCaption/backend/storage) | Temporary media, font assets, and render artifacts | uploads, exports, debug, fonts, demo |
 | [`plan/`](file:///c:/Users/ownin/Documents/Antigravity%20Projects/AutoCaption/plan) | Architectural blueprints and feature specifications | Markdown specifications |
-| [`scratch/`](file:///c:/Users/ownin/Documents/Antigravity%20Projects/AutoCaption/scratch) | Standalone test harnesses, benchmarks, and fidelity scripts | Python, Node.js, Puppeteer |
+| [`install_requirements.bat`](file:///c:/Users/ownin/Documents/Antigravity%20Projects/AutoCaption/install_requirements.bat) | Automated installer for Python dependencies, npm packages, fonts, and Whisper models | Batch script |
 | [`run_dev.bat`](file:///c:/Users/ownin/Documents/Antigravity%20Projects/AutoCaption/run_dev.bat) | Root runner script launching frontend + backend concurrently | Batch script |
 
 ---
@@ -123,3 +123,12 @@ backend/
 2. **State Centralization**: Always mutate video, caption, and style data through `frontend/src/store/useEditorStore.js`.
 3. **Storage Discipline**: Generated export and upload videos belong strictly in `backend/storage/uploads` and `backend/storage/exports`.
 4. **Font Loading**: Fonts used in libass must exist in `backend/storage/fonts/` and be mirrored in `frontend/src/index.css`.
+
+---
+
+## 🧰 Available Project Skills (`.agents/skills/`)
+
+- [`architectural-audit`](file:///c:/Users/ownin/Documents/Antigravity%20Projects/AutoCaption/.agents/skills/architectural-audit/SKILL.md): Comprehensive architectural audit, bug hunt, and 1:1 visual fidelity diagnostics.
+- [`autocaption-workflows`](file:///c:/Users/ownin/Documents/Antigravity%20Projects/AutoCaption/.agents/skills/autocaption-workflows/SKILL.md): Standard dev runner, debugging, and testing runbooks.
+- [`caption-engine`](file:///c:/Users/ownin/Documents/Antigravity%20Projects/AutoCaption/.agents/skills/caption-engine/SKILL.md): Caption rendering rules, styling, and ASS/FFmpeg parity.
+

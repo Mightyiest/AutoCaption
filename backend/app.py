@@ -10,33 +10,23 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import imageio_ffmpeg
-from transcriber import (
-    transcribe_media, 
-    setup_cuda_dlls, 
-    log_msg, 
-    LOG_HISTORY,
-    scan_model_cache,
-    trigger_model_download,
-    get_model_download_status,
-    delete_cached_model,
-    get_models_cache_dir
-)
-from renderer import render_captioned_video, generate_ass_subtitle
+from transcriber import transcribe_media, scan_model_cache, trigger_model_download, get_model_download_status, delete_cached_model, get_models_cache_dir, setup_cuda_dlls, log_msg, LOG_HISTORY
+from renderer import render_captioned_video
+from dom_renderer import render_captioned_video_dom
+from audio_separator import process_audio_separation, VOCALS_DIR
 
-# Ultra-fast native ASS line-stream rendering engine
-setup_cuda_dlls()
-
+# Base Directories
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOADS_DIR = os.path.join(BASE_DIR, "storage", "uploads")
-EXPORTS_DIR = os.path.join(BASE_DIR, "storage", "exports")
-DEMO_DIR = os.path.join(BASE_DIR, "storage", "demo")
+STORAGE_DIR = os.path.join(BASE_DIR, "storage")
+UPLOADS_DIR = os.path.join(STORAGE_DIR, "uploads")
+EXPORTS_DIR = os.path.join(STORAGE_DIR, "exports")
+FONTS_DIR = os.path.join(STORAGE_DIR, "fonts")
+DEMO_DIR = os.path.join(STORAGE_DIR, "demo")
 
-os.makedirs(UPLOADS_DIR, exist_ok=True)
-os.makedirs(EXPORTS_DIR, exist_ok=True)
-DEMO_DIR = os.path.join(BASE_DIR, "storage", "demo")
-os.makedirs(DEMO_DIR, exist_ok=True)
+for d in [UPLOADS_DIR, EXPORTS_DIR, FONTS_DIR, DEMO_DIR, VOCALS_DIR]:
+    os.makedirs(d, exist_ok=True)
 
-app = FastAPI(title="AutoCaption Studio Backend", version="1.0.0")
+app = FastAPI(title="AutoCaption Studio API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -48,10 +38,21 @@ app.add_middleware(
 
 app.mount("/static/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 app.mount("/static/exports", StaticFiles(directory=EXPORTS_DIR), name="exports")
+app.mount("/static/vocals", StaticFiles(directory=VOCALS_DIR), name="vocals")
 app.mount("/static/demo", StaticFiles(directory=DEMO_DIR), name="demo")
 
 RENDER_JOBS: Dict[str, Dict[str, Any]] = {}
 ACTIVE_RENDER_PROCESSES: Dict[str, subprocess.Popen] = {}
+SEPARATION_JOBS: Dict[str, Dict[str, Any]] = {}
+
+def _prune_old_jobs():
+    global RENDER_JOBS, SEPARATION_JOBS
+    if len(RENDER_JOBS) > 80:
+        for k in list(RENDER_JOBS.keys())[:-40]:
+            RENDER_JOBS.pop(k, None)
+    if len(SEPARATION_JOBS) > 80:
+        for k in list(SEPARATION_JOBS.keys())[:-40]:
+            SEPARATION_JOBS.pop(k, None)
 
 class RenderRequest(BaseModel):
     video_filename: str
@@ -60,7 +61,8 @@ class RenderRequest(BaseModel):
     width: Optional[int] = 1080
     height: Optional[int] = 1920
     video_duration: Optional[float] = 10.0
-    encoder_mode: Optional[str] = "cpu"  # "cpu" (Option A) | "gpu_nvenc" (Option B)
+    encoder_mode: Optional[str] = "gpu_nvenc"  # "cpu" | "gpu_nvenc"
+    engine_type: Optional[str] = "dom"        # "dom" (Ultra 1:1 Fidelity) | "ass" (Fast Burn)
     preview_metrics: Optional[Dict[str, Any]] = None
 
 class TranscribeSavedRequest(BaseModel):
@@ -68,6 +70,7 @@ class TranscribeSavedRequest(BaseModel):
     model_name: Optional[str] = "base"
     language: Optional[str] = None
     max_words_per_segment: Optional[int] = 3
+    remove_punctuation: Optional[bool] = False
 
 class ModelDownloadRequest(BaseModel):
     model_name: str
@@ -151,6 +154,7 @@ def get_stats():
         "logs": LOG_HISTORY[-50:]
     }
 
+@app.get("/api/models")
 @app.get("/api/models/status")
 def get_models_status_endpoint():
     try:
@@ -215,7 +219,8 @@ async def transcribe_saved_endpoint(req: TranscribeSavedRequest):
             file_path=source_path,
             model_name=req.model_name or "base",
             language=req.language,
-            max_words_per_segment=req.max_words_per_segment or 3
+            max_words_per_segment=req.max_words_per_segment or 3,
+            remove_punctuation=bool(req.remove_punctuation)
         )
         return {
             "video_filename": req.video_filename,
@@ -234,7 +239,8 @@ async def transcribe_endpoint(
     file: UploadFile = File(...),
     model_name: str = Form("base"),
     language: Optional[str] = Form(None),
-    max_words_per_segment: int = Form(3)
+    max_words_per_segment: int = Form(3),
+    remove_punctuation: bool = Form(False)
 ):
     file_id = uuid.uuid4().hex[:12]
     ext = os.path.splitext(file.filename)[1] or ".mp4"
@@ -250,7 +256,8 @@ async def transcribe_endpoint(
             file_path=saved_path,
             model_name=model_name,
             language=language,
-            max_words_per_segment=max_words_per_segment
+            max_words_per_segment=max_words_per_segment,
+            remove_punctuation=bool(remove_punctuation)
         )
         
         return {
@@ -267,6 +274,7 @@ async def transcribe_endpoint(
         raise HTTPException(status_code=500, detail=str(e))
 
 def _do_render_task(job_id: str, req: RenderRequest, source_path: str, output_path: str, export_filename: str):
+    engine_name = "Ultra-Fidelity Chrome DOM" if req.engine_type == "dom" else "Fast ASS Subtitles"
     mode_label = "CPU Ultra-Fast" if req.encoder_mode == "cpu" else "NVIDIA GPU NVENC"
     
     def on_proc(proc):
@@ -285,27 +293,41 @@ def _do_render_task(job_id: str, req: RenderRequest, source_path: str, output_pa
     try:
         RENDER_JOBS[job_id]["percent"] = 5
         RENDER_JOBS[job_id]["status"] = "rendering"
-        log_msg("RENDER", f"[{mode_label}] Starting video export for '{req.video_filename}' ({req.width}x{req.height})")
+        log_msg("RENDER", f"[{engine_name} | {mode_label}] Starting video export for '{req.video_filename}' ({req.width}x{req.height})")
         
-        render_captioned_video(
-            source_video_path=source_path,
-            output_video_path=output_path,
-            segments=req.segments,
-            style=req.style,
-            video_width=req.width or 1080,
-            video_height=req.height or 1920,
-            video_duration=req.video_duration,
-            encoder_mode=req.encoder_mode or "cpu",
-            preview_metrics=req.preview_metrics,
-            on_proc_ready=on_proc,
-            progress_callback=on_progress
-        )
+        if req.engine_type == "dom":
+            render_captioned_video_dom(
+                source_video_path=source_path,
+                output_video_path=output_path,
+                segments=req.segments,
+                style=req.style,
+                video_width=req.width or 1080,
+                video_height=req.height or 1920,
+                video_duration=req.video_duration,
+                encoder_mode=req.encoder_mode or "gpu_nvenc",
+                on_proc_ready=on_proc,
+                progress_callback=on_progress
+            )
+        else:
+            render_captioned_video(
+                source_video_path=source_path,
+                output_video_path=output_path,
+                segments=req.segments,
+                style=req.style,
+                video_width=req.width or 1080,
+                video_height=req.height or 1920,
+                video_duration=req.video_duration,
+                encoder_mode=req.encoder_mode or "gpu_nvenc",
+                preview_metrics=req.preview_metrics,
+                on_proc_ready=on_proc,
+                progress_callback=on_progress
+            )
         
         if RENDER_JOBS[job_id].get("status") != "cancelled":
             RENDER_JOBS[job_id]["percent"] = 100
             RENDER_JOBS[job_id]["status"] = "done"
             RENDER_JOBS[job_id]["download_url"] = f"/static/exports/{export_filename}"
-            log_msg("SUCCESS", f"[{mode_label}] Export complete: {export_filename}")
+            log_msg("SUCCESS", f"[{engine_name} | {mode_label}] Export complete: {export_filename}")
     except Exception as e:
         if RENDER_JOBS[job_id].get("status") != "cancelled":
             RENDER_JOBS[job_id]["status"] = "error"
@@ -330,6 +352,7 @@ async def render_endpoint(req: RenderRequest, background_tasks: BackgroundTasks)
         else:
             raise HTTPException(status_code=404, detail="Source video file not found")
             
+    _prune_old_jobs()
     job_id = uuid.uuid4().hex[:12]
     export_filename = f"export_{job_id}.mp4"
     output_path = os.path.join(EXPORTS_DIR, export_filename)
@@ -369,10 +392,19 @@ def cancel_render_endpoint(job_id: str):
     proc = ACTIVE_RENDER_PROCESSES.get(job_id)
     if proc:
         try:
-            proc.kill()
+            parent = psutil.Process(proc.pid)
+            for child in parent.children(recursive=True):
+                try:
+                    child.kill()
+                except Exception:
+                    pass
+            parent.kill()
             proc.wait(timeout=1.0)
         except Exception:
-            pass
+            try:
+                proc.kill()
+            except Exception:
+                pass
         if job_id in ACTIVE_RENDER_PROCESSES:
             del ACTIVE_RENDER_PROCESSES[job_id]
             
@@ -384,6 +416,92 @@ def get_render_progress(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
     return RENDER_JOBS[job_id]
 
+def _do_separation_task(job_id: str, input_file_path: str, engine: str):
+    def on_progress(pct, msg=""):
+        if job_id in SEPARATION_JOBS:
+            SEPARATION_JOBS[job_id]["percent"] = pct
+            SEPARATION_JOBS[job_id]["message"] = msg
+
+    try:
+        SEPARATION_JOBS[job_id]["status"] = "processing"
+        SEPARATION_JOBS[job_id]["percent"] = 5
+        SEPARATION_JOBS[job_id]["message"] = "Initializing separation model..."
+        
+        result = process_audio_separation(
+            input_file_path=input_file_path,
+            engine=engine,
+            job_id=job_id,
+            progress_callback=on_progress
+        )
+        
+        if SEPARATION_JOBS[job_id].get("status") != "cancelled":
+            SEPARATION_JOBS[job_id]["status"] = "done"
+            SEPARATION_JOBS[job_id]["percent"] = 100
+            SEPARATION_JOBS[job_id]["message"] = "Separation complete"
+            SEPARATION_JOBS[job_id]["result"] = result
+    except Exception as e:
+        if SEPARATION_JOBS[job_id].get("status") != "cancelled":
+            SEPARATION_JOBS[job_id]["status"] = "error"
+            SEPARATION_JOBS[job_id]["error"] = str(e)
+            SEPARATION_JOBS[job_id]["message"] = f"Separation error: {str(e)}"
+
+@app.post("/api/separate-audio")
+async def separate_audio_endpoint(
+    background_tasks: BackgroundTasks,
+    file: Optional[UploadFile] = File(None),
+    filename: Optional[str] = Form(None),
+    engine: Optional[str] = Form("demucs")
+):
+    if not file and not filename:
+        raise HTTPException(status_code=400, detail="Must provide either an uploaded file or an existing filename.")
+
+    _prune_old_jobs()
+    job_id = f"sep_{uuid.uuid4().hex[:10]}"
+    
+    if file:
+        orig_name = file.filename or "audio_input.mp3"
+        safe_ext = os.path.splitext(orig_name)[1] or ".mp3"
+        saved_filename = f"{job_id}_input{safe_ext}"
+        saved_path = os.path.join(UPLOADS_DIR, saved_filename)
+        with open(saved_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        input_file_path = saved_path
+    else:
+        input_file_path = os.path.join(UPLOADS_DIR, filename)
+        if not os.path.exists(input_file_path):
+            raise HTTPException(status_code=404, detail=f"File '{filename}' not found in uploads directory.")
+
+    SEPARATION_JOBS[job_id] = {
+        "job_id": job_id,
+        "status": "queued",
+        "percent": 0,
+        "message": "Queued in separation pipeline...",
+        "engine": engine or "demucs",
+        "error": None,
+        "result": None
+    }
+
+    background_tasks.add_task(_do_separation_task, job_id, input_file_path, engine or "demucs")
+
+    return {
+        "status": "queued",
+        "job_id": job_id,
+        "engine": engine or "demucs"
+    }
+
+@app.get("/api/separate-progress/{job_id}")
+def get_separation_progress(job_id: str):
+    if job_id not in SEPARATION_JOBS:
+        raise HTTPException(status_code=404, detail="Separation job not found")
+    return SEPARATION_JOBS[job_id]
+
+@app.post("/api/separate-cancel/{job_id}")
+def cancel_separation_endpoint(job_id: str):
+    if job_id in SEPARATION_JOBS:
+        SEPARATION_JOBS[job_id]["status"] = "cancelled"
+        SEPARATION_JOBS[job_id]["error"] = "Cancelled by user"
+    return {"status": "cancelled", "job_id": job_id}
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True)

@@ -32,18 +32,14 @@ backend/test_sub_out.mp4
 scratch/test_*.mp4
 scratch/test_*.png
 
+scratch/
+
 # Testing & Coverage
 .coverage
 coverage/
 htmlcov/
 .pytest_cache/
 .mypy_cache/
-scratch/tmp_chrome_data/
-scratch/batch_html/
-scratch/batch_png/
-scratch/*.html
-scratch/*.png
-scratch/*.mp4
 
 # Editors & OS
 .vscode/
@@ -52,3 +48,14 @@ scratch/*.mp4
 *.swo
 .DS_Store
 Thumbs.db
+
+# Documentation & Plans
+plan/
+opencut_autocaption_ai_and_effects_report.md
+
+# AI Agent Configs, Rules & Skills
+.agents/
+.agent/
+.gemini/
+
+

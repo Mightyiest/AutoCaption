@@ -9,8 +9,7 @@ import {
   Trash2, 
   Copy, 
   Check, 
-  Zap,
-  Server
+  Zap 
 } from 'lucide-react';
 import { useEditorStore } from '../store/useEditorStore';
 
@@ -23,12 +22,13 @@ export const ConsoleDrawer = () => {
   const [copied, setCopied] = useState(false);
   const logContainerRef = useRef(null);
 
-  const { isTranscribing, transcribeProgress, backendAvailable } = useEditorStore();
+  const { isTranscribing, transcribeProgress } = useEditorStore();
 
-  // Poll backend stats every 1.2s
   useEffect(() => {
     let isMounted = true;
-    const interval = setInterval(async () => {
+    const pollInterval = isOpen || isTranscribing ? 1000 : 5000;
+
+    const fetchStats = async () => {
       try {
         const res = await fetch(`${BACKEND_URL}/api/stats`);
         if (res.ok) {
@@ -38,18 +38,20 @@ export const ConsoleDrawer = () => {
             setLogs(data.logs || []);
           }
         }
-      } catch (err) {
+      } catch (_) {
         // Backend offline
       }
-    }, 1200);
+    };
+
+    fetchStats();
+    const interval = setInterval(fetchStats, pollInterval);
 
     return () => {
       isMounted = false;
       clearInterval(interval);
     };
-  }, []);
+  }, [isOpen, isTranscribing]);
 
-  // Auto-scroll to bottom when new logs arrive
   useEffect(() => {
     if (logContainerRef.current) {
       logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
@@ -65,153 +67,133 @@ export const ConsoleDrawer = () => {
 
   const getLevelColor = (level) => {
     switch (level) {
-      case 'SUCCESS': return '#4ADE80';
-      case 'ERROR': return '#F87171';
-      case 'WARN': return '#FBBF24';
-      case 'AI': return '#A855F7';
-      case 'TRANSCRIBE': return '#38BDF8';
-      case 'FFMPEG': return '#EC4899';
-      default: return '#94A3B8';
+      case 'SUCCESS': return 'var(--system-success)';
+      case 'ERROR': return 'var(--system-error)';
+      case 'WARN': return 'var(--system-warning)';
+      case 'AI': return 'var(--accent-bright-blue)';
+      case 'TRANSCRIBE': return 'var(--accent-bright-blue)';
+      default: return 'var(--text-tertiary)';
     }
   };
 
   return (
-    <div style={{
-      borderTop: '1px solid var(--border-color)',
-      backgroundColor: 'rgba(11, 15, 23, 0.95)',
-      backdropFilter: 'blur(16px)',
+    <footer style={{
+      borderTop: '1px solid var(--border-subtle)',
+      backgroundColor: 'var(--bg-panel)',
       display: 'flex',
       flexDirection: 'column',
-      zIndex: 40,
-      transition: 'all 200ms ease'
+      zIndex: 40
     }}>
       {/* Bottom Status Bar */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '6px 16px',
+        padding: '4px 14px',
         fontSize: '11px',
-        color: 'var(--text-muted)'
+        color: 'var(--text-tertiary)',
+        userSelect: 'none'
       }}>
-        {/* Hardware Resource Badges */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          {/* CPU Pill */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-            <Cpu size={13} color="var(--accent-primary)" />
-            <span>CPU: <strong style={{ color: '#FFF' }}>
+        {/* Hardware Resource Metrics */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {/* CPU */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <Cpu size={11} color="var(--text-tertiary)" />
+            <span>CPU: <strong style={{ color: 'var(--text-primary)', fontWeight: '500' }}>
               {stats ? `${stats.cpu_percent ?? stats.cpu_usage_percent ?? 0}%` : '--'}
             </strong></span>
           </div>
 
-          {/* RAM Pill */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-            <HardDrive size={13} color="#F59E0B" />
-            <span>RAM: <strong style={{ color: '#FFF' }}>
+          {/* RAM */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <HardDrive size={11} color="var(--text-tertiary)" />
+            <span>RAM: <strong style={{ color: 'var(--text-primary)', fontWeight: '500' }}>
               {stats && stats.ram_total_gb ? (
-                `${stats.ram_used_gb ?? (stats.ram_available_gb !== undefined ? (stats.ram_total_gb - stats.ram_available_gb).toFixed(1) : '0')} / ${stats.ram_total_gb} GB (${stats.ram_percent ?? stats.ram_usage_percent ?? 0}%)`
+                `${stats.ram_used_gb ?? (stats.ram_available_gb !== undefined ? (stats.ram_total_gb - stats.ram_available_gb).toFixed(1) : '0')} / ${stats.ram_total_gb} GB`
               ) : '--'}
             </strong></span>
           </div>
 
-          {/* GPU Pill */}
+          {/* GPU */}
           {stats?.gpu?.available ? (
             <div style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '6px',
-              padding: '2px 8px',
-              borderRadius: '999px',
-              background: 'rgba(34, 197, 94, 0.12)',
-              border: '1px solid rgba(34, 197, 94, 0.3)',
-              color: '#4ADE80'
+              gap: '4px',
+              color: 'var(--system-success)'
             }}>
-              <Zap size={12} />
-              <span>
-                <strong>{stats.gpu.name}</strong>: {stats.gpu.util_percent}% • {(stats.gpu.used_mb / 1024).toFixed(1)} / {(stats.gpu.total_mb / 1024).toFixed(1)} GB VRAM
-              </span>
+              <Zap size={11} />
+              <span>{stats.gpu.name} ({stats.gpu.util_percent}%)</span>
             </div>
           ) : (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-              <Zap size={13} color="var(--text-muted)" />
-              <span>GPU: <strong style={{ color: 'var(--text-muted)' }}>CPU Mode</strong></span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <Zap size={11} color="var(--text-tertiary)" />
+              <span>CPU Inference</span>
             </div>
           )}
 
-          {/* Active Task status */}
+          {/* Active Transcribe Task */}
           {isTranscribing && (
             <div style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '6px',
-              color: 'var(--accent-primary)',
-              fontWeight: '700'
+              gap: '5px',
+              color: 'var(--accent-bright-blue)'
             }}>
-              <Activity size={13} className="animate-pulse" />
-              <span>{transcribeProgress || 'Processing AI Speech Alignment...'}</span>
+              <Activity size={12} className="animate-pulse" />
+              <span>{transcribeProgress || 'Processing Speech Alignment...'}</span>
             </div>
           )}
         </div>
 
         {/* Toggle Terminal Button */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <button
-            onClick={() => setIsOpen(!isOpen)}
-            style={{
-              background: isOpen ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255,255,255,0.06)',
-              border: '1px solid var(--border-color)',
-              color: isOpen ? 'var(--accent-primary)' : 'var(--text-main)',
-              fontSize: '11px',
-              fontWeight: '700',
-              padding: '4px 10px',
-              borderRadius: '6px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              cursor: 'pointer'
-            }}
-          >
-            <Terminal size={12} />
-            <span>Console Logs ({logs.length})</span>
-            {isOpen ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
-          </button>
-        </div>
+        <button
+          onClick={() => setIsOpen(!isOpen)}
+          className="btn-ghost"
+          style={{ padding: '2px 6px', fontSize: '10px' }}
+        >
+          <Terminal size={11} />
+          <span>Console ({logs.length})</span>
+          {isOpen ? <ChevronDown size={11} /> : <ChevronUp size={11} />}
+        </button>
       </div>
 
       {/* Expandable Console Terminal Window */}
       {isOpen && (
         <div style={{
-          height: '160px',
-          borderTop: '1px solid var(--border-color)',
-          backgroundColor: '#05080E',
+          height: '140px',
+          borderTop: '1px solid var(--border-subtle)',
+          backgroundColor: '#0a0a0c',
           display: 'flex',
           flexDirection: 'column'
         }}>
           {/* Terminal Actions Bar */}
           <div style={{
-            padding: '4px 12px',
-            borderBottom: '1px solid rgba(255,255,255,0.05)',
+            padding: '3px 12px',
+            borderBottom: '1px solid var(--border-subtle)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            background: 'rgba(0,0,0,0.3)',
+            background: 'rgba(255, 255, 255, 0.02)',
             fontSize: '10px',
-            color: 'var(--text-muted)'
+            color: 'var(--text-tertiary)'
           }}>
-            <span>Real-time Whisper & FFmpeg Execution Stream</span>
-            <div style={{ display: 'flex', gap: '8px' }}>
+            <span>Execution Log Stream</span>
+            <div style={{ display: 'flex', gap: '6px' }}>
               <button
                 onClick={handleCopyLogs}
-                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10px' }}
+                className="btn-ghost"
+                style={{ padding: '1px 4px', fontSize: '10px' }}
               >
-                {copied ? <Check size={11} color="#4ADE80" /> : <Copy size={11} />}
-                <span>{copied ? 'Copied!' : 'Copy'}</span>
+                {copied ? <Check size={10} color="var(--system-success)" /> : <Copy size={10} />}
+                <span>{copied ? 'Copied' : 'Copy'}</span>
               </button>
               <button
                 onClick={() => setLogs([])}
-                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10px' }}
+                className="btn-ghost"
+                style={{ padding: '1px 4px', fontSize: '10px' }}
               >
-                <Trash2 size={11} />
+                <Trash2 size={10} />
                 <span>Clear</span>
               </button>
             </div>
@@ -223,33 +205,33 @@ export const ConsoleDrawer = () => {
             style={{
               flex: 1,
               overflowY: 'auto',
-              padding: '8px 14px',
-              fontFamily: 'Consolas, Monaco, "Courier New", monospace',
-              fontSize: '11px',
-              lineHeight: '1.45',
+              padding: '6px 12px',
+              fontFamily: 'SF Mono, Menlo, monospace',
+              fontSize: '10px',
+              lineHeight: '1.4',
               display: 'flex',
               flexDirection: 'column',
-              gap: '2px'
+              gap: '1px'
             }}
           >
             {logs.length === 0 ? (
-              <span style={{ color: 'var(--text-subtle)', fontStyle: 'italic' }}>
-                No active execution logs. Ready for video upload or transcription.
+              <span style={{ color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                No active execution logs.
               </span>
             ) : (
               logs.map((log, i) => (
-                <div key={i} style={{ display: 'flex', gap: '8px' }}>
-                  <span style={{ color: '#64748B', userSelect: 'none' }}>[{log.timestamp}]</span>
-                  <span style={{ color: getLevelColor(log.level), fontWeight: '700', minWidth: '70px' }}>
+                <div key={i} style={{ display: 'flex', gap: '6px' }}>
+                  <span style={{ color: 'var(--text-tertiary)', userSelect: 'none' }}>[{log.timestamp}]</span>
+                  <span style={{ color: getLevelColor(log.level), fontWeight: '600', minWidth: '60px' }}>
                     [{log.level}]
                   </span>
-                  <span style={{ color: '#E2E8F0', flex: 1, wordBreak: 'break-all' }}>{log.message}</span>
+                  <span style={{ color: 'var(--text-secondary)', flex: 1, wordBreak: 'break-all' }}>{log.message}</span>
                 </div>
               ))
             )}
           </div>
         </div>
       )}
-    </div>
+    </footer>
   );
 };

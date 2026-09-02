@@ -1,472 +1,602 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { 
-  Layers, 
-  Trash2, 
-  Scissors, 
-  Clock, 
-  GripHorizontal,
-  ChevronLeft,
-  ChevronRight
-} from 'lucide-react';
 import { useEditorStore } from '../store/useEditorStore';
 import { formatTimecode } from '../engine/animator';
+import { 
+  getPixelsPerSecond, 
+  snapTime, 
+  calculateRulerTicks,
+  formatAdaptiveTimecode
+} from '../engine/timelineGeometry';
+import { AudioWaveformTrack } from './AudioWaveformTrack';
+import { TimelineToolbar } from './TimelineToolbar';
+import { TimelineTrackHeaders } from './TimelineTrackHeaders';
+
+const TRACK_PADDING = 16; // Exact subpixel track margin in pixels
 
 export const HorizontalTimeline = () => {
-  const timelineRef = useRef(null);
+  const scrollContainerRef = useRef(null);
+  const trackContainerRef = useRef(null);
 
   const {
     duration,
     currentTime,
-    seekTo,
+    videoFps,
     segments,
     selectedSegmentId,
+    timelineZoom,
+    timelineSnapEnabled,
+    followPlayhead,
+    historyPast,
+    historyFuture,
+    isMuted,
+    setTimelineZoom,
+    toggleTimelineSnap,
+    toggleFollowPlayhead,
+    seekTo,
     setSelectedSegmentId,
-    deleteSegment,
+    setSelectedWordId,
     moveSegment,
     trimSegmentStart,
     trimSegmentEnd,
-    splitSegmentAtPlayhead
+    splitSegmentAtPlayhead,
+    deleteSegment,
+    pushHistoryState,
+    undo,
+    redo,
+    setIsMuted
   } = useEditorStore();
 
-  const totalDuration = Math.max(1.0, duration || 10.0);
+  const totalDuration = Math.max(0.1, duration || 14.52);
+  const [viewportWidth, setViewportWidth] = useState(800);
+  const [dragState, setDragState] = useState(null);
 
-  // Keyboard shortcut listener (Delete key to remove selected segment, S to split)
+  // Measure container viewport width for fit calculations
   useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selectedSegmentId) {
-          e.preventDefault();
-          deleteSegment(selectedSegmentId);
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.contentRect.width > 0) {
+          setViewportWidth(Math.round(entry.contentRect.width));
         }
-      } else if (e.key.toLowerCase() === 's') {
-        if (selectedSegmentId) {
-          e.preventDefault();
-          splitSegmentAtPlayhead(selectedSegmentId);
-        }
+      }
+    });
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const pps = getPixelsPerSecond({
+    duration: totalDuration,
+    viewportWidth: viewportWidth - TRACK_PADDING * 2,
+    zoom: timelineZoom,
+    minPps: 12
+  });
+
+  const contentWidth = Math.max(viewportWidth, totalDuration * pps + TRACK_PADDING * 2);
+  const { ticks, step } = calculateRulerTicks(totalDuration, pps);
+
+  // Auto-follow playhead during playback
+  useEffect(() => {
+    if (!followPlayhead || !scrollContainerRef.current) return;
+    const container = scrollContainerRef.current;
+    const playheadPx = TRACK_PADDING + (currentTime * pps);
+    const viewLeft = container.scrollLeft;
+    const viewRight = viewLeft + container.clientWidth;
+
+    if (playheadPx < viewLeft + 60 || playheadPx > viewRight - 60) {
+      container.scrollLeft = Math.max(0, playheadPx - container.clientWidth * 0.3);
+    }
+  }, [currentTime, followPlayhead, pps]);
+
+  // Non-passive Wheel zoom (Ctrl + Wheel) on timeline
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    const onWheel = (e) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const factor = e.deltaY < 0 ? 1.2 : 0.83;
+        setTimelineZoom(timelineZoom * factor);
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedSegmentId, deleteSegment, splitSegmentAtPlayhead]);
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [timelineZoom, setTimelineZoom]);
 
-  // Timeline click or drag to seek with RAF smoothing
-  const handleTimelineClick = (e) => {
-    if (!timelineRef.current) return;
-    const rect = timelineRef.current.getBoundingClientRect();
-    const trackPad = 16;
-    const clickX = e.clientX - rect.left - trackPad;
-    const availableW = Math.max(1, rect.width - trackPad * 2);
-    const percentage = Math.max(0, Math.min(1, clickX / availableW));
-    seekTo(percentage * totalDuration);
-  };
-
-  // Drag red playhead smoothly
-  const handleDragPlayhead = (e) => {
+  // Ruler pointer down -> Scrub playhead
+  const handleRulerPointerDown = (e) => {
+    if (e.button !== 0 || !trackContainerRef.current) return;
     e.preventDefault();
-    e.stopPropagation();
 
-    let rafId = null;
+    const rect = trackContainerRef.current.getBoundingClientRect();
     const handleMove = (moveEvent) => {
-      if (!timelineRef.current) return;
-      if (rafId) cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => {
-        if (!timelineRef.current) return;
-        const rect = timelineRef.current.getBoundingClientRect();
-        const trackPad = 16;
-        const clickX = moveEvent.clientX - rect.left - trackPad;
-        const availableW = Math.max(1, rect.width - trackPad * 2);
-        const percentage = Math.max(0, Math.min(1, clickX / availableW));
-        seekTo(percentage * totalDuration);
-      });
+      const rawX = moveEvent.clientX - rect.left - TRACK_PADDING;
+      let targetTime = Math.max(0, Math.min(totalDuration, rawX / pps));
+
+      if (timelineSnapEnabled) {
+        targetTime = snapTime({ targetTime, currentTime, segments, fps: videoFps || 30, enabled: true });
+      }
+
+      seekTo(Math.max(0, Math.min(totalDuration, targetTime)));
     };
 
     const handleUp = () => {
-      if (rafId) cancelAnimationFrame(rafId);
-      window.removeEventListener('mousemove', handleMove);
-      window.removeEventListener('mouseup', handleUp);
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
     };
 
-    window.addEventListener('mousemove', handleMove);
-    window.addEventListener('mouseup', handleUp);
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+    handleMove(e);
   };
 
-  // Drag to move entire subtitle block
-  const handleStartMoveSegment = (e, seg) => {
+  // Playhead needle scrub handler
+  const handlePlayheadPointerDown = (e) => {
+    if (e.button !== 0 || !trackContainerRef.current) return;
     e.preventDefault();
     e.stopPropagation();
+
+    const rect = trackContainerRef.current.getBoundingClientRect();
+    const handleMove = (moveEvent) => {
+      const rawX = moveEvent.clientX - rect.left - TRACK_PADDING;
+      let targetTime = Math.max(0, Math.min(totalDuration, rawX / pps));
+
+      if (timelineSnapEnabled) {
+        targetTime = snapTime({ targetTime, currentTime, segments, fps: videoFps || 30, enabled: true });
+      }
+
+      seekTo(Math.max(0, Math.min(totalDuration, targetTime)));
+    };
+
+    const handleUp = () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+    };
+
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+  };
+
+  // Segment Block Pointer Down -> Drag/Move
+  const handleSegmentPointerDown = (e, seg) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+
     setSelectedSegmentId(seg.id);
-    seekTo(seg.start);
+    setSelectedWordId(null);
+    pushHistoryState();
 
-    const startX = e.clientX;
-    const initialStart = seg.start;
-    const initialEnd = seg.end;
-    const segDur = initialEnd - initialStart;
-    let rafId = null;
-
-    const handleMove = (moveEvent) => {
-      if (!timelineRef.current) return;
-      if (rafId) cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => {
-        if (!timelineRef.current) return;
-        const rect = timelineRef.current.getBoundingClientRect();
-        const trackPad = 16;
-        const availableW = Math.max(1, rect.width - trackPad * 2);
-        const deltaX = moveEvent.clientX - startX;
-        const deltaSeconds = (deltaX / availableW) * totalDuration;
-        
-        const newStart = Math.max(0, Math.min(totalDuration - segDur, initialStart + deltaSeconds));
-        moveSegment(seg.id, newStart - seg.start);
-        seekTo(newStart);
-      });
-    };
-
-    const handleUp = () => {
-      if (rafId) cancelAnimationFrame(rafId);
-      window.removeEventListener('mousemove', handleMove);
-      window.removeEventListener('mouseup', handleUp);
-    };
-
-    window.addEventListener('mousemove', handleMove);
-    window.addEventListener('mouseup', handleUp);
+    setDragState({
+      type: 'move',
+      segmentId: seg.id,
+      initialStart: seg.start,
+      initialEnd: seg.end,
+      startX: e.clientX
+    });
   };
 
-  // Drag Left Edge to Trim Start
-  const handleStartTrimLeft = (e, seg) => {
-    e.preventDefault();
+  // Trim Left Handle Pointer Down
+  const handleTrimLeftPointerDown = (e, seg) => {
+    if (e.button !== 0) return;
     e.stopPropagation();
+
     setSelectedSegmentId(seg.id);
+    pushHistoryState();
 
-    let rafId = null;
-    const handleMove = (moveEvent) => {
-      if (!timelineRef.current) return;
-      if (rafId) cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => {
-        if (!timelineRef.current) return;
-        const rect = timelineRef.current.getBoundingClientRect();
-        const trackPad = 16;
-        const availableW = Math.max(1, rect.width - trackPad * 2);
-        const clickX = moveEvent.clientX - rect.left - trackPad;
-        const newTime = Math.max(0, (clickX / availableW) * totalDuration);
-        trimSegmentStart(seg.id, newTime);
-        seekTo(newTime);
-      });
-    };
-
-    const handleUp = () => {
-      if (rafId) cancelAnimationFrame(rafId);
-      window.removeEventListener('mousemove', handleMove);
-      window.removeEventListener('mouseup', handleUp);
-    };
-
-    window.addEventListener('mousemove', handleMove);
-    window.addEventListener('mouseup', handleUp);
+    setDragState({
+      type: 'trim_left',
+      segmentId: seg.id,
+      initialStart: seg.start,
+      initialEnd: seg.end,
+      startX: e.clientX
+    });
   };
 
-  // Drag Right Edge to Trim End
-  const handleStartTrimRight = (e, seg) => {
-    e.preventDefault();
+  // Trim Right Handle Pointer Down
+  const handleTrimRightPointerDown = (e, seg) => {
+    if (e.button !== 0) return;
     e.stopPropagation();
+
     setSelectedSegmentId(seg.id);
+    pushHistoryState();
 
-    let rafId = null;
-    const handleMove = (moveEvent) => {
-      if (!timelineRef.current) return;
-      if (rafId) cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => {
-        if (!timelineRef.current) return;
-        const rect = timelineRef.current.getBoundingClientRect();
-        const trackPad = 16;
-        const availableW = Math.max(1, rect.width - trackPad * 2);
-        const clickX = moveEvent.clientX - rect.left - trackPad;
-        const newTime = Math.min(totalDuration, (clickX / availableW) * totalDuration);
-        trimSegmentEnd(seg.id, newTime);
-        seekTo(newTime);
-      });
-    };
-
-    const handleUp = () => {
-      if (rafId) cancelAnimationFrame(rafId);
-      window.removeEventListener('mousemove', handleMove);
-      window.removeEventListener('mouseup', handleUp);
-    };
-
-    window.addEventListener('mousemove', handleMove);
-    window.addEventListener('mouseup', handleUp);
+    setDragState({
+      type: 'trim_right',
+      segmentId: seg.id,
+      initialStart: seg.start,
+      initialEnd: seg.end,
+      startX: e.clientX
+    });
   };
 
-  // Generate tick marks
-  const getTicks = () => {
-    const ticks = [];
-    const step = totalDuration <= 10 ? 1 : totalDuration <= 30 ? 2 : totalDuration <= 90 ? 5 : 10;
-    for (let t = 0; t <= totalDuration; t += step) {
-      ticks.push(t);
+  // Global Pointer Move & Up handlers for dragging
+  const handlePointerMove = (e) => {
+    if (!dragState) return;
+
+    const deltaX = e.clientX - dragState.startX;
+    const deltaSeconds = deltaX / pps;
+    const targetSeg = segments.find(s => s.id === dragState.segmentId);
+    if (!targetSeg) return;
+
+    if (dragState.type === 'move') {
+      let newStart = Math.max(0, dragState.initialStart + deltaSeconds);
+      if (timelineSnapEnabled) {
+        newStart = snapTime({
+          targetTime: newStart,
+          currentTime,
+          segments,
+          ignoreSegmentId: targetSeg.id,
+          enabled: true
+        });
+      }
+      moveSegment(targetSeg.id, newStart - targetSeg.start);
+    } else if (dragState.type === 'trim_left') {
+      let newStart = Math.max(0, dragState.initialStart + deltaSeconds);
+      if (timelineSnapEnabled) {
+        newStart = snapTime({
+          targetTime: newStart,
+          currentTime,
+          segments,
+          ignoreSegmentId: targetSeg.id,
+          enabled: true
+        });
+      }
+      trimSegmentStart(targetSeg.id, newStart);
+    } else if (dragState.type === 'trim_right') {
+      let newEnd = Math.min(totalDuration, dragState.initialEnd + deltaSeconds);
+      if (timelineSnapEnabled) {
+        newEnd = snapTime({
+          targetTime: newEnd,
+          currentTime,
+          segments,
+          ignoreSegmentId: targetSeg.id,
+          enabled: true
+        });
+      }
+      trimSegmentEnd(targetSeg.id, newEnd);
     }
-    return ticks;
   };
 
-  const playheadPercent = (currentTime / totalDuration) * 100;
-  const selectedSegment = segments.find((s) => s.id === selectedSegmentId);
+  const handlePointerUp = () => {
+    if (!dragState) return;
+    setDragState(null);
+  };
+
+  const handleZoomFit = () => {
+    if (!scrollContainerRef.current) return;
+    const containerW = scrollContainerRef.current.clientWidth - (TRACK_PADDING * 2) - 20;
+    const fitPps = Math.max(10, containerW / Math.max(1, totalDuration));
+    const targetZoom = fitPps / 60;
+    setTimelineZoom(targetZoom);
+    scrollContainerRef.current.scrollLeft = 0;
+  };
+
+  const handleFocusSelection = () => {
+    if (!selectedSegment || !scrollContainerRef.current) return;
+    const segCenterPx = TRACK_PADDING + (((selectedSegment.start + selectedSegment.end) / 2) * pps);
+    scrollContainerRef.current.scrollLeft = Math.max(0, segCenterPx - scrollContainerRef.current.clientWidth / 2);
+  };
+
+  const selectedSegment = segments.find(s => s.id === selectedSegmentId);
+  const playheadX = TRACK_PADDING + (currentTime * pps);
 
   return (
-    <div className="glass-panel" style={{
-      height: '100%',
-      borderRadius: '14px',
-      display: 'flex',
-      flexDirection: 'column',
-      overflow: 'hidden',
-      position: 'relative'
-    }}>
-      {/* Timeline Controls Header */}
-      <div style={{
-        padding: '5px 14px',
-        borderBottom: '1px solid var(--border-color)',
+    <div 
+      className="studio-panel" 
+      style={{
+        height: '100%',
         display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        background: 'rgba(0,0,0,0.3)',
-        fontSize: '11px'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: 'var(--accent-primary)', fontWeight: '800' }}>
-            <Layers size={13} />
-            <span>Timeline</span>
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontFamily: 'monospace', color: '#FFF' }}>
-            <span style={{ color: 'var(--accent-primary)', fontWeight: '700' }}>{formatTimecode(currentTime)}</span>
-            <span style={{ color: 'var(--text-muted)' }}>/</span>
-            <span style={{ color: 'var(--text-muted)' }}>{formatTimecode(totalDuration)}</span>
-          </div>
-        </div>
-
-        {/* Selected Segment Quick Action Bar */}
-        {selectedSegment && (
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            background: 'rgba(56, 189, 248, 0.15)',
-            padding: '2px 8px',
-            borderRadius: '6px',
-            border: '1px solid rgba(56, 189, 248, 0.3)'
-          }}>
-            <span style={{ fontSize: '10px', color: '#38BDF8', fontWeight: '700' }}>
-              Selected: "{selectedSegment.text.slice(0, 16)}..."
-            </span>
-            <button
-              onClick={() => splitSegmentAtPlayhead(selectedSegment.id)}
-              style={{ background: 'none', border: 'none', color: '#FFF', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px', fontSize: '10px' }}
-              title="Split selected block at playhead (Shortcut: S)"
-            >
-              <Scissors size={11} /> Split
-            </button>
-            <button
-              onClick={() => deleteSegment(selectedSegment.id)}
-              style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px', fontSize: '10px' }}
-              title="Delete selected block (Shortcut: Del)"
-            >
-              <Trash2 size={11} /> Delete
-            </button>
-          </div>
-        )}
-
-        <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-          {segments.length} Blocks • Click block to edit / drag to reposition
-        </div>
-      </div>
-
-      {/* Multi-Track Interactive Area */}
-      <div
-        ref={timelineRef}
-        onClick={handleTimelineClick}
-        style={{
-          flex: 1,
-          position: 'relative',
-          padding: '0 16px',
-          background: 'rgba(15, 23, 42, 0.6)',
-          overflow: 'hidden',
-          cursor: 'pointer',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'space-around'
+        flexDirection: 'column',
+        overflow: 'hidden',
+        position: 'relative'
+      }}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+    >
+      {/* 1. Modular Top Toolbar */}
+      <TimelineToolbar
+        currentTime={currentTime}
+        totalDuration={totalDuration}
+        historyPast={historyPast}
+        historyFuture={historyFuture}
+        selectedSegment={selectedSegment}
+        segmentsCount={segments.length}
+        timelineSnapEnabled={timelineSnapEnabled}
+        followPlayhead={followPlayhead}
+        timelineZoom={timelineZoom}
+        onUndo={undo}
+        onRedo={redo}
+        onSplitSelected={() => {
+          if (selectedSegment) {
+            pushHistoryState();
+            splitSegmentAtPlayhead(selectedSegment.id);
+          }
         }}
-      >
-        {/* Time Ruler */}
-        <div style={{
-          position: 'relative',
-          height: '18px',
-          borderBottom: '1px solid rgba(255,255,255,0.08)',
-          pointerEvents: 'none'
-        }}>
-          {getTicks().map((t) => {
-            const leftPercent = (t / totalDuration) * 100;
-            return (
-              <div
-                key={t}
-                style={{
-                  position: 'absolute',
-                  left: `${leftPercent}%`,
-                  bottom: 0,
-                  transform: 'translateX(-50%)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center'
-                }}
-              >
-                <span style={{ fontSize: '9px', fontFamily: 'monospace', color: '#64748B' }}>
-                  {formatTimecode(t).slice(0, 5)}
-                </span>
-                <div style={{ width: '1px', height: '4px', background: 'rgba(255,255,255,0.2)' }} />
-              </div>
-            );
-          })}
-        </div>
+        onDeleteSelected={() => {
+          if (selectedSegment) {
+            pushHistoryState();
+            deleteSegment(selectedSegment.id);
+          }
+        }}
+        onFocusSelected={handleFocusSelection}
+        onToggleSnap={toggleTimelineSnap}
+        onToggleFollowPlayhead={toggleFollowPlayhead}
+        onZoomIn={() => setTimelineZoom(timelineZoom * 1.25)}
+        onZoomOut={() => setTimelineZoom(timelineZoom * 0.8)}
+        onZoomFit={handleZoomFit}
+      />
 
-        {/* Video Track */}
-        <div style={{
-          height: '24px',
-          borderRadius: '5px',
-          background: 'linear-gradient(90deg, #1E293B 0%, #334155 100%)',
-          border: '1px solid rgba(255,255,255,0.08)',
-          display: 'flex',
-          alignItems: 'center',
-          padding: '0 8px',
-          fontSize: '9px',
-          fontWeight: '700',
-          color: 'var(--text-muted)',
-          userSelect: 'none'
-        }}>
-          🎬 Video Track
-        </div>
+      {/* 2. Main Multi-Track NLE Layout (Left Header Column + Right Scrollable Tracks) */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
+        {/* Modular Left Track Headers */}
+        <TimelineTrackHeaders
+          isMuted={isMuted}
+          segmentsCount={segments.length}
+          onToggleMute={() => setIsMuted(!isMuted)}
+        />
 
-        {/* Subtitle / Caption Track */}
-        <div style={{
-          height: '38px',
-          borderRadius: '6px',
-          background: 'rgba(0,0,0,0.35)',
-          border: '1px solid rgba(255,255,255,0.05)',
-          position: 'relative'
-        }}>
-          {segments.map((seg) => {
-            const left = (seg.start / totalDuration) * 100;
-            const width = Math.max(1.8, ((seg.end - seg.start) / totalDuration) * 100);
-            const isSelected = selectedSegmentId === seg.id;
-            const isActive = currentTime >= seg.start && currentTime <= seg.end;
-
-            return (
-              <div
-                key={seg.id}
-                onMouseDown={(e) => handleStartMoveSegment(e, seg)}
-                style={{
-                  position: 'absolute',
-                  left: `${left}%`,
-                  width: `${width}%`,
-                  top: '2px',
-                  bottom: '2px',
-                  borderRadius: '5px',
-                  background: isSelected 
-                    ? 'linear-gradient(135deg, #0284C7 0%, #38BDF8 100%)' 
-                    : isActive 
-                    ? 'rgba(56, 189, 248, 0.45)' 
-                    : 'rgba(56, 189, 248, 0.2)',
-                  border: isSelected 
-                    ? '2px solid #FFFFFF' 
-                    : isActive 
-                    ? '1.5px solid rgba(56, 189, 248, 0.8)' 
-                    : '1px solid rgba(56, 189, 248, 0.4)',
-                  color: isSelected || isActive ? '#FFFFFF' : 'var(--text-main)',
-                  boxShadow: isSelected ? '0 0 14px rgba(56, 189, 248, 0.8)' : 'none',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '0 4px',
-                  fontSize: '10px',
-                  fontWeight: '700',
-                  cursor: 'grab',
-                  zIndex: isSelected ? 15 : 5,
-                  userSelect: 'none',
-                  overflow: 'hidden'
-                }}
-                title={`Drag to reposition • [${formatTimecode(seg.start)} - ${formatTimecode(seg.end)}]`}
-              >
-                {/* Left Trim Handle */}
-                <div
-                  onMouseDown={(e) => handleStartTrimLeft(e, seg)}
-                  style={{
-                    width: '6px',
-                    height: '100%',
-                    cursor: 'ew-resize',
-                    background: isSelected ? 'rgba(255,255,255,0.4)' : 'transparent',
-                    borderRadius: '2px 0 0 2px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}
-                  title="Trim start time"
-                />
-
-                {/* Block Text */}
-                <span style={{
-                  flex: 1,
-                  textAlign: 'center',
-                  overflow: 'hidden',
-                  whiteSpace: 'nowrap',
-                  textOverflow: 'ellipsis',
-                  padding: '0 2px'
-                }}>
-                  {seg.text}
-                </span>
-
-                {/* Right Trim Handle */}
-                <div
-                  onMouseDown={(e) => handleStartTrimRight(e, seg)}
-                  style={{
-                    width: '6px',
-                    height: '100%',
-                    cursor: 'ew-resize',
-                    background: isSelected ? 'rgba(255,255,255,0.4)' : 'transparent',
-                    borderRadius: '0 2px 2px 0',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}
-                  title="Trim end time"
-                />
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Vertical Red Playhead */}
+        {/* Right-Side Virtual Scrollable Track Area */}
         <div
-          onMouseDown={handleDragPlayhead}
+          ref={scrollContainerRef}
           style={{
-            position: 'absolute',
-            left: `${playheadPercent}%`,
-            top: 0,
-            bottom: 0,
-            width: '2px',
-            background: '#EF4444',
-            zIndex: 30,
-            cursor: 'ew-resize',
-            transform: 'translateX(-50%)',
-            pointerEvents: 'auto'
+            flex: 1,
+            overflowX: 'auto',
+            overflowY: 'hidden',
+            position: 'relative',
+            background: '#121214',
+            userSelect: 'none'
           }}
         >
-          {/* Top Marker */}
-          <div style={{
-            position: 'absolute',
-            top: 0,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            width: '12px',
-            height: '14px',
-            background: '#EF4444',
-            clipPath: 'polygon(0% 0%, 100% 0%, 50% 100%)',
-            boxShadow: '0 2px 8px rgba(239, 68, 68, 0.9)'
-          }} />
+          <div
+            ref={trackContainerRef}
+            style={{
+              width: `${contentWidth}px`,
+              minWidth: '100%',
+              height: '100%',
+              position: 'relative',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-around'
+            }}
+          >
+            {/* Time Ruler Track */}
+            <div
+              onPointerDown={handleRulerPointerDown}
+              style={{
+                position: 'relative',
+                height: '24px',
+                borderBottom: '1px solid var(--border-subtle)',
+                cursor: 'pointer',
+                userSelect: 'none'
+              }}
+            >
+              {ticks.map((t) => {
+                const tickX = TRACK_PADDING + (t.time * pps);
+                return (
+                  <div
+                    key={t.time}
+                    style={{
+                      position: 'absolute',
+                      left: `${tickX}px`,
+                      bottom: 0,
+                      transform: 'translateX(-50%)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      pointerEvents: 'none'
+                    }}
+                  >
+                    <span style={{ fontSize: '10px', fontWeight: '600', fontFamily: 'SF Mono, monospace', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                      {formatAdaptiveTimecode(t.time, step)}
+                    </span>
+                    <div style={{
+                      width: t.isMajor ? '1.5px' : '1px',
+                      height: t.isMajor ? '7px' : '4px',
+                      background: t.isMajor ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.18)'
+                    }} />
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Audio Waveform Track */}
+            <div style={{ position: 'relative', height: '36px' }}>
+              <div style={{ position: 'absolute', left: `${TRACK_PADDING}px` }}>
+                <AudioWaveformTrack
+                  totalDuration={totalDuration}
+                  pps={pps}
+                  currentTime={currentTime}
+                  onSeek={(t) => seekTo(t)}
+                />
+              </div>
+            </div>
+
+            {/* Subtitle / Caption Blocks Track */}
+            <div style={{
+              height: '42px',
+              position: 'relative'
+            }}>
+              <div style={{
+                position: 'absolute',
+                left: `${TRACK_PADDING}px`,
+                width: `${totalDuration * pps}px`,
+                height: '100%',
+                borderRadius: 'var(--radius-sm)',
+                background: 'rgba(255, 255, 255, 0.02)',
+                border: '1px solid var(--border-subtle)'
+              }}>
+                {segments.map((seg) => {
+                  const segLeft = seg.start * pps;
+                  const segWidth = Math.max(24, (seg.end - seg.start) * pps);
+                  const segDuration = (seg.end - seg.start).toFixed(2);
+                  const isSelected = selectedSegmentId === seg.id;
+                  const isActive = currentTime >= seg.start && currentTime <= seg.end;
+
+                  return (
+                    <div
+                      key={seg.id}
+                      onPointerDown={(e) => handleSegmentPointerDown(e, seg)}
+                      style={{
+                        position: 'absolute',
+                        left: `${segLeft}px`,
+                        width: `${segWidth}px`,
+                        top: '2px',
+                        bottom: '2px',
+                        borderRadius: '6px',
+                        background: isSelected 
+                          ? 'var(--accent-primary)' 
+                          : isActive 
+                          ? 'rgba(0, 113, 227, 0.6)' 
+                          : 'rgba(0, 113, 227, 0.38)',
+                        border: isSelected 
+                          ? '1.5px solid #FFFFFF' 
+                          : isActive 
+                          ? '1px solid rgba(255, 255, 255, 0.5)' 
+                          : '1px solid rgba(0, 113, 227, 0.65)',
+                        color: '#FFFFFF',
+                        boxShadow: isSelected ? '0 2px 8px rgba(0,0,0,0.6)' : 'none',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        fontSize: '11px',
+                        fontWeight: '600',
+                        cursor: 'grab',
+                        zIndex: isSelected ? 15 : 5,
+                        userSelect: 'none',
+                        touchAction: 'none'
+                      }}
+                      title={`[${formatTimecode(seg.start)} - ${formatTimecode(seg.end)}] (${segDuration}s) • ${seg.text}`}
+                    >
+                      {/* Left Trim Handle */}
+                      <div
+                        onPointerDown={(e) => handleTrimLeftPointerDown(e, seg)}
+                        style={{
+                          width: '9px',
+                          height: '100%',
+                          cursor: 'ew-resize',
+                          background: isSelected ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.08)',
+                          borderRadius: '5px 0 0 5px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0
+                        }}
+                        title="Trim start"
+                      >
+                        <div style={{ width: '1.5px', height: '10px', background: isSelected ? '#000' : 'rgba(255,255,255,0.7)', borderRadius: '1px' }} />
+                      </div>
+
+                      {/* Caption Text Label & Duration */}
+                      <div style={{
+                        flex: 1,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '4px',
+                        overflow: 'hidden',
+                        padding: '0 4px',
+                        pointerEvents: 'none'
+                      }}>
+                        <span style={{
+                          overflow: 'hidden',
+                          whiteSpace: 'nowrap',
+                          textOverflow: 'ellipsis',
+                          fontSize: '11px',
+                          fontWeight: '600'
+                        }}>
+                          {seg.text}
+                        </span>
+                        {segWidth > 80 && (
+                          <span style={{
+                            fontSize: '9px',
+                            fontWeight: '500',
+                            opacity: 0.75,
+                            fontFamily: 'SF Mono, monospace'
+                          }}>
+                            {segDuration}s
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Right Trim Handle */}
+                      <div
+                        onPointerDown={(e) => handleTrimRightPointerDown(e, seg)}
+                        style={{
+                          width: '9px',
+                          height: '100%',
+                          cursor: 'ew-resize',
+                          background: isSelected ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.08)',
+                          borderRadius: '0 5px 5px 0',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0
+                        }}
+                        title="Trim end"
+                      >
+                        <div style={{ width: '1.5px', height: '10px', background: isSelected ? '#000' : 'rgba(255,255,255,0.7)', borderRadius: '1px' }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Vertical Playhead Needle */}
+            <div
+              onPointerDown={handlePlayheadPointerDown}
+              style={{
+                position: 'absolute',
+                left: `${playheadX}px`,
+                top: 0,
+                bottom: 0,
+                width: '1.5px',
+                background: 'var(--accent-bright-blue)',
+                zIndex: 30,
+                cursor: 'ew-resize',
+                transform: 'translateX(-50%)',
+                pointerEvents: 'auto',
+                touchAction: 'none'
+              }}
+            >
+              {/* Playhead Top Needle Marker with Micro Time Bubble */}
+              <div style={{
+                position: 'absolute',
+                top: '-1px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center'
+              }}>
+                <div style={{
+                  background: 'var(--accent-bright-blue)',
+                  color: '#FFFFFF',
+                  fontSize: '9px',
+                  fontWeight: '700',
+                  fontFamily: 'SF Mono, monospace',
+                  padding: '1px 4px',
+                  borderRadius: '3px',
+                  boxShadow: '0 2px 6px rgba(0,0,0,0.6)',
+                  whiteSpace: 'nowrap',
+                  userSelect: 'none'
+                }}>
+                  {formatTimecode(currentTime)}
+                </div>
+                <div style={{
+                  width: '8px',
+                  height: '6px',
+                  background: 'var(--accent-bright-blue)',
+                  clipPath: 'polygon(0% 0%, 100% 0%, 50% 100%)'
+                }} />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

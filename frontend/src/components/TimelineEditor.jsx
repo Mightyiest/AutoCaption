@@ -31,7 +31,9 @@ export const TimelineEditor = () => {
     videoFile,
     videoFilename,
     backendAvailable,
-    style
+    style,
+    selectedModel,
+    ensureModelDownloaded
   } = useEditorStore();
 
   const [editingWordId, setEditingWordId] = useState(null);
@@ -69,13 +71,23 @@ export const TimelineEditor = () => {
 
   const handleTranscribeCurrent = async () => {
     if (isTranscribing) return;
-    setIsTranscribing(true, 'Extracting audio & transcribing with Whisper...');
+    setIsTranscribing(true, `Checking AI model '${selectedModel}'...`);
 
     try {
+      // 1. Ensure chosen model is downloaded
+      await ensureModelDownloaded(selectedModel, (dlState) => {
+        setIsTranscribing(
+          true,
+          `Downloading Whisper ${selectedModel} model (${dlState.percent}% - ${dlState.downloaded_mb || '0 MB'})...`
+        );
+      });
+
+      setIsTranscribing(true, `Extracting audio & transcribing with Whisper ${selectedModel.toUpperCase()}...`);
+
       if (backendAvailable && videoFile) {
         const formData = new FormData();
         formData.append('file', videoFile);
-        formData.append('model_name', 'base');
+        formData.append('model_name', selectedModel);
         formData.append('max_words_per_segment', style.maxWordsPerSegment || 3);
 
         const res = await fetch(`${BACKEND_URL}/api/transcribe`, {
@@ -91,7 +103,7 @@ export const TimelineEditor = () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             video_filename: videoFilename,
-            model_name: 'base',
+            model_name: selectedModel,
             max_words_per_segment: style.maxWordsPerSegment || 3
           })
         });
@@ -185,7 +197,7 @@ export const TimelineEditor = () => {
               ) : (
                 <>
                   <Sparkles size={16} />
-                  <span>Generate Auto-Captions (Whisper)</span>
+                  <span>Generate Auto-Captions ({selectedModel})</span>
                 </>
               )}
             </button>

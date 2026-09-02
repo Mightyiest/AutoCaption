@@ -56,13 +56,14 @@ export async function ensureFontLoaded(style = {}) {
  * Measures the exact word-wrapping lines and per-word bounding box coordinates
  * relative to the outer caption container center.
  */
-export function measureSegmentLines(words, style = {}, previewWidth = 310) {
+export function measureSegmentLines(words, style = {}, previewWidth = 360) {
   const containerWidthPercent = Math.max(40, Math.min(100, Number(style.containerWidthPercent ?? 90)));
   const boxWidthPx = previewWidth * (containerWidthPercent / 100.0);
-  const paddingPx = Number(style.backgroundPadding ?? 0);
+  const padX = Number(style.backgroundPaddingX ?? style.backgroundPadding ?? 0);
+  const padY = Number(style.backgroundPaddingY ?? style.backgroundPadding ?? 0);
   const wordMarginPx = Number(style.wordSpacing ?? 8) / 2.0;
   const letterSpacingVal = Number(style.letterSpacing ?? (style.fontFamily === 'Bebas Neue' ? 1.0 : -0.5));
-  const lineHeightVal = Number(style.lineHeight ?? 1.15);
+  const lineHeightVal = Number(style.lineHeight ?? 1.02);
   const fontWeightVal = String(style.fontWeight || '900');
   const fontStyleVal = style.fontStyle === 'italic' ? 'italic' : 'normal';
   const textAlignVal = style.textAlign || 'center';
@@ -102,7 +103,7 @@ export function measureSegmentLines(words, style = {}, previewWidth = 310) {
   outer.style.maxWidth = `${Math.floor(boxWidthPx)}px`;
   outer.style.boxSizing = 'border-box';
   outer.style.textAlign = textAlignVal;
-  outer.style.padding = paddingPx > 0 ? `${paddingPx}px` : '0px';
+  outer.style.padding = (padX > 0 || padY > 0) ? `${padY}px ${padX}px` : '0px';
 
   // 2. Replicate inner text container
   const inner = document.createElement('div');
@@ -270,7 +271,7 @@ export async function measureAllSegmentsLayout(segments, style, previewWidth, pr
     position_y: Number(style.positionY ?? 74),
     word_spacing: Number(style.wordSpacing ?? 8),
     letter_spacing: Number(style.letterSpacing ?? 0),
-    line_height: Number(style.lineHeight ?? 1.15),
+    line_height: Number(style.lineHeight ?? 1.02),
     text_align: style.textAlign || 'center',
     font_weight: style.fontWeight || '900',
     font_style: style.fontStyle || 'normal'

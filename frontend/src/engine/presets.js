@@ -1,16 +1,16 @@
 export const DEFAULT_STYLE = {
   fontFamily: 'Montserrat',
   fontSize: 34,
-  fontWeight: '900',
+  fontWeight: '800',
   fontStyle: 'normal',           // 'normal' | 'italic'
   textTransform: 'uppercase',    // 'uppercase' | 'capitalize' | 'none'
   textAlign: 'center',           // 'center' | 'left' | 'right'
   wordSpacing: 8,                // 0px to 24px (gap between adjacent words)
   letterSpacing: -0.5,           // -3px to 12px character tracking
-  lineHeight: 1.02,              // 0.85 to 2.0 leading multiplier (tight compact viral stacking)
+  lineHeight: 1.02,              // 0.85 to 2.0 leading multiplier
   containerWidthPercent: 90,     // 50% to 100% outer caption container width
   primaryColor: '#FFFFFF',
-  activeColor: '#FFE600',
+  activeColor: '#FFFFFF',
 
   // Stroke Outline
   strokeEnabled: true,
@@ -18,34 +18,47 @@ export const DEFAULT_STYLE = {
   strokeWidth: 6,
 
   // Drop Shadow
-  shadowEnabled: true,
+  shadowEnabled: false,
   shadowColor: '#000000',
-  shadowBlur: 8,
+  shadowBlur: 0,
   shadowOffsetX: 0,
-  shadowOffsetY: 4,
+  shadowOffsetY: 0,
 
-  // Outer Glow (Separated from Shadow)
+  // Outer Glow
   glowEnabled: false,
   glowColor: '#38BDF8',
-  glowBlur: 14,
+  glowBlur: 0,
 
   // Background Pill / Box
   backgroundEnabled: false,
-  backgroundColor: '#0F172A',
-  backgroundOpacity: 85,
-  backgroundPadding: 10,
-  backgroundPaddingX: 16,
-  backgroundPaddingY: 8,
-  borderRadius: 12,
+  backgroundColor: 'transparent',
+  backgroundOpacity: 0,
+  backgroundPadding: 0,
+  backgroundPaddingX: 0,
+  backgroundPaddingY: 0,
+  borderRadius: 0,
   backgroundBorderEnabled: false,
-  backgroundBorderWidth: 2,
-  backgroundBorderColor: 'rgba(255, 255, 255, 0.25)',
-  backgroundBlur: 12,
+  backgroundBorderWidth: 0,
+  backgroundBorderColor: 'transparent',
+  backgroundBlur: 0,
 
   positionX: 50,
   positionY: 74,
-  animationType: 'pop',
-  maxWordsPerSegment: 3
+  animationType: 'none',
+  maxWordsPerSegment: 3,
+
+  // Auto-Emoji & Kinetic Stickers
+  autoEmojiEnabled: true,
+  emojiAnimation: 'pop',       // 'pop' | 'bounce' | 'float' | 'none'
+  emojiPosition: 'above_word', // 'above_word' | 'inline' | 'top_center'
+  emojiSize: 42,               // 20px to 80px
+
+  // AI Smart Keyword Emphasis
+  autoEmphasisEnabled: true,
+  emphasisColor: '#00FF66',    // Neon punch accent color
+  emphasisScale: 1.15,         // 1.0x to 1.35x font scale boost
+  emphasisGlowEnabled: true,
+  emphasisMode: 'active_only'  // 'active_only' | 'always'
 };
 
 export function sanitizeStyle(style = {}) {
@@ -68,7 +81,7 @@ export function sanitizeStyle(style = {}) {
     lineHeight: Math.max(0.7, Math.min(3.0, Number(s.lineHeight ?? DEFAULT_STYLE.lineHeight))),
     containerWidthPercent: Math.max(40, Math.min(100, Number(s.containerWidthPercent ?? DEFAULT_STYLE.containerWidthPercent))),
     primaryColor: s.primaryColor || DEFAULT_STYLE.primaryColor,
-    activeColor: s.activeColor || DEFAULT_STYLE.activeColor,
+    activeColor: s.activeColor || (s.primaryColor || DEFAULT_STYLE.activeColor),
 
     // Stroke
     strokeEnabled: s.strokeEnabled !== undefined ? Boolean(s.strokeEnabled) : (Number(s.strokeWidth ?? 6) > 0),
@@ -76,7 +89,7 @@ export function sanitizeStyle(style = {}) {
     strokeWidth: Math.max(0, Math.min(24, Number(s.strokeWidth ?? DEFAULT_STYLE.strokeWidth))),
 
     // Shadow
-    shadowEnabled: s.shadowEnabled !== undefined ? Boolean(s.shadowEnabled) : (Number(s.shadowBlur ?? 8) > 0 && s.shadowColor !== 'transparent'),
+    shadowEnabled: s.shadowEnabled !== undefined ? Boolean(s.shadowEnabled) : (Number(s.shadowBlur ?? 0) > 0 && s.shadowColor !== 'transparent'),
     shadowColor: s.shadowColor || DEFAULT_STYLE.shadowColor,
     shadowBlur: Math.max(0, Math.min(40, Number(s.shadowBlur ?? DEFAULT_STYLE.shadowBlur))),
     shadowOffsetX: Number(s.shadowOffsetX ?? DEFAULT_STYLE.shadowOffsetX),
@@ -103,11 +116,69 @@ export function sanitizeStyle(style = {}) {
     positionX: Math.max(5, Math.min(95, Number(s.positionX ?? DEFAULT_STYLE.positionX))),
     positionY: Math.max(5, Math.min(95, Number(s.positionY ?? DEFAULT_STYLE.positionY))),
     animationType: s.animationType || DEFAULT_STYLE.animationType,
-    maxWordsPerSegment: Math.max(1, Math.min(6, Number(s.maxWordsPerSegment ?? DEFAULT_STYLE.maxWordsPerSegment)))
+    maxWordsPerSegment: Math.max(1, Math.min(6, Number(s.maxWordsPerSegment ?? DEFAULT_STYLE.maxWordsPerSegment))),
+
+    // Auto-Emoji & Kinetic Stickers
+    autoEmojiEnabled: s.autoEmojiEnabled !== undefined ? Boolean(s.autoEmojiEnabled) : DEFAULT_STYLE.autoEmojiEnabled,
+    emojiStyle: ['apple', 'system'].includes(String(s.emojiStyle || '').toLowerCase())
+      ? String(s.emojiStyle).toLowerCase()
+      : 'apple',
+    emojiAnimation: ['pop', 'bounce', 'float', 'none'].includes(String(s.emojiAnimation || '').toLowerCase())
+      ? String(s.emojiAnimation).toLowerCase()
+      : DEFAULT_STYLE.emojiAnimation,
+    emojiPosition: ['above_word', 'inline', 'top_center'].includes(String(s.emojiPosition || '').toLowerCase())
+      ? String(s.emojiPosition).toLowerCase()
+      : DEFAULT_STYLE.emojiPosition,
+    emojiSize: Math.max(16, Math.min(96, Number(s.emojiSize ?? DEFAULT_STYLE.emojiSize))),
+
+    // AI Smart Keyword Emphasis
+    autoEmphasisEnabled: s.autoEmphasisEnabled !== undefined ? Boolean(s.autoEmphasisEnabled) : DEFAULT_STYLE.autoEmphasisEnabled,
+    emphasisColor: s.emphasisColor || DEFAULT_STYLE.emphasisColor,
+    emphasisScale: Math.max(1.0, Math.min(1.4, Number(s.emphasisScale ?? DEFAULT_STYLE.emphasisScale))),
+    emphasisGlowEnabled: s.emphasisGlowEnabled !== undefined ? Boolean(s.emphasisGlowEnabled) : DEFAULT_STYLE.emphasisGlowEnabled,
+    emphasisMode: ['active_only', 'always'].includes(String(s.emphasisMode || '').toLowerCase())
+      ? String(s.emphasisMode).toLowerCase()
+      : DEFAULT_STYLE.emphasisMode
   };
 }
 
 export const PRESETS = [
+  {
+    id: 'default',
+    name: 'Default Clean',
+    description: 'Clean white typography with solid black stroke outline, no animations or effects',
+    badge: 'DEFAULT',
+    style: sanitizeStyle({
+      fontFamily: 'Montserrat',
+      fontSize: 34,
+      fontWeight: '800',
+      fontStyle: 'normal',
+      textTransform: 'uppercase',
+      textAlign: 'center',
+      wordSpacing: 8,
+      letterSpacing: -0.5,
+      lineHeight: 1.02,
+      containerWidthPercent: 90,
+      primaryColor: '#FFFFFF',
+      activeColor: '#FFFFFF',
+      strokeEnabled: true,
+      strokeColor: '#000000',
+      strokeWidth: 6,
+      shadowEnabled: false,
+      shadowBlur: 0,
+      shadowOffsetX: 0,
+      shadowOffsetY: 0,
+      glowEnabled: false,
+      backgroundEnabled: false,
+      backgroundColor: 'transparent',
+      backgroundPadding: 0,
+      borderRadius: 0,
+      positionY: 74,
+      positionX: 50,
+      animationType: 'none',
+      maxWordsPerSegment: 3
+    })
+  },
   {
     id: 'hormozi',
     name: 'Hormozi Impact',

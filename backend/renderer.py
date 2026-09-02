@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import time
 import json
+import threading
 import imageio_ffmpeg
 
 FONTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "storage", "fonts")
@@ -11,10 +12,10 @@ FONTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "storage", 
 FONT_NAME_MAP = {
     "Montserrat": "Montserrat Black",
     "Russo One": "Russo One",
-    "Outfit": "Outfit ExtraBold",
+    "Outfit": "Outfit Bold",
     "Bebas Neue": "Bebas Neue",
     "Bangers": "Bangers",
-    "Plus Jakarta Sans": "Plus Jakarta Sans ExtraBold",
+    "Plus Jakarta Sans": "Plus Jakarta Sans Bold",
     "Inter": "Montserrat Black"
 }
 
@@ -141,6 +142,9 @@ def generate_ass_subtitle(
     
     pri_col = hex_to_ass_color(style.get("primaryColor", "#FFFFFF"))
     act_col = hex_to_ass_color(style.get("activeColor", "#FFE600"))
+    emph_col = hex_to_ass_color(style.get("emphasisColor", "#00FF66"))
+    auto_emphasis_enabled = bool(style.get("autoEmphasisEnabled", True))
+    emphasis_mode = str(style.get("emphasisMode", "active_only")).lower()
     
     # Stroke Outline
     stroke_enabled = style.get("strokeEnabled", True)
@@ -268,10 +272,14 @@ def generate_ass_subtitle(
 
                     raw_txt = (w.get("word", "") if isinstance(w, dict) else str(w)).strip()
                     word_txt = escape_ass_text(transform_word(raw_txt))
+                    is_emph = bool(w.get("isEmphasized", False)) if isinstance(w, dict) else False
 
                     if is_active:
                         anim_tag = build_animation_tags(anim_type, dur_ms, pos_x, line_y)
-                        tok = f"{{\\c{act_col}{italic_tag}{anim_tag}}}{word_txt}{{\\rMainStyle}}"
+                        target_col = emph_col if (is_emph and auto_emphasis_enabled) else act_col
+                        tok = f"{{\\c{target_col}{italic_tag}{anim_tag}}}{word_txt}{{\\rMainStyle}}"
+                    elif is_emph and auto_emphasis_enabled and emphasis_mode == "always":
+                        tok = f"{{\\c{emph_col}{italic_tag}}}{word_txt}{{\\rMainStyle}}"
                     else:
                         tok = f"{{\\c{pri_col}{italic_tag}}}{word_txt}{{\\rMainStyle}}"
                     tokens.append(tok)
@@ -311,7 +319,7 @@ def render_captioned_video(
         style=style,
         video_width=video_width,
         video_height=video_height,
-        preview_base_width=310.0,
+        preview_base_width=360.0,
         preview_metrics=preview_metrics
     )
     
@@ -326,28 +334,53 @@ def render_captioned_video(
         escaped_ass_path = temp_ass_path.replace("\\", "/").replace(":", "\\\\:")
         escaped_fonts_dir = FONTS_DIR.replace("\\", "/").replace(":", "\\\\:")
         
-        vf_filter = f"ass={escaped_ass_path}:fontsdir={escaped_fonts_dir}"
+        audio_exts = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".wma"}
+        _, src_ext = os.path.splitext(source_video_path.lower())
+        is_audio_only = src_ext in audio_exts
         
+        duration = float(video_duration) if video_duration and float(video_duration) > 0 else 10.0
+
         if encoder_mode == "gpu_nvenc":
             v_codec = ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "19"]
         else:
             v_codec = ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "18"]
-            
-        cmd = [
-            ffmpeg_exe,
-            "-y",
-            "-i", source_video_path,
-            "-vf", vf_filter,
-            *v_codec,
-            "-c:a", "copy",
-            "-progress", "pipe:1",
-            output_video_path
-        ]
+
+        if is_audio_only:
+            # Generate clean solid white background for audio-only voiceovers/demos
+            vf_filter = f"ass={escaped_ass_path}:fontsdir={escaped_fonts_dir}"
+            cmd = [
+                ffmpeg_exe,
+                "-y",
+                "-f", "lavfi",
+                "-i", f"color=c=white:s={video_width}x{video_height}:r=30:d={duration}",
+                "-i", source_video_path,
+                "-vf", vf_filter,
+                *v_codec,
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-shortest",
+                "-progress", "pipe:1",
+                output_video_path
+            ]
+        else:
+            # Enforce exact cover-crop scaling followed by libass subtitle burn-in
+            vf_filter = f"scale={video_width}:{video_height}:force_original_aspect_ratio=increase,crop={video_width}:{video_height},ass={escaped_ass_path}:fontsdir={escaped_fonts_dir}"
+            cmd = [
+                ffmpeg_exe,
+                "-y",
+                "-i", source_video_path,
+                "-vf", vf_filter,
+                *v_codec,
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-progress", "pipe:1",
+                output_video_path
+            ]
         
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
             universal_newlines=True
@@ -358,6 +391,29 @@ def render_captioned_video(
                 on_proc_ready(proc)
             except Exception:
                 pass
+
+        # Asynchronously drain stderr in a background thread to prevent OS pipe deadlock
+        stderr_lines = []
+        def _drain_stderr():
+            try:
+                for err_line in iter(proc.stderr.readline, ''):
+                    if not err_line:
+                        break
+                    line_clean = err_line.strip()
+                    if line_clean:
+                        stderr_lines.append(line_clean)
+                        if len(stderr_lines) > 50:
+                            stderr_lines.pop(0)
+            except Exception:
+                pass
+            finally:
+                try:
+                    proc.stderr.close()
+                except Exception:
+                    pass
+
+        t_err = threading.Thread(target=_drain_stderr, daemon=True)
+        t_err.start()
         
         duration = float(video_duration) if video_duration and float(video_duration) > 0 else 0.0
         last_pct = 5
@@ -388,8 +444,14 @@ def render_captioned_video(
                     pass
                     
         proc.wait()
-        if proc.returncode != 0 and proc.returncode not in [-15, -9, 1]:
-            raise RuntimeError(f"FFmpeg process failed with exit code {proc.returncode}")
+        try:
+            t_err.join(timeout=1.0)
+        except Exception:
+            pass
+
+        if proc.returncode != 0:
+            err_summary = "\n".join(stderr_lines[-10:]) if stderr_lines else "No stderr logged"
+            raise RuntimeError(f"FFmpeg process failed with exit code {proc.returncode}:\n{err_summary}")
             
         if progress_callback and proc.returncode == 0:
             progress_callback(100)
