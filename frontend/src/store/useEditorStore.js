@@ -346,6 +346,20 @@ export const useEditorStore = create((set, get) => ({
   
   seekTo: (time) => {
     const safeTime = Math.max(0, Math.min(get().duration || 1000, time));
+    let media = get().mediaElement;
+    if (!media && typeof document !== 'undefined') {
+      media = document.querySelector('video, audio');
+      if (media) {
+        set({ mediaElement: media });
+      }
+    }
+    if (media) {
+      try {
+        media.currentTime = safeTime;
+      } catch (err) {
+        console.warn('Direct media seek error:', err);
+      }
+    }
     set({ currentTime: safeTime, seekRequestTime: safeTime });
   },
 
@@ -361,10 +375,18 @@ export const useEditorStore = create((set, get) => ({
         set({ mediaElement: media });
       }
     }
-    const { videoUrl, duration, isPlaying } = state;
+    const { videoUrl, duration, isPlaying, currentTime } = state;
 
     if (media && videoUrl) {
       if (media.paused) {
+        // Guarantee media element is aligned with timeline playhead before starting
+        if (Math.abs(media.currentTime - currentTime) > 0.05) {
+          try {
+            media.currentTime = currentTime;
+          } catch (err) {
+            console.warn('Sync media currentTime before play error:', err);
+          }
+        }
         if (media.currentTime >= (media.duration || duration || 0) - 0.05) {
           media.currentTime = 0;
           set({ currentTime: 0 });

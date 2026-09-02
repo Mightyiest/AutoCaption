@@ -22,7 +22,6 @@ export const VideoPlayer = () => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const stageViewportRef = useRef(null);
-  const rafSeekRef = useRef(null);
   const isRenderingRef = useRef(false);
   const lastDrawnTimeRef = useRef(-1);
 
@@ -224,24 +223,22 @@ export const VideoPlayer = () => {
     drawOverlayRef.current = drawOverlay;
   }, [drawOverlay]);
 
-  // Sync external seek requests (consumed immediately so style changes never re-seek)
+  // Sync external seek requests (direct and synchronous)
   useEffect(() => {
-    if (seekRequestTime !== null && videoRef.current) {
+    if (seekRequestTime !== null) {
       const targetTime = seekRequestTime;
-      useEditorStore.setState({ seekRequestTime: null });
-      if (rafSeekRef.current) cancelAnimationFrame(rafSeekRef.current);
-      rafSeekRef.current = requestAnimationFrame(() => {
-        if (videoRef.current) {
-          videoRef.current.currentTime = targetTime;
-          if (drawOverlayRef.current) {
-            drawOverlayRef.current(targetTime);
-          }
+      const video = videoRef.current;
+      if (video && Math.abs(video.currentTime - targetTime) > 0.01) {
+        try {
+          video.currentTime = targetTime;
+        } catch (err) {
+          console.warn('Direct video seek error:', err);
         }
-      });
+      }
+      if (drawOverlayRef.current) {
+        drawOverlayRef.current(targetTime);
+      }
     }
-    return () => {
-      if (rafSeekRef.current) cancelAnimationFrame(rafSeekRef.current);
-    };
   }, [seekRequestTime]);
 
   // Sync audio properties
@@ -347,18 +344,17 @@ export const VideoPlayer = () => {
   const seek = (time) => {
     const maxDur = duration > 0 ? duration : 1000;
     const safeTime = Math.max(0, Math.min(maxDur, time));
-    if (videoRef.current && videoUrl) {
-      if (rafSeekRef.current) cancelAnimationFrame(rafSeekRef.current);
-      rafSeekRef.current = requestAnimationFrame(() => {
-        if (videoRef.current) {
-          videoRef.current.currentTime = safeTime;
-          setCurrentTime(safeTime);
-          drawOverlay(safeTime);
-        }
-      });
-    } else {
-      setCurrentTime(safeTime);
-      drawOverlay(safeTime);
+    const video = videoRef.current;
+    if (video) {
+      try {
+        video.currentTime = safeTime;
+      } catch (err) {
+        console.warn('Direct video seek error:', err);
+      }
+    }
+    setCurrentTime(safeTime);
+    if (drawOverlayRef.current) {
+      drawOverlayRef.current(safeTime);
     }
   };
 
