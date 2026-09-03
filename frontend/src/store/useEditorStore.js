@@ -1268,6 +1268,19 @@ export const useEditorStore = create((set, get) => ({
     }
   },
 
+  cleanDependenciesCache: async () => {
+    try {
+      const res = await fetch('http://127.0.0.1:8000/api/dependencies/clean-cache', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        return data;
+      }
+    } catch (err) {
+      console.error('Failed to clean cache:', err);
+    }
+    return { success: false, message: 'Failed to clean cache' };
+  },
+
   dismissDependencyTask: () => set({ activeInstallTask: null }),
 
   fetchVocalModelsStatus: async () => {

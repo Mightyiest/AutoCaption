@@ -441,6 +441,67 @@ def run_pip_command_async(task_id: str, cmd: List[str], description: str):
     thread = threading.Thread(target=_worker, daemon=True)
     thread.start()
 
+def clean_orphaned_site_packages() -> int:
+    """Removes leftover ~* temporary directories from aborted pip installs."""
+    import site
+    freed_bytes = 0
+    paths_to_check = []
+    try:
+        paths_to_check = site.getsitepackages() + [site.getusersitepackages()]
+    except Exception:
+        pass
+
+    for p in paths_to_check:
+        if p and os.path.exists(p):
+            try:
+                for entry in os.listdir(p):
+                    if entry.startswith("~"):
+                        full_path = os.path.join(p, entry)
+                        try:
+                            for root, dirs, files in os.walk(full_path):
+                                for f in files:
+                                    fp = os.path.join(root, f)
+                                    if os.path.exists(fp):
+                                        freed_bytes += os.path.getsize(fp)
+                            shutil.rmtree(full_path, ignore_errors=True)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+    return freed_bytes
+
+def clean_pip_cache() -> int:
+    """Purges the pip wheel download cache."""
+    freed_bytes = 0
+    try:
+        res = subprocess.run([sys.executable, "-m", "pip", "cache", "dir"], capture_output=True, text=True, timeout=3)
+        if res.returncode == 0:
+            cache_dir = res.stdout.strip()
+            if os.path.exists(cache_dir):
+                for root, dirs, files in os.walk(cache_dir):
+                    for f in files:
+                        fp = os.path.join(root, f)
+                        if os.path.exists(fp):
+                            freed_bytes += os.path.getsize(fp)
+        subprocess.run([sys.executable, "-m", "pip", "cache", "purge"], capture_output=True, timeout=5)
+    except Exception:
+        pass
+    return freed_bytes
+
+def clean_all_caches() -> Dict[str, Any]:
+    """Cleans orphaned site-packages and purges pip cache."""
+    orphans_freed = clean_orphaned_site_packages()
+    pip_freed = clean_pip_cache()
+    total_freed_bytes = orphans_freed + pip_freed
+    total_freed_mb = round(total_freed_bytes / (1024 * 1024), 1)
+    return {
+        "success": True,
+        "freed_mb": total_freed_mb,
+        "orphans_freed_mb": round(orphans_freed / (1024 * 1024), 1),
+        "pip_cache_freed_mb": round(pip_freed / (1024 * 1024), 1),
+        "message": f"Successfully reclaimed {total_freed_mb} MB of disk space!"
+    }
+
 def get_pytorch_cuda_index_url() -> str:
     """Returns the correct PyTorch CUDA index URL based on the Python version."""
     py_ver = sys.version_info
@@ -460,16 +521,18 @@ def install_package_task(package_id: str) -> str:
 
     if package_id == "torch_cuda":
         cuda_index = get_pytorch_cuda_index_url()
-        # --force-reinstall is essential so pip replaces existing CPU-only wheel with CUDA wheel
+        clean_orphaned_site_packages()
+        # --no-cache-dir prevents duplicating 2.5 GB wheel in pip cache
         cmd = [
-            py_exe, "-m", "pip", "install", "--upgrade", "--force-reinstall",
+            py_exe, "-m", "pip", "install", "--upgrade", "--force-reinstall", "--no-cache-dir",
             "torch", "torchaudio",
             "--index-url", cuda_index
         ]
         desc = f"Installing PyTorch with NVIDIA CUDA 12 Acceleration ({cuda_index.split('/')[-1].upper()})"
     elif package_id == "torch_cpu":
+        clean_orphaned_site_packages()
         cmd = [
-            py_exe, "-m", "pip", "install", "--upgrade", "--force-reinstall",
+            py_exe, "-m", "pip", "install", "--upgrade", "--force-reinstall", "--no-cache-dir",
             "torch", "torchaudio",
             "--index-url", "https://download.pytorch.org/whl/cpu"
         ]

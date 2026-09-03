@@ -45,6 +45,7 @@ export const SettingsModal = () => {
     vocalModelsLoading,
     activeInstallTask,
     dismissDependencyTask,
+    cleanDependenciesCache,
     fetchDependenciesStatus,
     installDependency,
     uninstallDependency,
@@ -60,6 +61,7 @@ export const SettingsModal = () => {
   const [statsLoading, setStatsLoading] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState('all'); // 'all' | 'ai_compute' | 'vocal_separation' | 'media_engine'
   const [isConsoleExpanded, setIsConsoleExpanded] = useState(true);
+  const [isCleaningCache, setIsCleaningCache] = useState(false);
 
   const consoleLogsEndRef = useRef(null);
 
@@ -424,6 +426,24 @@ export const SettingsModal = () => {
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <button
+                    onClick={async () => {
+                      setIsCleaningCache(true);
+                      const res = await cleanDependenciesCache();
+                      setIsCleaningCache(false);
+                      if (res?.message) {
+                        alert(res.message);
+                      }
+                      fetchDependenciesStatus(false);
+                    }}
+                    disabled={isCleaningCache || activeInstallTask?.status === 'running'}
+                    className="btn-ghost"
+                    style={{ padding: '4px 10px', fontSize: '11px', gap: '5px', color: 'var(--text-secondary)' }}
+                    title="Purge pip wheel download cache and remove orphaned files to reclaim disk storage"
+                  >
+                    {isCleaningCache ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                    <span>{isCleaningCache ? 'Cleaning...' : 'Purge Cache & Junk'}</span>
+                  </button>
                   <button
                     onClick={() => fetchDependenciesStatus(true)}
                     disabled={dependenciesLoading || activeInstallTask?.status === 'running'}

@@ -245,6 +245,15 @@ def cancel_dependency_task_endpoint(task_id: str):
     cancelled = cancel_task(task_id)
     return {"status": "cancelled" if cancelled else "not_running"}
 
+@app.post("/api/dependencies/clean-cache")
+def clean_dependencies_cache_endpoint():
+    from dependency_manager import clean_all_caches
+    try:
+        res = clean_all_caches()
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/vocal-models/status")
 def get_vocal_models_endpoint():
     from dependency_manager import get_vocal_models_status
