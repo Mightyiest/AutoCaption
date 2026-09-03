@@ -44,6 +44,7 @@ export const SettingsModal = () => {
     vocalModelsData,
     vocalModelsLoading,
     activeInstallTask,
+    dismissDependencyTask,
     fetchDependenciesStatus,
     installDependency,
     uninstallDependency,
@@ -448,7 +449,11 @@ export const SettingsModal = () => {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {filteredPackages.map((pkg) => {
                   const isInstalled = pkg.is_installed;
-                  const isTaskTarget = activeInstallTask?.description?.toLowerCase().includes(pkg.pypi_name.toLowerCase());
+                  const isTaskTarget = activeInstallTask && (
+                    activeInstallTask.description?.toLowerCase().includes(pkg.pypi_name.toLowerCase()) ||
+                    activeInstallTask.description?.toLowerCase().includes(pkg.name.toLowerCase()) ||
+                    (pkg.id === 'nvidia_cuda_libs' && activeInstallTask.description?.toLowerCase().includes('cublas'))
+                  );
                   const isRunning = isTaskTarget && activeInstallTask?.status === 'running';
 
                   return (
@@ -1076,99 +1081,119 @@ export const SettingsModal = () => {
             </div>
           )}
 
-          {/* ========================================================================= */}
-          {/* LIVE IN-MODAL TERMINAL CONSOLE DRAWER                                   */}
-          {/* ========================================================================= */}
-          {activeInstallTask && (
-            <div style={{
-              marginTop: 'auto',
-              borderRadius: 'var(--radius-md)',
-              border: '1px solid var(--border-subtle)',
-              background: '#0d0d0f',
-              overflow: 'hidden',
-              boxShadow: '0 4px 20px rgba(0, 0, 0, 0.5)'
-            }}>
-              {/* Console Header */}
-              <div style={{
-                padding: '8px 12px',
-                background: 'rgba(255, 255, 255, 0.04)',
-                borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Terminal size={13} color="var(--accent-bright-blue)" />
-                  <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)' }}>
-                    {activeInstallTask.description}
-                  </span>
-                  <span style={{
-                    fontSize: '9px',
-                    fontWeight: '600',
-                    padding: '1px 5px',
-                    borderRadius: 'var(--radius-pill)',
-                    background: activeInstallTask.status === 'completed' 
-                      ? 'rgba(48, 209, 88, 0.2)' 
-                      : activeInstallTask.status === 'failed'
-                        ? 'rgba(255, 69, 58, 0.2)'
-                        : 'rgba(0, 113, 227, 0.2)',
-                    color: activeInstallTask.status === 'completed' 
-                      ? 'var(--system-success)' 
-                      : activeInstallTask.status === 'failed'
-                        ? 'var(--system-error)'
-                        : 'var(--accent-bright-blue)'
-                  }}>
-                    {activeInstallTask.status.toUpperCase()} ({activeInstallTask.percent}%)
-                  </span>
-                </div>
+        </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  {activeInstallTask.status === 'running' && (
-                    <button
-                      onClick={() => cancelDependencyTask(activeInstallTask.id)}
-                      className="btn-ghost"
-                      style={{ padding: '2px 8px', fontSize: '10px', color: 'var(--system-error)', gap: '4px' }}
-                    >
-                      <StopCircle size={11} />
-                      <span>Cancel</span>
-                    </button>
-                  )}
-                  <button
-                    onClick={() => setIsConsoleExpanded(!isConsoleExpanded)}
-                    className="btn-ghost"
-                    style={{ padding: '2px 6px' }}
-                  >
-                    {isConsoleExpanded ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
-                  </button>
-                </div>
+        {/* ========================================================================= */}
+        {/* DOCKED LIVE TERMINAL CONSOLE DRAWER (Above Footer)                       */}
+        {/* ========================================================================= */}
+        {activeInstallTask && (
+          <div style={{
+            borderTop: '1px solid var(--border-subtle)',
+            background: '#09090b',
+            display: 'flex',
+            flexDirection: 'column',
+            flexShrink: 0,
+            boxShadow: '0 -4px 16px rgba(0, 0, 0, 0.4)'
+          }}>
+            {/* Console Header */}
+            <div style={{
+              padding: '8px 16px',
+              background: 'rgba(255, 255, 255, 0.03)',
+              borderBottom: isConsoleExpanded ? '1px solid rgba(255, 255, 255, 0.08)' : 'none',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '10px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                {activeInstallTask.status === 'running' ? (
+                  <Loader2 size={13} className="animate-spin" color="var(--accent-bright-blue)" />
+                ) : activeInstallTask.status === 'completed' ? (
+                  <CheckCircle2 size={13} color="var(--system-success)" />
+                ) : (
+                  <AlertTriangle size={13} color="var(--system-error)" />
+                )}
+                <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {activeInstallTask.description}
+                </span>
+                <span style={{
+                  fontSize: '9px',
+                  fontWeight: '600',
+                  padding: '1px 6px',
+                  borderRadius: 'var(--radius-pill)',
+                  background: activeInstallTask.status === 'completed' 
+                    ? 'rgba(48, 209, 88, 0.2)' 
+                    : activeInstallTask.status === 'failed'
+                      ? 'rgba(255, 69, 58, 0.2)'
+                      : 'rgba(0, 113, 227, 0.2)',
+                  color: activeInstallTask.status === 'completed' 
+                    ? 'var(--system-success)' 
+                    : activeInstallTask.status === 'failed'
+                      ? 'var(--system-error)'
+                      : 'var(--accent-bright-blue)'
+                }}>
+                  {activeInstallTask.status.toUpperCase()} ({activeInstallTask.percent}%)
+                </span>
               </div>
 
-              {/* Collapsible Console Log Body */}
-              {isConsoleExpanded && (
-                <div style={{
-                  padding: '10px 12px',
-                  maxHeight: '140px',
-                  overflowY: 'auto',
-                  fontFamily: 'SF Mono, Consolas, Monaco, monospace',
-                  fontSize: '10px',
-                  lineHeight: '1.45',
-                  color: '#cfcfcf',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '2px'
-                }}>
-                  {(activeInstallTask.logs || []).map((logLine, idx) => (
-                    <div key={idx} style={{ wordBreak: 'break-all', opacity: idx === (activeInstallTask.logs.length - 1) ? 1 : 0.8 }}>
-                      {logLine}
-                    </div>
-                  ))}
-                  <div ref={consoleLogsEndRef} />
-                </div>
-              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                {activeInstallTask.status === 'running' ? (
+                  <button
+                    onClick={() => cancelDependencyTask(activeInstallTask.id)}
+                    className="btn-ghost"
+                    style={{ padding: '2px 8px', fontSize: '10px', color: 'var(--system-error)', gap: '4px' }}
+                  >
+                    <StopCircle size={11} />
+                    <span>Cancel</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={dismissDependencyTask}
+                    className="btn-ghost"
+                    style={{ padding: '2px 8px', fontSize: '10px', color: 'var(--text-tertiary)' }}
+                    title="Dismiss console"
+                  >
+                    <span>Dismiss</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => setIsConsoleExpanded(!isConsoleExpanded)}
+                  className="btn-ghost"
+                  style={{ padding: '2px 6px' }}
+                  title={isConsoleExpanded ? "Collapse terminal" : "Expand terminal"}
+                >
+                  {isConsoleExpanded ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
+                </button>
+              </div>
             </div>
-          )}
 
-        </div>
+            {/* Collapsible Console Log Body */}
+            {isConsoleExpanded && (
+              <div style={{
+                padding: '10px 16px',
+                height: '140px',
+                maxHeight: '140px',
+                overflowY: 'auto',
+                fontFamily: 'SF Mono, Consolas, Monaco, monospace',
+                fontSize: '10.5px',
+                lineHeight: '1.45',
+                color: '#e4e4e7',
+                background: '#070709',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '2px'
+              }}>
+                {(activeInstallTask.logs || []).map((logLine, idx) => (
+                  <div key={idx} style={{ wordBreak: 'break-all', opacity: idx === (activeInstallTask.logs.length - 1) ? 1 : 0.85 }}>
+                    {logLine}
+                  </div>
+                ))}
+                <div ref={consoleLogsEndRef} />
+              </div>
+            )}
+          </div>
+        )}
+
 
         {/* Footer */}
         <div style={{

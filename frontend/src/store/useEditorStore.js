@@ -1236,6 +1236,8 @@ export const useEditorStore = create((set, get) => ({
     }
   },
 
+  dismissDependencyTask: () => set({ activeInstallTask: null }),
+
   fetchVocalModelsStatus: async () => {
     try {
       set({ vocalModelsLoading: true });
