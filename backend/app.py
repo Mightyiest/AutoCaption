@@ -1,4 +1,6 @@
 import os
+# Disable Windows symlink warning from huggingface_hub
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 import shutil
 import uuid
 import subprocess

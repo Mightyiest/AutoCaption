@@ -16,6 +16,9 @@ import subprocess
 from typing import Dict, Any, List, Optional
 import importlib.metadata
 
+# Disable Windows symlink warning from huggingface_hub
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STORAGE_DIR = os.path.join(BASE_DIR, "storage")
 MODELS_DIR = os.path.join(STORAGE_DIR, "models")
@@ -262,9 +265,22 @@ def get_ffmpeg_details() -> Dict[str, Any]:
         pass
     return details
 
+def _get_dir_size(path: str) -> int:
+    total = 0
+    try:
+        for root, dirs, files in os.walk(path):
+            for f in files:
+                fp = os.path.join(root, f)
+                if os.path.exists(fp):
+                    total += os.path.getsize(fp)
+    except Exception:
+        pass
+    return total
+
 def get_vocal_models_status() -> List[Dict[str, Any]]:
-    """Checks download status and file sizes for Demucs vocal separation models."""
+    """Checks download status and file sizes for Demucs vocal separation models in HF Hub and Torch Hub."""
     hub_cache_dir = os.path.expanduser("~/.cache/torch/hub/checkpoints")
+    hf_cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
     models_status = []
 
     for m in VOCAL_MODELS:
@@ -273,16 +289,53 @@ def get_vocal_models_status() -> List[Dict[str, Any]]:
         disk_size_bytes = 0
         file_path = None
 
-        if os.path.exists(hub_cache_dir):
-            for fname in os.listdir(hub_cache_dir):
-                if model_id in fname.lower() and fname.endswith(".th"):
-                    fpath = os.path.join(hub_cache_dir, fname)
-                    fsize = os.path.getsize(fpath)
-                    if fsize > 10 * 1024 * 1024:
-                        is_downloaded = True
-                        disk_size_bytes = fsize
-                        file_path = fpath
-                        break
+        # 1. Check HuggingFace Hub cache (Meta Demucs v4 saves here: models--adefossez--HTDemucs, etc.)
+        if os.path.exists(hf_cache_dir):
+            try:
+                for entry in os.listdir(hf_cache_dir):
+                    entry_lower = entry.lower()
+                    matches = False
+                    if model_id == "htdemucs":
+                        matches = "models--adefossez--htdemucs" in entry_lower and "-ft" not in entry_lower
+                    elif model_id == "htdemucs_ft":
+                        matches = "models--adefossez--htdemucs-ft" in entry_lower or "models--adefossez--htdemucs_ft" in entry_lower
+                    elif model_id in entry_lower or model_id.replace("_", "-") in entry_lower:
+                        matches = True
+
+                    if matches:
+                        full_p = os.path.join(hf_cache_dir, entry)
+                        size = _get_dir_size(full_p)
+                        if size > 10 * 1024 * 1024:
+                            is_downloaded = True
+                            disk_size_bytes = size
+                            file_path = full_p
+                            break
+            except Exception:
+                pass
+
+        # 2. Check Torch Hub checkpoints (~/.cache/torch/hub/checkpoints/*.th)
+        if not is_downloaded and os.path.exists(hub_cache_dir):
+            try:
+                for fname in os.listdir(hub_cache_dir):
+                    fname_lower = fname.lower()
+                    matches = False
+                    if model_id == "htdemucs":
+                        matches = "htdemucs" in fname_lower and "_ft" not in fname_lower and "-ft" not in fname_lower
+                    elif model_id == "htdemucs_ft":
+                        matches = "htdemucs_ft" in fname_lower or "htdemucs-ft" in fname_lower
+                    elif model_id in fname_lower:
+                        matches = True
+
+                    if matches and fname.endswith(".th"):
+                        fpath = os.path.join(hub_cache_dir, fname)
+                        fsize = os.path.getsize(fpath)
+                        if fsize > 10 * 1024 * 1024:
+                            is_downloaded = True
+                            disk_size_bytes = fsize
+                            file_path = fpath
+                            break
+            except Exception:
+                pass
 
         # Calculate human-readable size
         if disk_size_bytes > 0:
@@ -627,12 +680,44 @@ def download_vocal_model_task(model_id: str) -> str:
     return task_id
 
 def delete_vocal_model(model_id: str) -> bool:
-    """Deletes cached Demucs model checkpoint from disk."""
+    """Deletes cached Demucs model checkpoint from disk (Torch Hub and HuggingFace Hub)."""
     hub_cache_dir = os.path.expanduser("~/.cache/torch/hub/checkpoints")
+    hf_cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
     deleted = False
+
+    # 1. HuggingFace Hub directory
+    if os.path.exists(hf_cache_dir):
+        for entry in os.listdir(hf_cache_dir):
+            entry_lower = entry.lower()
+            matches = False
+            if model_id == "htdemucs":
+                matches = "models--adefossez--htdemucs" in entry_lower and "-ft" not in entry_lower
+            elif model_id == "htdemucs_ft":
+                matches = "models--adefossez--htdemucs-ft" in entry_lower or "models--adefossez--htdemucs_ft" in entry_lower
+            elif model_id in entry_lower:
+                matches = True
+
+            if matches:
+                full_p = os.path.join(hf_cache_dir, entry)
+                try:
+                    shutil.rmtree(full_p, ignore_errors=True)
+                    deleted = True
+                except Exception:
+                    pass
+
+    # 2. Torch Hub directory
     if os.path.exists(hub_cache_dir):
         for fname in os.listdir(hub_cache_dir):
-            if model_id in fname.lower() and fname.endswith(".th"):
+            fname_lower = fname.lower()
+            matches = False
+            if model_id == "htdemucs":
+                matches = "htdemucs" in fname_lower and "_ft" not in fname_lower and "-ft" not in fname_lower
+            elif model_id == "htdemucs_ft":
+                matches = "htdemucs_ft" in fname_lower or "htdemucs-ft" in fname_lower
+            elif model_id in fname_lower:
+                matches = True
+
+            if matches and fname.endswith(".th"):
                 fpath = os.path.join(hub_cache_dir, fname)
                 try:
                     os.remove(fpath)
