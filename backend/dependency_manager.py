@@ -430,23 +430,35 @@ def run_pip_command_async(task_id: str, cmd: List[str], description: str):
     thread = threading.Thread(target=_worker, daemon=True)
     thread.start()
 
+def get_pytorch_cuda_index_url() -> str:
+    """Returns the correct PyTorch CUDA index URL based on the Python version."""
+    py_ver = sys.version_info
+    if py_ver >= (3, 14):
+        # Python 3.14+ wheels are hosted under CUDA 12.6
+        return "https://download.pytorch.org/whl/cu126"
+    elif py_ver >= (3, 13):
+        return "https://download.pytorch.org/whl/cu126"
+    else:
+        # Python 3.10 - 3.12 default to CUDA 12.4
+        return "https://download.pytorch.org/whl/cu124"
+
 def install_package_task(package_id: str) -> str:
     """Dispatches asynchronous install task based on target package or bundle."""
     task_id = f"task_{uuid.uuid4().hex[:8]}"
     py_exe = sys.executable
 
     if package_id == "torch_cuda":
-        # Install PyTorch with CUDA 12.4 index
+        cuda_index = get_pytorch_cuda_index_url()
+        # --force-reinstall is essential so pip replaces existing CPU-only wheel with CUDA wheel
         cmd = [
-            py_exe, "-m", "pip", "install", "--upgrade",
+            py_exe, "-m", "pip", "install", "--upgrade", "--force-reinstall",
             "torch", "torchaudio",
-            "--index-url", "https://download.pytorch.org/whl/cu124"
+            "--index-url", cuda_index
         ]
-        desc = "Installing PyTorch with NVIDIA CUDA 12 Acceleration"
+        desc = f"Installing PyTorch with NVIDIA CUDA 12 Acceleration ({cuda_index.split('/')[-1].upper()})"
     elif package_id == "torch_cpu":
-        # Install CPU-only PyTorch
         cmd = [
-            py_exe, "-m", "pip", "install", "--upgrade",
+            py_exe, "-m", "pip", "install", "--upgrade", "--force-reinstall",
             "torch", "torchaudio",
             "--index-url", "https://download.pytorch.org/whl/cpu"
         ]
