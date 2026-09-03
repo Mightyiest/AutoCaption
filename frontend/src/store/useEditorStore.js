@@ -248,6 +248,13 @@ export const useEditorStore = create((set, get) => ({
   modelDownloadStates: {},
   setSelectedModel: (selectedModel) => set({ selectedModel }),
 
+  // Dependencies & Acceleration State
+  dependenciesData: null,
+  dependenciesLoading: false,
+  vocalModelsData: [],
+  vocalModelsLoading: false,
+  activeInstallTask: null,
+
   // Actions
   setTimelineZoom: (timelineZoom) => set({ timelineZoom: Math.max(0.5, Math.min(20.0, timelineZoom)) }),
   toggleTimelineSnap: () => set((state) => ({ timelineSnapEnabled: !state.timelineSnapEnabled })),
@@ -289,6 +296,8 @@ export const useEditorStore = create((set, get) => ({
     set({ isSettingsModalOpen: isOpen });
     if (isOpen) {
       get().fetchModelsStatus();
+      get().fetchDependenciesStatus();
+      get().fetchVocalModelsStatus();
     }
   },
   
@@ -1139,6 +1148,141 @@ export const useEditorStore = create((set, get) => ({
       console.error('Failed to delete model:', err);
     } finally {
       set({ modelsLoading: false });
+    }
+  },
+
+  fetchDependenciesStatus: async (checkPypi = false) => {
+    try {
+      set({ dependenciesLoading: true });
+      const url = checkPypi 
+        ? 'http://127.0.0.1:8000/api/dependencies/check-updates' 
+        : 'http://127.0.0.1:8000/api/dependencies/status';
+      const method = checkPypi ? 'POST' : 'GET';
+      const res = await fetch(url, { method });
+      if (res.ok) {
+        const data = await res.json();
+        set({ dependenciesData: data, vocalModelsData: data.vocal_models || [] });
+        return data;
+      }
+    } catch (err) {
+      console.error('Failed to fetch dependencies:', err);
+    } finally {
+      set({ dependenciesLoading: false });
+    }
+    return null;
+  },
+
+  installDependency: async (packageId) => {
+    try {
+      const res = await fetch('http://127.0.0.1:8000/api/dependencies/install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ package_id: packageId })
+      });
+      if (res.ok) {
+        const { task_id } = await res.json();
+        get().trackDependencyTask(task_id);
+        return task_id;
+      }
+    } catch (err) {
+      console.error('Install request failed:', err);
+    }
+  },
+
+  uninstallDependency: async (packageId) => {
+    try {
+      const res = await fetch('http://127.0.0.1:8000/api/dependencies/uninstall', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ package_id: packageId })
+      });
+      if (res.ok) {
+        const { task_id } = await res.json();
+        get().trackDependencyTask(task_id);
+        return task_id;
+      }
+    } catch (err) {
+      console.error('Uninstall request failed:', err);
+    }
+  },
+
+  trackDependencyTask: (taskId) => {
+    set({ activeInstallTask: { id: taskId, status: 'running', percent: 10, logs: ['Starting background task...'] } });
+    const pollInterval = setInterval(async () => {
+      try {
+        const res = await fetch(`http://127.0.0.1:8000/api/dependencies/task/${taskId}`);
+        if (res.ok) {
+          const task = await res.json();
+          set({ activeInstallTask: task });
+          if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {
+            clearInterval(pollInterval);
+            get().fetchDependenciesStatus(false);
+            get().fetchVocalModelsStatus();
+          }
+        } else {
+          clearInterval(pollInterval);
+        }
+      } catch {
+        // ignore intermittent connection issues
+      }
+    }, 750);
+  },
+
+  cancelDependencyTask: async (taskId) => {
+    try {
+      await fetch(`http://127.0.0.1:8000/api/dependencies/task/${taskId}/cancel`, { method: 'POST' });
+    } catch (err) {
+      console.error('Failed to cancel task:', err);
+    }
+  },
+
+  fetchVocalModelsStatus: async () => {
+    try {
+      set({ vocalModelsLoading: true });
+      const res = await fetch('http://127.0.0.1:8000/api/vocal-models/status');
+      if (res.ok) {
+        const data = await res.json();
+        set({ vocalModelsData: data.models || [] });
+        return data.models;
+      }
+    } catch (err) {
+      console.error('Failed to fetch vocal models:', err);
+    } finally {
+      set({ vocalModelsLoading: false });
+    }
+    return [];
+  },
+
+  downloadVocalModel: async (modelId) => {
+    try {
+      const res = await fetch('http://127.0.0.1:8000/api/vocal-models/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model_id: modelId })
+      });
+      if (res.ok) {
+        const { task_id } = await res.json();
+        get().trackDependencyTask(task_id);
+      }
+    } catch (err) {
+      console.error('Failed to trigger vocal model download:', err);
+    }
+  },
+
+  deleteVocalModel: async (modelId) => {
+    try {
+      set({ vocalModelsLoading: true });
+      const res = await fetch(`http://127.0.0.1:8000/api/vocal-models/${modelId}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        set({ vocalModelsData: data.models || [] });
+      }
+    } catch (err) {
+      console.error('Failed to delete vocal model:', err);
+    } finally {
+      set({ vocalModelsLoading: false });
     }
   },
 

@@ -75,6 +75,12 @@ class TranscribeSavedRequest(BaseModel):
 class ModelDownloadRequest(BaseModel):
     model_name: str
 
+class DependencyActionRequest(BaseModel):
+    package_id: str
+
+class VocalModelActionRequest(BaseModel):
+    model_id: str
+
 def get_system_hardware_stats() -> dict:
     cpu_percent = psutil.cpu_percent(interval=None)
     mem = psutil.virtual_memory()
@@ -184,6 +190,84 @@ def delete_model_endpoint(model_name: str):
             "model_name": model_name,
             **updated_status
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ---------------------------------------------------------------------------
+# Dependency, CUDA Acceleration & Vocal Model Endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/dependencies/status")
+def get_dependencies_status_endpoint(check_pypi: bool = False):
+    from dependency_manager import inspect_all_dependencies
+    try:
+        return inspect_all_dependencies(check_pypi=check_pypi)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/dependencies/check-updates")
+def check_dependencies_updates_endpoint():
+    from dependency_manager import inspect_all_dependencies
+    try:
+        return inspect_all_dependencies(check_pypi=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/dependencies/install")
+def install_dependency_endpoint(req: DependencyActionRequest):
+    from dependency_manager import install_package_task
+    try:
+        task_id = install_package_task(req.package_id)
+        return {"status": "started", "task_id": task_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/dependencies/uninstall")
+def uninstall_dependency_endpoint(req: DependencyActionRequest):
+    from dependency_manager import uninstall_package_task
+    try:
+        task_id = uninstall_package_task(req.package_id)
+        return {"status": "started", "task_id": task_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/dependencies/task/{task_id}")
+def get_dependency_task_endpoint(task_id: str):
+    from dependency_manager import TASK_REGISTRY
+    task = TASK_REGISTRY.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
+
+@app.post("/api/dependencies/task/{task_id}/cancel")
+def cancel_dependency_task_endpoint(task_id: str):
+    from dependency_manager import cancel_task
+    cancelled = cancel_task(task_id)
+    return {"status": "cancelled" if cancelled else "not_running"}
+
+@app.get("/api/vocal-models/status")
+def get_vocal_models_endpoint():
+    from dependency_manager import get_vocal_models_status
+    try:
+        return {"models": get_vocal_models_status()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/vocal-models/download")
+def download_vocal_model_endpoint(req: VocalModelActionRequest):
+    from dependency_manager import download_vocal_model_task
+    try:
+        task_id = download_vocal_model_task(req.model_id)
+        return {"status": "started", "task_id": task_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/vocal-models/{model_id}")
+def delete_vocal_model_endpoint(model_id: str):
+    from dependency_manager import delete_vocal_model, get_vocal_models_status
+    try:
+        deleted = delete_vocal_model(model_id)
+        return {"status": "deleted" if deleted else "not_found", "models": get_vocal_models_status()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
