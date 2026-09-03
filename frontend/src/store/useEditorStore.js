@@ -1161,8 +1161,40 @@ export const useEditorStore = create((set, get) => ({
       const res = await fetch(url, { method });
       if (res.ok) {
         const data = await res.json();
-        set({ dependenciesData: data, vocalModelsData: data.vocal_models || [] });
-        return data;
+
+        // Preserve previously known latest_version and recompute update_available
+        const prevPackages = get().dependenciesData?.packages || [];
+        const prevMap = new Map(prevPackages.map(p => [p.id, p]));
+
+        const mergedPackages = (data.packages || []).map(pkg => {
+          const prev = prevMap.get(pkg.id);
+          const latest_version = pkg.latest_version || prev?.latest_version || null;
+          let update_available = pkg.update_available;
+
+          if (latest_version && pkg.installed_version && pkg.is_installed) {
+            const cleanInstalled = pkg.installed_version.split('+')[0].replace('v', '').trim();
+            const cleanLatest = latest_version.split('+')[0].replace('v', '').trim();
+            if (cleanInstalled === cleanLatest) {
+              update_available = false;
+            } else {
+              update_available = prev?.update_available || pkg.update_available || (cleanLatest > cleanInstalled);
+            }
+          }
+
+          return {
+            ...pkg,
+            latest_version,
+            update_available
+          };
+        });
+
+        const mergedData = {
+          ...data,
+          packages: mergedPackages
+        };
+
+        set({ dependenciesData: mergedData, vocalModelsData: data.vocal_models || [] });
+        return mergedData;
       }
     } catch (err) {
       console.error('Failed to fetch dependencies:', err);

@@ -328,17 +328,28 @@ def inspect_all_dependencies(check_pypi: bool = False) -> Dict[str, Any]:
         latest_ver = None
         if check_pypi:
             latest_ver = fetch_pypi_latest_version(pkg["pypi_name"])
+        elif pkg["pypi_name"] in _PYPI_CACHE:
+            latest_ver = _PYPI_CACHE[pkg["pypi_name"]]["version"]
 
         # Determine update availability
         update_available = False
         if is_installed and latest_ver and installed_ver:
             try:
-                # Strip build tags like '+cu124' or '+cpu' for simple semver comparison
-                clean_installed = installed_ver.split("+")[0].strip()
-                if clean_installed != latest_ver and latest_ver > clean_installed:
+                # Strip build tags like '+cu126' or '+cpu' or 'cuBLAS ...' for clean semver comparison
+                clean_installed = installed_ver.split("+")[0].replace("v", "").strip()
+                clean_latest = latest_ver.split("+")[0].replace("v", "").strip()
+
+                def _to_tuple(v_str):
+                    tokens = []
+                    for seg in v_str.replace("-", ".").split("."):
+                        tokens.append(int(seg) if seg.isdigit() else seg)
+                    return tuple(tokens)
+
+                if _to_tuple(clean_latest) > _to_tuple(clean_installed):
                     update_available = True
             except Exception:
-                pass
+                if clean_installed != clean_latest:
+                    update_available = True
 
         packages_status.append({
             **pkg,
