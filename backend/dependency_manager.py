@@ -541,6 +541,59 @@ def clean_pip_cache() -> int:
         pass
     return freed_bytes
 
+def get_cache_info() -> Dict[str, Any]:
+    """Inspects cache directories and sizes without deleting anything."""
+    import site
+    pip_cache_dir = None
+    pip_cache_bytes = 0
+    try:
+        res = subprocess.run([sys.executable, "-m", "pip", "cache", "dir"], capture_output=True, text=True, timeout=3)
+        if res.returncode == 0:
+            pip_cache_dir = res.stdout.strip()
+            if os.path.exists(pip_cache_dir):
+                for root, dirs, files in os.walk(pip_cache_dir):
+                    for f in files:
+                        fp = os.path.join(root, f)
+                        if os.path.exists(fp):
+                            pip_cache_bytes += os.path.getsize(fp)
+    except Exception:
+        pass
+
+    orphans_paths = []
+    orphans_bytes = 0
+    paths_to_check = []
+    try:
+        paths_to_check = site.getsitepackages() + [site.getusersitepackages()]
+    except Exception:
+        pass
+
+    for p in paths_to_check:
+        if p and os.path.exists(p):
+            try:
+                for entry in os.listdir(p):
+                    if entry.startswith("~"):
+                        full_path = os.path.join(p, entry)
+                        orphans_paths.append(full_path)
+                        try:
+                            for root, dirs, files in os.walk(full_path):
+                                for f in files:
+                                    fp = os.path.join(root, f)
+                                    if os.path.exists(fp):
+                                        orphans_bytes += os.path.getsize(fp)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+    total_mb = round((pip_cache_bytes + orphans_bytes) / (1024 * 1024), 1)
+    return {
+        "pip_cache_dir": pip_cache_dir or "AppData/Local/pip/cache",
+        "pip_cache_mb": round(pip_cache_bytes / (1024 * 1024), 1),
+        "orphans_paths": orphans_paths,
+        "orphans_mb": round(orphans_bytes / (1024 * 1024), 1),
+        "total_mb": total_mb
+    }
+
 def clean_all_caches() -> Dict[str, Any]:
     """Cleans orphaned site-packages and purges pip cache."""
     orphans_freed = clean_orphaned_site_packages()

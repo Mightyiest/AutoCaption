@@ -1,20 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  X, 
-  Sparkles, 
-  Folder, 
-  Copy, 
-  Check, 
-  Download, 
-  Trash2, 
-  HardDrive, 
-  Cpu, 
-  Zap, 
-  CheckCircle2, 
+import {
+  X,
+  Sparkles,
+  Folder,
+  Copy,
+  Check,
+  Download,
+  Trash2,
+  HardDrive,
+  Cpu,
+  Zap,
+  CheckCircle2,
   AlertTriangle,
-  Loader2, 
-  RefreshCw, 
-  Layers, 
+  Loader2,
+  RefreshCw,
+  Layers,
   Music,
   Terminal,
   ArrowUpCircle,
@@ -45,6 +45,7 @@ export const SettingsModal = () => {
     vocalModelsLoading,
     activeInstallTask,
     dismissDependencyTask,
+    fetchCacheInfo,
     cleanDependenciesCache,
     fetchDependenciesStatus,
     installDependency,
@@ -62,6 +63,8 @@ export const SettingsModal = () => {
   const [categoryFilter, setCategoryFilter] = useState('all'); // 'all' | 'ai_compute' | 'vocal_separation' | 'media_engine'
   const [isConsoleExpanded, setIsConsoleExpanded] = useState(true);
   const [isCleaningCache, setIsCleaningCache] = useState(false);
+  const [cachePromptData, setCachePromptData] = useState(null);
+  const [isPurgingInProgress, setIsPurgingInProgress] = useState(false);
 
   const consoleLogsEndRef = useRef(null);
 
@@ -113,8 +116,8 @@ export const SettingsModal = () => {
   if (!isSettingsModalOpen) return null;
 
   const packages = dependenciesData?.packages || [];
-  const filteredPackages = categoryFilter === 'all' 
-    ? packages 
+  const filteredPackages = categoryFilter === 'all'
+    ? packages
     : packages.filter(p => p.category === categoryFilter);
 
   const torchCuda = dependenciesData?.torch_cuda;
@@ -131,7 +134,7 @@ export const SettingsModal = () => {
 
   return (
     <div className="modal-backdrop">
-      <div 
+      <div
         className="studio-panel apple-modal-content"
         style={{
           width: '100%',
@@ -303,22 +306,22 @@ export const SettingsModal = () => {
 
         {/* Scrollable Body */}
         <div style={{ padding: '16px 20px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          
+
           {/* ========================================================================= */}
           {/* TAB 1: DEPENDENCIES & CUDA ACCELERATION                                 */}
           {/* ========================================================================= */}
           {activeTab === 'dependencies' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              
+
               {/* CUDA Hardware Acceleration Hero Banner */}
               <div style={{
                 padding: '14px 16px',
                 borderRadius: 'var(--radius-md)',
-                background: isCudaReady 
+                background: isCudaReady
                   ? 'linear-gradient(135deg, rgba(48, 209, 88, 0.08) 0%, rgba(0, 113, 227, 0.04) 100%)'
                   : 'linear-gradient(135deg, rgba(255, 159, 10, 0.08) 0%, rgba(255, 69, 58, 0.03) 100%)',
-                border: isCudaReady 
-                  ? '1px solid rgba(48, 209, 88, 0.25)' 
+                border: isCudaReady
+                  ? '1px solid rgba(48, 209, 88, 0.25)'
                   : '1px solid rgba(255, 159, 10, 0.25)',
                 display: 'flex',
                 alignItems: 'center',
@@ -429,20 +432,19 @@ export const SettingsModal = () => {
                   <button
                     onClick={async () => {
                       setIsCleaningCache(true);
-                      const res = await cleanDependenciesCache();
+                      const info = await fetchCacheInfo();
                       setIsCleaningCache(false);
-                      if (res?.message) {
-                        alert(res.message);
+                      if (info) {
+                        setCachePromptData(info);
                       }
-                      fetchDependenciesStatus(false);
                     }}
                     disabled={isCleaningCache || activeInstallTask?.status === 'running'}
                     className="btn-ghost"
                     style={{ padding: '4px 10px', fontSize: '11px', gap: '5px', color: 'var(--text-secondary)' }}
-                    title="Purge pip wheel download cache and remove orphaned files to reclaim disk storage"
+                    title="Inspect and purge pip wheel download cache and orphaned temporary files"
                   >
                     {isCleaningCache ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
-                    <span>{isCleaningCache ? 'Cleaning...' : 'Purge Cache & Junk'}</span>
+                    <span>{isCleaningCache ? 'Inspecting...' : 'Purge Cache & Junk'}</span>
                   </button>
                   <button
                     onClick={() => fetchDependenciesStatus(true)}
@@ -511,7 +513,7 @@ export const SettingsModal = () => {
                             <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)' }}>
                               {pkg.name}
                             </span>
-                            
+
                             {/* Installed / Not Installed Badge */}
                             {isInstalled ? (
                               <span style={{
@@ -1141,13 +1143,13 @@ export const SettingsModal = () => {
                   fontWeight: '600',
                   padding: '1px 6px',
                   borderRadius: 'var(--radius-pill)',
-                  background: activeInstallTask.status === 'completed' 
-                    ? 'rgba(48, 209, 88, 0.2)' 
+                  background: activeInstallTask.status === 'completed'
+                    ? 'rgba(48, 209, 88, 0.2)'
                     : activeInstallTask.status === 'failed'
                       ? 'rgba(255, 69, 58, 0.2)'
                       : 'rgba(0, 113, 227, 0.2)',
-                  color: activeInstallTask.status === 'completed' 
-                    ? 'var(--system-success)' 
+                  color: activeInstallTask.status === 'completed'
+                    ? 'var(--system-success)'
                     : activeInstallTask.status === 'failed'
                       ? 'var(--system-error)'
                       : 'var(--accent-bright-blue)'
@@ -1238,6 +1240,240 @@ export const SettingsModal = () => {
           </button>
         </div>
       </div>
+
+      {/* Purge Cache & Junk Confirmation Dialog */}
+      {cachePromptData && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.75)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 100000,
+          padding: '20px'
+        }}>
+          <div style={{
+            background: '#121215',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-lg)',
+            width: '100%',
+            maxWidth: '520px',
+            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.6)',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column'
+          }}>
+            {/* Header */}
+            <div style={{
+              padding: '16px 20px',
+              borderBottom: '1px solid var(--border-subtle)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              background: 'rgba(255, 255, 255, 0.02)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '8px',
+                  background: 'rgba(255, 159, 10, 0.15)',
+                  color: 'var(--system-warning)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  <Trash2 size={16} />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '14px', fontWeight: '600', color: 'var(--text-primary)' }}>
+                    Purge Dependency Cache & Temp Files
+                  </h3>
+                  <p style={{ margin: 0, fontSize: '11px', color: 'var(--text-tertiary)' }}>
+                    Review target directories before reclaiming disk space
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setCachePromptData(null)}
+                className="btn-ghost"
+                style={{ padding: '4px' }}
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {/* Pip Download Cache Directory */}
+                <div style={{
+                  padding: '12px',
+                  borderRadius: 'var(--radius-md)',
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border-subtle)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Folder size={12} color="var(--accent-bright-blue)" />
+                      <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>
+                        Pip Download Archive Cache
+                      </span>
+                    </div>
+                    <span style={{
+                      fontSize: '10px',
+                      fontWeight: '600',
+                      padding: '1px 6px',
+                      borderRadius: 'var(--radius-pill)',
+                      background: 'rgba(0, 113, 227, 0.15)',
+                      color: 'var(--accent-bright-blue)'
+                    }}>
+                      {cachePromptData.pip_cache_mb} MB
+                    </span>
+                  </div>
+                  <code style={{
+                    fontSize: '10.5px',
+                    color: 'var(--text-tertiary)',
+                    background: 'rgba(0, 0, 0, 0.3)',
+                    padding: '4px 8px',
+                    borderRadius: '4px',
+                    wordBreak: 'break-all'
+                  }}>
+                    {cachePromptData.pip_cache_dir}
+                  </code>
+                </div>
+
+                {/* Orphaned Temporary Folders */}
+                <div style={{
+                  padding: '12px',
+                  borderRadius: 'var(--radius-md)',
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border-subtle)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <HardDrive size={12} color="var(--system-warning)" />
+                      <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>
+                        Orphaned Update Junk in Site-Packages
+                      </span>
+                    </div>
+                    <span style={{
+                      fontSize: '10px',
+                      fontWeight: '600',
+                      padding: '1px 6px',
+                      borderRadius: 'var(--radius-pill)',
+                      background: cachePromptData.orphans_paths.length > 0 ? 'rgba(255, 159, 10, 0.15)' : 'rgba(48, 209, 88, 0.15)',
+                      color: cachePromptData.orphans_paths.length > 0 ? 'var(--system-warning)' : 'var(--system-success)'
+                    }}>
+                      {cachePromptData.orphans_paths.length > 0 ? `${cachePromptData.orphans_mb} MB` : 'Clean (0 MB)'}
+                    </span>
+                  </div>
+                  {cachePromptData.orphans_paths.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                      {cachePromptData.orphans_paths.map((p, i) => (
+                        <code key={i} style={{
+                          fontSize: '10px',
+                          color: 'var(--system-warning)',
+                          background: 'rgba(0, 0, 0, 0.3)',
+                          padding: '3px 6px',
+                          borderRadius: '4px',
+                          wordBreak: 'break-all'
+                        }}>
+                          {p}
+                        </code>
+                      ))}
+                    </div>
+                  ) : (
+                    <span style={{ fontSize: '10.5px', color: 'var(--text-tertiary)' }}>
+                      No interrupted update scraps found.
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Total Reclaimable Summary Banner */}
+              <div style={{
+                padding: '10px 14px',
+                borderRadius: 'var(--radius-md)',
+                background: 'rgba(48, 209, 88, 0.06)',
+                border: '1px solid rgba(48, 209, 88, 0.25)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between'
+              }}>
+                <span style={{ fontSize: '12px', fontWeight: '500', color: 'var(--text-primary)' }}>
+                  Total Space to Reclaim:
+                </span>
+                <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--system-success)' }}>
+                  {cachePromptData.total_mb > 1024 
+                    ? `${(cachePromptData.total_mb / 1024).toFixed(2)} GB` 
+                    : `${cachePromptData.total_mb} MB`}
+                </span>
+              </div>
+
+              {/* Safe info note */}
+              <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: 0, lineHeight: '1.4' }}>
+                <ShieldCheck size={12} style={{ display: 'inline', verticalAlign: '-2px', marginRight: '4px', color: 'var(--system-success)' }} />
+                This operation only purges downloaded package zip archives and broken temporary files. None of your installed active libraries, Whisper models, or Demucs weights will be touched.
+              </p>
+            </div>
+
+            {/* Footer Buttons */}
+            <div style={{
+              padding: '12px 20px',
+              borderTop: '1px solid var(--border-subtle)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'flex-end',
+              gap: '8px',
+              background: 'rgba(255, 255, 255, 0.02)'
+            }}>
+              <button
+                onClick={() => setCachePromptData(null)}
+                disabled={isPurgingInProgress}
+                className="btn-secondary"
+                style={{ padding: '6px 14px', fontSize: '11px' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  setIsPurgingInProgress(true);
+                  const res = await cleanDependenciesCache();
+                  setIsPurgingInProgress(false);
+                  setCachePromptData(null);
+                  if (res?.message) {
+                    alert(res.message);
+                  }
+                  fetchDependenciesStatus(false);
+                }}
+                disabled={isPurgingInProgress}
+                className="btn-primary"
+                style={{
+                  padding: '6px 16px',
+                  fontSize: '11px',
+                  background: 'var(--system-error)',
+                  gap: '5px'
+                }}
+              >
+                {isPurgingInProgress ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                <span>{isPurgingInProgress ? 'Purging...' : 'Purge Cache Now'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -247,6 +247,14 @@ def cancel_dependency_task_endpoint(task_id: str):
     cancelled = cancel_task(task_id)
     return {"status": "cancelled" if cancelled else "not_running"}
 
+@app.get("/api/dependencies/cache-info")
+def get_dependencies_cache_info_endpoint():
+    from dependency_manager import get_cache_info
+    try:
+        return get_cache_info()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/dependencies/clean-cache")
 def clean_dependencies_cache_endpoint():
     from dependency_manager import clean_all_caches

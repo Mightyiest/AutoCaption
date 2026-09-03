@@ -1268,6 +1268,18 @@ export const useEditorStore = create((set, get) => ({
     }
   },
 
+  fetchCacheInfo: async () => {
+    try {
+      const res = await fetch('http://127.0.0.1:8000/api/dependencies/cache-info');
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (err) {
+      console.error('Failed to fetch cache info:', err);
+    }
+    return null;
+  },
+
   cleanDependenciesCache: async () => {
     try {
       const res = await fetch('http://127.0.0.1:8000/api/dependencies/clean-cache', { method: 'POST' });
