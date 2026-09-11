@@ -36,13 +36,15 @@ export function extractAllWords(segments = [], removePunctuation = false) {
           cleanWord = stripPunctuation(cleanWord);
         }
         if (cleanWord) {
+          const startTs = Number(w.start) || 0;
+          const endTs = Math.max(startTs + 0.05, Number(w.end) || (startTs + 0.2));
           words.push({
             id: w.id || `w-${Math.random().toString(36).slice(2, 9)}`,
             word: cleanWord,
-            start: Number(w.start) || 0,
-            end: Number(w.end) || (Number(w.start) + 0.2),
+            start: startTs,
+            end: endTs,
             confidence: Number(w.confidence) || 0.95,
-            emoji: w.emoji || null,
+            emoji: w.emoji || seg.emoji || null,
             isEmphasized: w.isEmphasized
           });
         }

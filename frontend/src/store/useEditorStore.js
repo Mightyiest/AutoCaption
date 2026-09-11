@@ -5,8 +5,16 @@ import { extractAllWords, chunkWordsIntoSegments, stripPunctuationFromSegments }
 import { autoAssignEmojis, detectEmojiForWord } from '../engine/emojiEngine';
 import { autoApplyEmphasis, isPowerKeyword } from '../engine/emphasisEngine';
 import { detectNativeVideoFps } from '../engine/videoSourceCache';
+import { browseLocalFile, linkLocalPath, getStreamUrl, checkMediaStatus } from '../engine/mediaLinker';
+import { getAllProjects, getProjectById, saveProject, deleteProject as dbDeleteProject, INITIAL_SHOWCASE_PROJECTS } from '../engine/projectStorage';
 
 const STORAGE_KEY_KEYWORD_RULES = 'autocaption_custom_keyword_rules';
+const STORAGE_KEY_THEME = 'autocaption_theme';
+
+const initialTheme = (typeof window !== 'undefined' && localStorage.getItem(STORAGE_KEY_THEME)) || 'light';
+if (typeof document !== 'undefined') {
+  document.documentElement.setAttribute('data-theme', initialTheme);
+}
 
 const DEFAULT_KEYWORD_RULES = [
   { id: 'rule-pain', keyword: 'pain', emoji: '🤕', isEmphasized: true },
@@ -198,7 +206,7 @@ export const useEditorStore = create((set, get) => ({
   volume: 1.0,
   isMuted: false,
   aspectRatio: '9:16',
-  showSafeZones: true,
+  showSafeZones: false,
 
   // Audio Waveform State
   audioPeaks: null,
@@ -220,8 +228,18 @@ export const useEditorStore = create((set, get) => ({
   style: { ...DEFAULT_PRESET.style },
   activePresetId: DEFAULT_PRESET.id,
 
+  // Project Management & Media Linking State
+  currentView: (typeof window !== 'undefined' && window.location.hash === '#editor') ? 'editor' : 'hub', // 'hub' | 'editor'
+  activeProjectId: null,
+  activeProjectTitle: 'Untitled Project',
+  saveStatus: 'saved', // 'saved' | 'saving' | 'unsaved'
+  projectsList: INITIAL_SHOWCASE_PROJECTS,
+  isMediaLinked: false,
+  linkedSourcePath: null,
+  mediaOffline: false,
+
   // UI State
-  canvasLayout: 'right', // 'right' | 'center' | 'left'
+  canvasLayout: 'center', // 'right' | 'center' | 'left'
   backendAvailable: false,
   isUploadModalOpen: false,
   isTranscribeModalOpen: false,
@@ -229,11 +247,282 @@ export const useEditorStore = create((set, get) => ({
   isSettingsModalOpen: false,
   isHelpModalOpen: false,
   isVocalExtractorOpen: false,
+  pendingImportFile: null,
+  videoPickerTrigger: null,
+  theme: initialTheme,
   removePunctuation: false,
+
+  setCurrentView: (currentView) => {
+    set({ currentView });
+    if (typeof window !== 'undefined') {
+      window.location.hash = currentView === 'hub' ? 'projects' : 'editor';
+    }
+  },
+
+  fetchProjectsList: async () => {
+    try {
+      const list = await getAllProjects();
+      set({ projectsList: list });
+    } catch (e) {
+      console.warn('Failed to fetch projects list:', e);
+    }
+  },
+
+  loadProject: async (projectId) => {
+    try {
+      const proj = await getProjectById(projectId);
+      if (!proj) return;
+      
+      const preset = PRESETS.find(p => p.id === proj.activePresetId) || PRESETS[0];
+      const projectStyle = proj.style ? sanitizeStyle(proj.style) : { ...preset.style };
+
+      let streamUrl = proj.videoUrl || '';
+      if (proj.isMediaLinked && proj.linkedSourcePath) {
+        streamUrl = getStreamUrl(proj.linkedSourcePath);
+      }
+
+      set({
+        activeProjectId: proj.id,
+        activeProjectTitle: proj.title || 'Untitled Project',
+        currentView: 'editor',
+        videoUrl: streamUrl,
+        videoFilename: proj.videoFilename || (proj.linkedSourcePath ? proj.linkedSourcePath.split(/[/\\]/).pop() : null),
+        linkedSourcePath: proj.linkedSourcePath || null,
+        isMediaLinked: Boolean(proj.isMediaLinked),
+        mediaOffline: Boolean(proj.mediaOffline),
+        aspectRatio: proj.aspectRatio || '9:16',
+        duration: proj.duration || 0,
+        segments: proj.segments || [],
+        style: projectStyle,
+        activePresetId: proj.activePresetId || preset.id,
+        currentTime: 0,
+        isPlaying: false,
+        saveStatus: 'saved'
+      });
+
+      if (typeof window !== 'undefined') {
+        window.location.hash = 'editor';
+      }
+    } catch (err) {
+      console.error('Failed to load project:', err);
+    }
+  },
+
+  saveCurrentProject: async () => {
+    const { activeProjectId, activeProjectTitle, aspectRatio, duration, segments, style, activePresetId, videoFilename, videoUrl, linkedSourcePath, isMediaLinked } = get();
+    if (!activeProjectId) return;
+
+    set({ saveStatus: 'saving' });
+    try {
+      await saveProject({
+        id: activeProjectId,
+        title: activeProjectTitle,
+        aspectRatio,
+        duration,
+        linesCount: segments.length,
+        wordsCount: segments.reduce((sum, s) => sum + (s.words?.length || 0), 0),
+        segments,
+        style,
+        activePresetId,
+        videoFilename,
+        videoUrl,
+        linkedSourcePath,
+        isMediaLinked,
+        captionSnippet: segments[0]?.text || 'Studio Caption',
+        thumbnailUrl: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=600&auto=format&fit=crop&q=80'
+      });
+      set({ saveStatus: 'saved' });
+      get().fetchProjectsList();
+    } catch (e) {
+      console.warn('Project save failed:', e);
+      set({ saveStatus: 'unsaved' });
+    }
+  },
+
+  createNewProject: async ({ aspect = '9:16', title = '', linkedPath = null, videoFile = null, presetId = 'mrbeast' } = {}) => {
+    const newId = 'proj-' + Date.now();
+    let streamUrl = '';
+    let filename = null;
+    let isLinked = false;
+
+    if (linkedPath) {
+      streamUrl = getStreamUrl(linkedPath);
+      filename = linkedPath.split(/[/\\]/).pop();
+      isLinked = true;
+    } else if (videoFile) {
+      streamUrl = URL.createObjectURL(videoFile);
+      filename = videoFile.name;
+    }
+
+    const selectedPreset = PRESETS.find(p => p.id === presetId) || PRESETS[0];
+    const defaultStyle = { ...selectedPreset.style };
+    const projectTitle = title || `New ${aspect} Project`;
+    const newProj = {
+      id: newId,
+      title: projectTitle,
+      aspectRatio: aspect,
+      duration: 0,
+      linesCount: 0,
+      wordsCount: 0,
+      segments: [],
+      style: defaultStyle,
+      activePresetId: selectedPreset.id,
+      videoFilename: filename,
+      videoUrl: streamUrl,
+      linkedSourcePath: linkedPath,
+      isMediaLinked: isLinked,
+      captionSnippet: 'NEW PROJECT 🔥',
+      thumbnailUrl: 'https://images.unsplash.com/photo-1536240478700-b869070f9279?w=600&auto=format&fit=crop&q=80',
+      isActive: true
+    };
+
+    await saveProject(newProj);
+
+    set({
+      activeProjectId: newId,
+      activeProjectTitle: projectTitle,
+      currentView: 'editor',
+      aspectRatio: aspect,
+      duration: 0,
+      currentTime: 0,
+      isPlaying: false,
+      videoFile: videoFile,
+      videoUrl: streamUrl,
+      videoFilename: filename,
+      linkedSourcePath: linkedPath,
+      isMediaLinked: isLinked,
+      mediaOffline: false,
+      segments: [],
+      style: defaultStyle,
+      activePresetId: PRESETS[0].id,
+      saveStatus: 'saved'
+    });
+
+    get().fetchProjectsList();
+    if (typeof window !== 'undefined') {
+      window.location.hash = 'editor';
+    }
+  },
+
+  linkLocalVideoFile: async () => {
+    try {
+      const res = await browseLocalFile();
+      if (res.cancelled || !res.filePath) return;
+
+      const title = res.filename.replace(/\.[^/.]+$/, "");
+      await get().createNewProject({
+        aspect: res.width > res.height ? '16:9' : '9:16',
+        title: title,
+        linkedPath: res.filePath
+      });
+
+      if (get().backendAvailable) {
+        get().setTranscribeModalOpen(true);
+      }
+    } catch (e) {
+      console.error('Failed to link local video file:', e);
+    }
+  },
+
+  relinkProjectMedia: async (projectId) => {
+    try {
+      const res = await browseLocalFile();
+      if (res.cancelled || !res.filePath) return;
+
+      const proj = await getProjectById(projectId);
+      if (!proj) return;
+
+      proj.linkedSourcePath = res.filePath;
+      proj.videoFilename = res.filename;
+      proj.mediaOffline = false;
+      proj.isMediaLinked = true;
+      await saveProject(proj);
+
+      if (get().activeProjectId === projectId) {
+        set({
+          linkedSourcePath: res.filePath,
+          videoFilename: res.filename,
+          videoUrl: getStreamUrl(res.filePath),
+          mediaOffline: false,
+          isMediaLinked: true
+        });
+      }
+      get().fetchProjectsList();
+    } catch (e) {
+      console.error('Failed to relink media:', e);
+    }
+  },
+
+  renameCurrentProject: (newTitle) => {
+    set({ activeProjectTitle: newTitle, saveStatus: 'unsaved' });
+    get().saveCurrentProject();
+  },
+
+  deleteCurrentProject: async (projectId) => {
+    const idToDelete = projectId || get().activeProjectId;
+    if (!idToDelete) return;
+    await dbDeleteProject(idToDelete);
+    if (get().activeProjectId === idToDelete) {
+      set({
+        activeProjectId: null,
+        activeProjectTitle: 'Untitled Project',
+        currentView: 'hub',
+        videoUrl: '',
+        videoFile: null,
+        videoFilename: null,
+        segments: []
+      });
+    }
+    get().fetchProjectsList();
+  },
+
   setCanvasLayout: (canvasLayout) => set({ canvasLayout }),
   setRemovePunctuation: (removePunctuation) => set({ removePunctuation }),
   setTranscribeModalOpen: (isTranscribeModalOpen) => set({ isTranscribeModalOpen }),
   setVocalExtractorOpen: (isVocalExtractorOpen) => set({ isVocalExtractorOpen }),
+  setPendingImportFile: (pendingImportFile) => set({ pendingImportFile }),
+  registerVideoPickerTrigger: (videoPickerTrigger) => set({ videoPickerTrigger }),
+  setTheme: (theme) => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.setAttribute('data-theme', theme);
+      try {
+        localStorage.setItem(STORAGE_KEY_THEME, theme);
+      } catch (e) {}
+    }
+    set({ theme });
+  },
+  toggleTheme: () => {
+    const nextTheme = get().theme === 'dark' ? 'light' : 'dark';
+    get().setTheme(nextTheme);
+  },
+  triggerVideoPicker: () => {
+    const trigger = get().videoPickerTrigger;
+    if (typeof trigger === 'function') {
+      trigger();
+    }
+  },
+
+  // Studio Toast State & Action
+  studioToast: null,
+  showStudioToast: (message, options = {}) => {
+    const toast = {
+      id: Date.now() + Math.random(),
+      message,
+      type: options.type || 'info',
+      icon: options.icon || null
+    };
+    set({ studioToast: toast });
+    if (options.duration !== 0) {
+      const dur = options.duration || 3200;
+      setTimeout(() => {
+        const cur = get().studioToast;
+        if (cur && cur.id === toast.id) {
+          set({ studioToast: null });
+        }
+      }, dur);
+    }
+  },
+  hideStudioToast: () => set({ studioToast: null }),
 
   // Transcription State
   isTranscribing: false,
@@ -323,17 +612,27 @@ export const useEditorStore = create((set, get) => ({
 
   setVideoFps: (videoFps) => set({ videoFps: Number(videoFps) || 30 }),
 
-  setVideo: (file, url, filename, duration = 0) => {
-    set({
+  setVideo: (file, url, filename, duration = 0, keepCaptions = false) => {
+    const media = get().mediaElement;
+    if (media) {
+      try {
+        media.pause();
+        media.currentTime = 0;
+      } catch (e) {}
+    }
+    if (!keepCaptions && (get().segments || []).length > 0) {
+      get().pushHistoryState();
+    }
+    set((state) => ({
       videoFile: file,
       videoUrl: url,
       videoFilename: filename || (file ? file.name : null),
-      duration: duration || get().duration || 0,
+      duration: duration || state.duration || 0,
       currentTime: 0.0,
       isPlaying: false,
-      segments: [],
+      segments: keepCaptions ? state.segments : [],
       audioPeaks: null
-    });
+    }));
     if (file) {
       detectNativeVideoFps(file).then((fps) => {
         if (fps && Number.isFinite(fps) && fps > 0) {
@@ -342,6 +641,51 @@ export const useEditorStore = create((set, get) => ({
       });
     }
     get().extractAudioWaveform();
+  },
+
+  handleFileSelected: (file) => {
+    if (!file) return;
+    const isVideoOrAudio = (file.type && (file.type.startsWith('video/') || file.type.startsWith('audio/'))) ||
+      Boolean(file.name && file.name.match(/\.(mp4|mov|webm|mkv|avi|wav|mp3|m4a|aac|flac)$/i));
+    if (!isVideoOrAudio) {
+      console.warn('Selected file is not a supported video or audio format:', file.name);
+      return;
+    }
+    const currentSegments = get().segments || [];
+    if (currentSegments.length > 0) {
+      set({ pendingImportFile: file });
+    } else {
+      get().importVideoFile(file, false);
+    }
+  },
+
+  importVideoFile: async (file, keepCaptions = false) => {
+    if (!file) return;
+    const localBlobUrl = URL.createObjectURL(file);
+    get().setVideo(file, localBlobUrl, file.name, 0, keepCaptions);
+
+    // Upload to backend preview cache if backend is online
+    const BACKEND_URL = 'http://127.0.0.1:8000';
+    if (get().backendAvailable) {
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await fetch(`${BACKEND_URL}/api/upload-preview`, {
+          method: 'POST',
+          body: formData
+        });
+        if (res.ok) {
+          const data = await res.json();
+          // Update store with persistent backend URL and filename
+          set(() => ({
+            videoUrl: `${BACKEND_URL}${data.video_url}`,
+            videoFilename: data.video_filename
+          }));
+        }
+      } catch (err) {
+        console.warn('Background upload-preview error:', err);
+      }
+    }
   },
 
   setDuration: (duration) => {
@@ -710,8 +1054,13 @@ export const useEditorStore = create((set, get) => ({
 
   // AI Effects & Auto-Enhancement Actions
   autoEnhanceWithAI: () => {
-    const { segments, getCustomDictionary, getCustomEmphasisKeywords, style } = get();
-    if (!segments || segments.length === 0) return;
+    const { segments, getCustomDictionary, getCustomEmphasisKeywords, style, seekTo, showStudioToast } = get();
+    if (!segments || segments.length === 0) {
+      if (typeof showStudioToast === 'function') {
+        showStudioToast('No captions loaded yet! Import a video or add captions first.', { type: 'warning' });
+      }
+      return { success: false, reason: 'no_captions' };
+    }
     get().pushHistoryState();
 
     const customDict = getCustomDictionary();
@@ -719,14 +1068,51 @@ export const useEditorStore = create((set, get) => ({
 
     let enhanced = autoAssignEmojis(segments, { overwrite: true, customDictionary: customDict });
     enhanced = autoApplyEmphasis(enhanced, { overwrite: true, customKeywords: customEmphasis });
+
+    // Calculate exact enhancement statistics
+    let emojiCount = 0;
+    let emphasisCount = 0;
+    let firstEnhancedSeg = null;
+
+    enhanced.forEach((seg) => {
+      if (seg.emoji) emojiCount++;
+      (seg.words || []).forEach((w) => {
+        if (w.emoji) emojiCount++;
+        if (w.isEmphasized) {
+          emphasisCount++;
+          if (!firstEnhancedSeg) firstEnhancedSeg = seg;
+        }
+      });
+      if (!firstEnhancedSeg && seg.emoji) firstEnhancedSeg = seg;
+    });
+
     set({
       segments: enhanced,
       style: {
         ...style,
         autoEmojiEnabled: true,
-        autoEmphasisEnabled: true
+        autoEmphasisEnabled: true,
+        emphasisMode: 'always', // Guarantees highlighted words stay illuminated during paused viewing and playback
+        emphasisColor: style.emphasisColor || '#00FF66'
       }
     });
+
+    // Jump playhead to the first enhanced segment so the user immediately sees the visual change!
+    if (firstEnhancedSeg && typeof seekTo === 'function') {
+      seekTo(firstEnhancedSeg.start);
+    }
+
+    const toastMsg = `✨ Auto-Enhanced ${enhanced.length} captions with ${emojiCount} viral emojis & ${emphasisCount} hook words!`;
+    if (typeof showStudioToast === 'function') {
+      showStudioToast(toastMsg, { type: 'success' });
+    }
+
+    return {
+      success: true,
+      segmentCount: enhanced.length,
+      emojiCount,
+      emphasisCount
+    };
   },
 
   // Keyword & Apple Emoji Library State

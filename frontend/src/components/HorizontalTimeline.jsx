@@ -348,7 +348,7 @@ export const HorizontalTimeline = () => {
             overflowX: 'auto',
             overflowY: 'hidden',
             position: 'relative',
-            background: '#121214',
+            background: 'var(--bg-canvas)',
             userSelect: 'none'
           }}
         >
@@ -371,6 +371,7 @@ export const HorizontalTimeline = () => {
                 position: 'relative',
                 height: '24px',
                 borderBottom: '1px solid var(--border-subtle)',
+                background: 'var(--bg-panel)',
                 cursor: 'pointer',
                 userSelect: 'none'
               }}
@@ -397,7 +398,7 @@ export const HorizontalTimeline = () => {
                     <div style={{
                       width: t.isMajor ? '1.5px' : '1px',
                       height: t.isMajor ? '7px' : '4px',
-                      background: t.isMajor ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.18)'
+                      background: t.isMajor ? 'var(--text-secondary)' : 'var(--border-hover)'
                     }} />
                   </div>
                 );
@@ -427,7 +428,7 @@ export const HorizontalTimeline = () => {
                 width: `${totalDuration * pps}px`,
                 height: '100%',
                 borderRadius: 'var(--radius-sm)',
-                background: 'rgba(255, 255, 255, 0.02)',
+                background: 'var(--bg-panel)',
                 border: '1px solid var(--border-subtle)'
               }}>
                 {segments.map((seg) => {
@@ -451,15 +452,15 @@ export const HorizontalTimeline = () => {
                         background: isSelected 
                           ? 'var(--accent-primary)' 
                           : isActive 
-                          ? 'rgba(0, 113, 227, 0.6)' 
-                          : 'rgba(0, 113, 227, 0.38)',
+                          ? 'var(--accent-primary)' 
+                          : 'var(--accent-blue-subtle)',
                         border: isSelected 
-                          ? '1.5px solid #FFFFFF' 
+                          ? '1.5px solid var(--text-primary)' 
                           : isActive 
-                          ? '1px solid rgba(255, 255, 255, 0.5)' 
-                          : '1px solid rgba(0, 113, 227, 0.65)',
-                        color: '#FFFFFF',
-                        boxShadow: isSelected ? '0 2px 8px rgba(0,0,0,0.6)' : 'none',
+                          ? '1px solid var(--accent-primary)' 
+                          : '1px solid var(--border-hover)',
+                        color: isSelected || isActive ? '#FFFFFF' : 'var(--text-primary)',
+                        boxShadow: isSelected ? '0 2px 8px rgba(0,0,0,0.25)' : 'none',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
@@ -556,7 +557,7 @@ export const HorizontalTimeline = () => {
                 top: 0,
                 bottom: 0,
                 width: '1.5px',
-                background: 'var(--accent-bright-blue)',
+                background: 'var(--accent-primary)',
                 zIndex: 30,
                 cursor: 'ew-resize',
                 transform: 'translateX(-50%)',
@@ -575,14 +576,14 @@ export const HorizontalTimeline = () => {
                 alignItems: 'center'
               }}>
                 <div style={{
-                  background: 'var(--accent-bright-blue)',
+                  background: 'var(--accent-primary)',
                   color: '#FFFFFF',
                   fontSize: '9px',
                   fontWeight: '700',
                   fontFamily: 'SF Mono, monospace',
                   padding: '1px 4px',
                   borderRadius: '3px',
-                  boxShadow: '0 2px 6px rgba(0,0,0,0.6)',
+                  boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
                   whiteSpace: 'nowrap',
                   userSelect: 'none'
                 }}>
@@ -591,7 +592,7 @@ export const HorizontalTimeline = () => {
                 <div style={{
                   width: '8px',
                   height: '6px',
-                  background: 'var(--accent-bright-blue)',
+                  background: 'var(--accent-primary)',
                   clipPath: 'polygon(0% 0%, 100% 0%, 50% 100%)'
                 }} />
               </div>

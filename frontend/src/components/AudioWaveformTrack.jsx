@@ -18,7 +18,8 @@ export const AudioWaveformTrack = ({
     videoFilename,
     videoFps,
     timelineSnapEnabled,
-    segments
+    segments,
+    theme
   } = useEditorStore();
 
   const trackWidth = Math.max(10, totalDuration * pps);
@@ -51,12 +52,20 @@ export const AudioWaveformTrack = ({
     const centerY = height / 2;
     const playheadPx = currentTime * pps;
 
+    // Read theme styling from computed style
+    const computed = window.getComputedStyle(canvas);
+    const themeBg = computed.getPropertyValue('--bg-surface').trim() || (theme === 'light' ? '#F8F8FA' : '#1c1c1e');
+    const playedColor = computed.getPropertyValue('--accent-primary').trim() || (theme === 'light' ? '#0F172A' : '#E2E8F0');
+    const unplayedColor = theme === 'light' ? 'rgba(0, 0, 0, 0.22)' : 'rgba(255, 255, 255, 0.32)';
+    const placeholderColor = theme === 'light' ? 'rgba(0, 0, 0, 0.10)' : 'rgba(255, 255, 255, 0.12)';
+    const centerLineColor = theme === 'light' ? 'rgba(0, 0, 0, 0.08)' : 'rgba(255, 255, 255, 0.06)';
+
     // Background track fill
-    ctx.fillStyle = 'rgba(28, 28, 30, 0.6)';
+    ctx.fillStyle = themeBg;
     ctx.fillRect(0, 0, width, height);
 
     // Subtle Center Reference Line
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+    ctx.strokeStyle = centerLineColor;
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(0, centerY);
@@ -65,7 +74,7 @@ export const AudioWaveformTrack = ({
 
     if (!audioPeaks || audioPeaks.length === 0) {
       // Empty or loading state placeholder bars
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+      ctx.fillStyle = placeholderColor;
       for (let x = 0; x < width; x += 4) {
         const h = 4 + Math.sin(x * 0.05) * 3;
         ctx.fillRect(x, centerY - h / 2, 2, h);
@@ -94,9 +103,9 @@ export const AudioWaveformTrack = ({
         const isPlayed = x <= playheadPx;
 
         if (isPlayed) {
-          ctx.fillStyle = '#2997ff'; // Apple Bright Blue for played portion
+          ctx.fillStyle = playedColor;
         } else {
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.32)'; // Clean subtle white for unplayed
+          ctx.fillStyle = unplayedColor;
         }
 
         // Draw rounded/clean vertical bar
@@ -105,7 +114,7 @@ export const AudioWaveformTrack = ({
     }
 
     ctx.restore();
-  }, [trackWidth, trackHeight, currentTime, pps, totalDuration, audioPeaks]);
+  }, [trackWidth, trackHeight, currentTime, pps, totalDuration, audioPeaks, theme]);
 
   useEffect(() => {
     drawWaveform();
@@ -152,7 +161,7 @@ export const AudioWaveformTrack = ({
         overflow: 'hidden',
         border: '1px solid var(--border-subtle)',
         width: `${trackWidth}px`,
-        backgroundColor: '#161618'
+        backgroundColor: 'var(--bg-surface)'
       }}
       title="Audio Waveform Track (Click/Drag to scrub)"
     >

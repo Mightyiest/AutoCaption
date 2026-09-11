@@ -45,7 +45,7 @@
   width: 36px;
   height: 3px;
   border-radius: var(--radius-pill);
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--border-strong);
   transition: background var(--transition-fast), width var(--transition-fast);
 }
 

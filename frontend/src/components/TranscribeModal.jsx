@@ -255,18 +255,18 @@ export const TranscribeModal = () => {
               >
                 {modelsData?.models && modelsData.models.length > 0 ? (
                   modelsData.models.map((m) => (
-                    <option key={m.id} value={m.id} style={{ background: '#1c1c1e' }}>
+                    <option key={m.id} value={m.id} style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>
                       {m.name} {m.is_downloaded ? '✓' : `[${m.size_label}]`}
                     </option>
                   ))
                 ) : (
                   <>
-                    <option value="base" style={{ background: '#1c1c1e' }}>Base (Default)</option>
-                    <option value="tiny" style={{ background: '#1c1c1e' }}>Tiny (Fast)</option>
-                    <option value="small" style={{ background: '#1c1c1e' }}>Small (High Accuracy)</option>
-                    <option value="medium" style={{ background: '#1c1c1e' }}>Medium (Studio)</option>
-                    <option value="large-v3-turbo" style={{ background: '#1c1c1e' }}>Large v3 Turbo</option>
-                    <option value="large-v3" style={{ background: '#1c1c1e' }}>Large v3</option>
+                    <option value="base" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>Base (Default)</option>
+                    <option value="tiny" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>Tiny (Fast)</option>
+                    <option value="small" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>Small (High Accuracy)</option>
+                    <option value="medium" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>Medium (Studio)</option>
+                    <option value="large-v3-turbo" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>Large v3 Turbo</option>
+                    <option value="large-v3" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>Large v3</option>
                   </>
                 )}
               </select>
@@ -294,14 +294,14 @@ export const TranscribeModal = () => {
                   outline: 'none'
                 }}
               >
-                <option value="auto" style={{ background: '#1c1c1e' }}>Auto-Detect</option>
-                <option value="en" style={{ background: '#1c1c1e' }}>English</option>
-                <option value="es" style={{ background: '#1c1c1e' }}>Spanish</option>
-                <option value="fr" style={{ background: '#1c1c1e' }}>French</option>
-                <option value="de" style={{ background: '#1c1c1e' }}>German</option>
-                <option value="ja" style={{ background: '#1c1c1e' }}>Japanese</option>
-                <option value="pt" style={{ background: '#1c1c1e' }}>Portuguese</option>
-                <option value="zh" style={{ background: '#1c1c1e' }}>Chinese</option>
+                <option value="auto" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>Auto-Detect</option>
+                <option value="en" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>English</option>
+                <option value="es" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>Spanish</option>
+                <option value="fr" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>French</option>
+                <option value="de" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>German</option>
+                <option value="ja" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>Japanese</option>
+                <option value="pt" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>Portuguese</option>
+                <option value="zh" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>Chinese</option>
               </select>
             </div>
           </div>
@@ -431,7 +431,7 @@ export const TranscribeModal = () => {
           alignItems: 'center',
           justifyContent: 'flex-end',
           gap: '8px',
-          background: 'rgba(0, 0, 0, 0.2)'
+          background: 'var(--bg-surface)'
         }}>
           <button
             onClick={() => setTranscribeModalOpen(false)}

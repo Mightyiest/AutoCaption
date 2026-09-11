@@ -318,7 +318,7 @@ export const ExportModal = () => {
                       borderRadius: 'var(--radius-md)',
                       cursor: isExporting ? 'not-allowed' : 'pointer',
                       border: isSelected ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
-                      background: isSelected ? 'rgba(0, 113, 227, 0.14)' : 'var(--bg-surface)',
+                      background: isSelected ? 'var(--accent-blue-subtle)' : 'var(--bg-surface)',
                       display: 'flex',
                       flexDirection: 'column',
                       alignItems: 'center',
@@ -361,9 +361,9 @@ export const ExportModal = () => {
                   outline: 'none'
                 }}
               >
-                <option value="high" style={{ background: '#1c1c1e' }}>High (Recommended)</option>
-                <option value="very_high" style={{ background: '#1c1c1e' }}>Very High (Crisp / 4K)</option>
-                <option value="medium" style={{ background: '#1c1c1e' }}>Medium (Compact)</option>
+                <option value="high" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>High (Recommended)</option>
+                <option value="very_high" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>Very High (Crisp / 4K)</option>
+                <option value="medium" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>Medium (Compact)</option>
               </select>
             </div>
 
@@ -410,7 +410,7 @@ export const ExportModal = () => {
             </button>
 
             {showAdvanced && (
-              <div style={{ padding: '10px', background: 'rgba(0, 0, 0, 0.2)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ padding: '10px', background: 'var(--bg-surface)', borderTop: '1px solid var(--border-subtle)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
                   <button
                     type="button"
@@ -419,7 +419,7 @@ export const ExportModal = () => {
                     style={{
                       padding: '6px',
                       fontSize: '10px',
-                      background: exportMode === 'client_canvas' ? 'rgba(0, 113, 227, 0.18)' : 'var(--bg-surface)',
+                      background: exportMode === 'client_canvas' ? 'var(--accent-blue-subtle)' : 'var(--bg-surface)',
                       border: exportMode === 'client_canvas' ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)'
                     }}
                   >
@@ -433,7 +433,7 @@ export const ExportModal = () => {
                     style={{
                       padding: '6px',
                       fontSize: '10px',
-                      background: exportMode === 'backend_ffmpeg' ? 'rgba(0, 113, 227, 0.18)' : 'var(--bg-surface)',
+                      background: exportMode === 'backend_ffmpeg' ? 'var(--accent-blue-subtle)' : 'var(--bg-surface)',
                       border: exportMode === 'backend_ffmpeg' ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)'
                     }}
                   >
@@ -545,7 +545,7 @@ export const ExportModal = () => {
           alignItems: 'center',
           justifyContent: 'flex-end',
           gap: '6px',
-          background: 'rgba(255, 255, 255, 0.02)'
+          background: 'var(--bg-surface)'
         }}>
           {isExporting ? (
             <button

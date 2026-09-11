@@ -19,7 +19,12 @@ import {
   PanelLeft,
   PanelRight,
   Columns,
-  Mic
+  Mic,
+  Sun,
+  Moon,
+  Folder,
+  Link2,
+  FolderOpen
 } from 'lucide-react';
 import { useEditorStore } from '../store/useEditorStore';
 
@@ -43,7 +48,7 @@ export const Navbar = () => {
     setCanvasLayout,
     showSafeZones,
     toggleSafeZones,
-    setUploadModalOpen,
+    triggerVideoPicker,
     setTranscribeModalOpen,
     setExportModalOpen,
     setSettingsModalOpen,
@@ -61,7 +66,17 @@ export const Navbar = () => {
     modelsData,
     fetchModelsStatus,
     ensureModelDownloaded,
-    removePunctuation
+    removePunctuation,
+    theme,
+    toggleTheme,
+    // Projects & Media Linking
+    setCurrentView,
+    activeProjectTitle,
+    renameCurrentProject,
+    saveStatus,
+    isMediaLinked,
+    linkedSourcePath,
+    mediaOffline
   } = useEditorStore();
 
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
@@ -84,10 +99,38 @@ export const Navbar = () => {
   const handleQuickTranscribe = () => {
     if (isTranscribing) return;
     if (!videoFile && !videoFilename) {
-      setUploadModalOpen(true);
+      triggerVideoPicker();
       return;
     }
     setTranscribeModalOpen(true);
+  };
+
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [tempTitle, setTempTitle] = useState('');
+  const titleInputRef = useRef(null);
+
+  const startRename = () => {
+    setTempTitle(activeProjectTitle || 'Untitled Project');
+    setIsEditingTitle(true);
+    setTimeout(() => {
+      titleInputRef.current?.focus();
+      titleInputRef.current?.select();
+    }, 50);
+  };
+
+  const handleTitleCommit = () => {
+    setIsEditingTitle(false);
+    if (tempTitle && tempTitle.trim() && tempTitle.trim() !== activeProjectTitle) {
+      renameCurrentProject(tempTitle.trim());
+    }
+  };
+
+  const handleTitleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      handleTitleCommit();
+    } else if (e.key === 'Escape') {
+      setIsEditingTitle(false);
+    }
   };
 
   const currentModelInfo = modelsData?.models?.find((m) => m.id === selectedModel) || {
@@ -104,49 +147,115 @@ export const Navbar = () => {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
-      backgroundColor: 'rgba(22, 22, 24, 0.85)',
+      backgroundColor: 'var(--glass-bg)',
       backdropFilter: 'saturate(180%) blur(20px)',
-      WebkitBackdropFilter: 'saturate(180%) blur(20px)',
       borderBottom: '1px solid var(--border-subtle)',
-      zIndex: 50,
-      userSelect: 'none'
+      userSelect: 'none',
+      zIndex: 50
     }}>
-      {/* Brand Logo & Title */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-        <div style={{ 
-          width: '28px', 
-          height: '28px', 
-          borderRadius: '7px', 
-          background: 'var(--accent-primary)',
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'center',
-          boxShadow: '0 1px 4px rgba(0, 113, 227, 0.35)'
-        }}>
-          <Film size={15} color="#FFFFFF" strokeWidth={2.2} />
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span style={{ 
-            fontSize: '14px', 
-            fontWeight: '600', 
-            letterSpacing: '-0.02em',
-            color: 'var(--text-primary)'
-          }}>
-            AutoCaption
+      {/* Left section: App Brand & Project Title */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <button
+          onClick={() => setCurrentView('hub')}
+          className="btn-secondary"
+          style={{
+            padding: '5px 11px',
+            borderRadius: 'var(--radius-pill)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            cursor: 'pointer'
+          }}
+          title="Return to Projects Hub"
+        >
+          <Folder size={13} />
+          <span style={{ fontSize: '11.5px', fontWeight: 600 }}>Projects</span>
+        </button>
+
+        <div style={{ width: '1px', height: '18px', background: 'var(--border-subtle)', margin: '0 2px' }} />
+
+        {/* Project Title with Apple inline click-to-rename */}
+        {isEditingTitle ? (
+          <input
+            ref={titleInputRef}
+            type="text"
+            value={tempTitle}
+            onChange={(e) => setTempTitle(e.target.value)}
+            onBlur={handleTitleCommit}
+            onKeyDown={handleTitleKeyDown}
+            style={{
+              fontSize: '13px',
+              fontWeight: '600',
+              letterSpacing: '-0.01em',
+              color: 'var(--text-primary)',
+              background: 'var(--bg-surface)',
+              border: '1.5px solid var(--btn-primary-bg)',
+              borderRadius: 'var(--radius-sm)',
+              padding: '2px 8px',
+              outline: 'none',
+              width: '180px',
+              height: '24px'
+            }}
+          />
+        ) : (
+          <div 
+            onClick={startRename}
+            style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '6px',
+              cursor: 'pointer',
+              padding: '4px 8px',
+              borderRadius: 'var(--radius-sm)',
+              transition: 'background var(--transition-fast)'
+            }}
+            title="Click to rename project"
+          >
+            <span style={{ 
+              fontSize: '13px', 
+              fontWeight: '600', 
+              letterSpacing: '-0.01em',
+              color: 'var(--text-primary)',
+              maxWidth: '180px',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis'
+            }}>
+              {activeProjectTitle || 'Untitled Project'}
+            </span>
+            <span style={{
+              fontSize: '9.5px',
+              fontWeight: '600',
+              color: saveStatus === 'saving' ? 'var(--system-warning)' : 'var(--system-success)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '3px'
+            }}>
+              ● {saveStatus === 'saving' ? 'Saving...' : 'Saved'}
+            </span>
+          </div>
+        )}
+
+        {isMediaLinked && (
+          <span 
+            style={{ 
+              fontSize: '10px', 
+              fontWeight: '600', 
+              padding: '2px 7px', 
+              borderRadius: 'var(--radius-pill)', 
+              background: 'var(--bg-surface)', 
+              border: '1px solid var(--border-subtle)',
+              color: mediaOffline ? 'var(--system-error)' : 'var(--text-secondary)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}
+            title={`Video File: ${linkedSourcePath || ''}`}
+          >
+            <Link2 size={11} />
+            <span>{mediaOffline ? 'Offline' : 'Linked Video'}</span>
           </span>
-          <span style={{ 
-            fontSize: '9px', 
-            fontWeight: '600', 
-            letterSpacing: '0.04em',
-            padding: '1px 5px', 
-            borderRadius: '4px', 
-            background: 'rgba(255, 255, 255, 0.08)', 
-            color: 'var(--text-secondary)',
-            border: '1px solid var(--border-subtle)'
-          }}>
-            PRO
-          </span>
-        </div>
+        )}
       </div>
 
       {/* Center Controls: Segmented Aspect Ratio, Safe Zones, Model Selector */}
@@ -213,12 +322,13 @@ export const Navbar = () => {
           className="btn-secondary"
           style={{ 
             padding: '5px 9px',
-            color: showSafeZones ? 'var(--text-primary)' : 'var(--text-tertiary)',
-            backgroundColor: showSafeZones ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.04)'
+            color: showSafeZones ? 'var(--text-primary)' : 'var(--text-secondary)',
+            borderColor: showSafeZones ? 'var(--accent-primary)' : 'var(--border-subtle)',
+            backgroundColor: showSafeZones ? 'var(--bg-active)' : 'var(--btn-secondary-bg)'
           }}
           title="Toggle Social UI Safe Zones Overlay"
         >
-          {showSafeZones ? <Eye size={12} color="var(--accent-bright-blue)" /> : <EyeOff size={12} />}
+          {showSafeZones ? <Eye size={12} color="var(--accent-primary)" /> : <EyeOff size={12} />}
           <span style={{ fontSize: '11px' }}>Safe Zones</span>
         </button>
 
@@ -232,12 +342,12 @@ export const Navbar = () => {
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
-              backgroundColor: modelDropdownOpen ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)',
-              borderColor: modelDropdownOpen ? 'var(--accent-primary)' : 'var(--border-subtle)'
+              backgroundColor: modelDropdownOpen ? 'var(--bg-surface-hover)' : 'var(--btn-secondary-bg)',
+              borderColor: modelDropdownOpen ? 'var(--border-hover)' : 'var(--border-subtle)'
             }}
             title="Select Whisper AI Speech Model"
           >
-            <Cpu size={12} color="var(--accent-bright-blue)" />
+            <Cpu size={12} color="var(--text-secondary)" />
             <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
               Model: <strong style={{ color: 'var(--text-primary)' }}>{currentModelInfo.name}</strong>
             </span>
@@ -324,8 +434,8 @@ export const Navbar = () => {
                         padding: '7px 8px',
                         borderRadius: 'var(--radius-md)',
                         border: '1px solid transparent',
-                        background: isSelected ? 'rgba(0, 113, 227, 0.18)' : 'transparent',
-                        borderColor: isSelected ? 'rgba(0, 113, 227, 0.4)' : 'transparent',
+                        background: isSelected ? 'var(--accent-blue-subtle)' : 'transparent',
+                        borderColor: isSelected ? 'var(--accent-primary)' : 'transparent',
                         cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
@@ -349,7 +459,7 @@ export const Navbar = () => {
                               fontWeight: '600', 
                               padding: '1px 4px', 
                               borderRadius: '3px', 
-                              background: 'rgba(255, 255, 255, 0.08)', 
+                              background: 'var(--border-subtle)', 
                               color: 'var(--text-secondary)' 
                             }}>
                               DEFAULT
@@ -389,9 +499,9 @@ export const Navbar = () => {
           style={{
             padding: '5px 10px',
             fontSize: '11px',
-            backgroundColor: 'rgba(0, 113, 227, 0.12)',
-            borderColor: 'rgba(0, 113, 227, 0.35)',
-            color: 'var(--accent-bright-blue)'
+            borderColor: 'var(--border-subtle)',
+            color: 'var(--text-primary)',
+            backgroundColor: 'var(--btn-secondary-bg)'
           }}
           title="Run speech-to-text with selected AI model"
         >
@@ -402,22 +512,41 @@ export const Navbar = () => {
             </>
           ) : (
             <>
-              <Sparkles size={12} />
+              <Sparkles size={12} color="var(--accent-primary)" />
               <span>Auto-Caption</span>
             </>
           )}
         </button>
       </div>
 
-      {/* Right Action CTAs: Help, Settings, Demo, Upload, Export */}
+      {/* Right Action CTAs: Theme Toggle, Help, Settings, Demo, Upload, Export */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <button
+          onClick={toggleTheme}
+          className="btn-secondary"
+          title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}
+          style={{ padding: '5px 8px', fontSize: '11px' }}
+        >
+          {theme === 'dark' ? (
+            <>
+              <Sun size={12} color="var(--text-primary)" />
+              <span>Light</span>
+            </>
+          ) : (
+            <>
+              <Moon size={12} color="var(--text-secondary)" />
+              <span>Dark</span>
+            </>
+          )}
+        </button>
+
         <button
           onClick={() => setHelpModalOpen(true)}
           className="btn-secondary"
           title="Studio Guide & Keyboard Shortcuts (?)"
           style={{ padding: '5px 8px', fontSize: '11px' }}
         >
-          <HelpCircle size={12} color="var(--accent-bright-blue)" />
+          <HelpCircle size={12} color="var(--text-secondary)" />
           <span>Help</span>
         </button>
 
@@ -447,20 +576,18 @@ export const Navbar = () => {
           title="Extract & Isolate Vocals from Background Music"
           style={{
             padding: '5px 10px',
-            fontSize: '11px',
-            background: 'linear-gradient(135deg, rgba(255, 45, 85, 0.12), rgba(88, 86, 214, 0.12))',
-            borderColor: 'rgba(255, 45, 85, 0.35)',
-            color: '#FF2D55'
+            fontSize: '11px'
           }}
         >
-          <Mic size={12} color="#FF2D55" />
+          <Mic size={12} color="#E11D48" />
           <span>Vocal Extractor</span>
         </button>
 
         <button
-          onClick={() => setUploadModalOpen(true)}
+          onClick={triggerVideoPicker}
           className="btn-secondary"
           style={{ padding: '5px 10px', fontSize: '11px' }}
+          title="Import or replace video footage"
         >
           <Upload size={12} />
           <span>Upload</span>

@@ -8,7 +8,10 @@ import {
   Maximize, 
   Music,
   RotateCcw,
-  Hand
+  Hand,
+  Link2,
+  AlertTriangle,
+  RefreshCw
 } from 'lucide-react';
 import { useEditorStore } from '../store/useEditorStore';
 import { renderPreviewOverlay } from '../engine/captionCanvasRenderer';
@@ -48,11 +51,23 @@ export const VideoPlayer = () => {
     setIsMuted,
     setPlaybackRate,
     updateStyle,
-    setUploadModalOpen,
+    triggerVideoPicker,
+    handleFileSelected,
     loadDemoData,
     setMediaElement,
-    togglePlay
+    togglePlay,
+    // Premiere Pro Zero-Copy Media Linking state & actions
+    isMediaLinked,
+    linkedSourcePath,
+    mediaOffline,
+    activeProjectId,
+    linkLocalVideoFile,
+    relinkProjectMedia
   } = useEditorStore();
+
+  // Drag and Drop Import State
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const dragCounterRef = useRef(0);
 
   // Display Viewport & Zoom State
   const [viewportDims, setViewportDims] = useState({ width: 380, height: 560 });
@@ -205,12 +220,13 @@ export const VideoPlayer = () => {
       renderPreviewOverlay({
         canvas: canvasRef.current,
         scene,
-        currentTime: time
+        currentTime: time,
+        isPlaying
       });
     } catch (err) {
       console.warn('Canvas render error:', err);
     }
-  }, [style, segments, canonical.exportW, canonical.exportH, videoFile, videoUrl, duration, videoFps]);
+  }, [style, segments, canonical.exportW, canonical.exportH, videoFile, videoUrl, duration, videoFps, isPlaying]);
 
   // Re-render canvas on state / style changes
   useEffect(() => {
@@ -425,6 +441,46 @@ export const VideoPlayer = () => {
     }
   };
 
+  // Drag-and-drop video import onto stage
+  const handleDragEnter = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current += 1;
+    if (e.dataTransfer?.items && e.dataTransfer.items.length > 0) {
+      setIsDraggingOver(true);
+    }
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
+      setIsDraggingOver(false);
+    }
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDraggingOver(false);
+
+    if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+      const droppedFile = e.dataTransfer.files[0];
+      handleFileSelected(droppedFile);
+    }
+  };
+
   const { activeSegment } = getActiveSegmentAndWord(segments, currentTime);
   const hasActiveSegment = Boolean(activeSegment);
 
@@ -444,7 +500,7 @@ export const VideoPlayer = () => {
         justifyContent: 'center',
         overflow: 'hidden',
         cursor: spacePressed ? 'grab' : isPanning ? 'grabbing' : 'default',
-        backgroundColor: '#0a0a0c',
+        backgroundColor: 'var(--video-stage-bg)',
         userSelect: 'none'
       }}
     >
@@ -462,10 +518,10 @@ export const VideoPlayer = () => {
       }}>
         {/* Aspect Ratio Badge */}
         <div style={{
-          background: 'rgba(18, 18, 20, 0.88)',
+          background: 'var(--glass-bg)',
           backdropFilter: 'blur(16px)',
           WebkitBackdropFilter: 'blur(16px)',
-          border: '1px solid rgba(255, 255, 255, 0.14)',
+          border: '1px solid var(--border-subtle)',
           borderRadius: 'var(--radius-pill)',
           padding: '3px 9px',
           fontSize: '11px',
@@ -474,7 +530,7 @@ export const VideoPlayer = () => {
           display: 'flex',
           alignItems: 'center',
           gap: '4px',
-          boxShadow: '0 4px 16px rgba(0,0,0,0.4)'
+          boxShadow: 'var(--shadow-subtle)'
         }}>
           <span>{aspectRatio}</span>
           <span style={{ opacity: 0.4 }}>•</span>
@@ -490,13 +546,13 @@ export const VideoPlayer = () => {
           style={{
             padding: '4px 8px',
             borderRadius: 'var(--radius-pill)',
-            background: showSafeZones ? 'rgba(0, 113, 227, 0.25)' : 'rgba(18, 18, 20, 0.88)',
+            background: showSafeZones ? 'var(--accent-blue-subtle)' : 'var(--glass-bg)',
             backdropFilter: 'blur(16px)',
             WebkitBackdropFilter: 'blur(16px)',
-            border: showSafeZones ? '1px solid rgba(0, 113, 227, 0.6)' : '1px solid rgba(255, 255, 255, 0.14)',
-            color: showSafeZones ? 'var(--accent-bright-blue)' : 'var(--text-tertiary)',
+            border: showSafeZones ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+            color: showSafeZones ? 'var(--accent-primary)' : 'var(--text-tertiary)',
             fontSize: '11px',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.4)'
+            boxShadow: 'var(--shadow-subtle)'
           }}
           title={showSafeZones ? 'Hide Safe Zone Overlay' : 'Show Safe Zone Overlay'}
         >
@@ -512,16 +568,16 @@ export const VideoPlayer = () => {
             style={{
               padding: '3px 8px',
               borderRadius: 'var(--radius-pill)',
-              background: 'rgba(18, 18, 20, 0.88)',
+              background: 'var(--glass-bg)',
               backdropFilter: 'blur(16px)',
               WebkitBackdropFilter: 'blur(16px)',
-              border: '1px solid rgba(255, 255, 255, 0.14)',
+              border: '1px solid var(--border-subtle)',
               fontSize: '11px',
-              color: 'var(--accent-bright-blue)',
+              color: 'var(--accent-primary)',
               display: 'flex',
               alignItems: 'center',
               gap: '4px',
-              boxShadow: '0 4px 16px rgba(0,0,0,0.4)'
+              boxShadow: 'var(--shadow-subtle)'
             }}
             title="Reset Zoom to Fit (Ctrl + 0)"
           >
@@ -533,19 +589,19 @@ export const VideoPlayer = () => {
         {/* Space Pan Help Badge */}
         {previewZoom > 1.05 && (
           <div style={{
-            background: spacePressed ? 'var(--accent-primary)' : 'rgba(18, 18, 20, 0.88)',
+            background: spacePressed ? 'var(--accent-primary)' : 'var(--glass-bg)',
             backdropFilter: 'blur(16px)',
             WebkitBackdropFilter: 'blur(16px)',
             color: spacePressed ? '#FFFFFF' : 'var(--text-tertiary)',
             borderRadius: 'var(--radius-pill)',
             padding: '3px 8px',
-            border: '1px solid rgba(255, 255, 255, 0.14)',
+            border: '1px solid var(--border-subtle)',
             fontSize: '10px',
             fontWeight: '500',
             display: 'flex',
             alignItems: 'center',
             gap: '4px',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.4)'
+            boxShadow: 'var(--shadow-subtle)'
           }}>
             <Hand size={11} />
             <span>Space + Drag</span>
@@ -559,12 +615,12 @@ export const VideoPlayer = () => {
           style={{
             padding: '4px 6px',
             borderRadius: 'var(--radius-pill)',
-            background: 'rgba(18, 18, 20, 0.88)',
+            background: 'var(--glass-bg)',
             backdropFilter: 'blur(16px)',
             WebkitBackdropFilter: 'blur(16px)',
-            border: '1px solid rgba(255, 255, 255, 0.14)',
+            border: '1px solid var(--border-subtle)',
             color: 'var(--text-secondary)',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.4)'
+            boxShadow: 'var(--shadow-subtle)'
           }}
           title="Toggle Fullscreen"
         >
@@ -576,6 +632,10 @@ export const VideoPlayer = () => {
       <div
         ref={stageViewportRef}
         onMouseDown={handleStageMouseDown}
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
         style={{
           width: '100%',
           height: '100%',
@@ -593,16 +653,62 @@ export const VideoPlayer = () => {
             width: `${transform.displayW}px`,
             height: `${transform.displayH}px`,
             aspectRatio: canonical.aspect,
-            backgroundColor: isAudioOnly ? '#FFFFFF' : '#000000',
-            borderRadius: '12px',
+            backgroundColor: isAudioOnly ? '#FFFFFF' : (videoUrl ? '#000000' : 'var(--bg-panel)'),
+            borderRadius: '16px',
             overflow: 'hidden',
+            border: videoUrl ? 'none' : '1px solid var(--border-subtle)',
             boxShadow: isAudioOnly 
-              ? '0 12px 40px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.15)'
-              : '0 12px 40px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.08)',
+              ? 'var(--shadow-card)'
+              : videoUrl 
+                ? '0 12px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.08)' 
+                : 'var(--shadow-card)',
             transform: `translate(${transform.pan.x}px, ${transform.pan.y}px)`,
             flexShrink: 0
           }}
         >
+          {/* Animated Glowing Dropzone Overlay */}
+          {isDraggingOver && (
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 60,
+              background: 'rgba(0, 113, 227, 0.28)',
+              backdropFilter: 'blur(14px)',
+              WebkitBackdropFilter: 'blur(14px)',
+              border: '2px dashed #0071E3',
+              boxShadow: 'inset 0 0 45px rgba(0, 113, 227, 0.5), 0 0 35px rgba(41, 151, 255, 0.6)',
+              borderRadius: '12px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '12px',
+              pointerEvents: 'none'
+            }}>
+              <div style={{
+                width: '64px',
+                height: '64px',
+                borderRadius: '50%',
+                background: 'rgba(0, 113, 227, 0.35)',
+                border: '1px solid rgba(255, 255, 255, 0.4)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 4px 20px rgba(0, 113, 227, 0.4)'
+              }}>
+                <UploadCloud size={32} color="#FFFFFF" />
+              </div>
+              <div style={{ textAlign: 'center', padding: '0 16px' }}>
+                <p style={{ fontSize: '15px', fontWeight: '700', color: '#FFFFFF', margin: 0, textShadow: '0 2px 10px rgba(0,0,0,0.7)' }}>
+                  Drop Video to Import
+                </p>
+                <p style={{ fontSize: '12px', color: 'rgba(255, 255, 255, 0.85)', margin: '4px 0 0 0', textShadow: '0 1px 4px rgba(0,0,0,0.7)' }}>
+                  Instantly loads into player & timeline
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* HTML5 Media Player Layer (Audio or Video) */}
           {videoUrl ? (
             <>
@@ -701,29 +807,39 @@ export const VideoPlayer = () => {
                 width: '48px',
                 height: '48px',
                 borderRadius: 'var(--radius-lg)',
-                background: 'rgba(0, 113, 227, 0.12)',
-                border: '1px solid rgba(0, 113, 227, 0.25)',
+                background: 'var(--bg-active)',
+                border: '1px solid var(--border-subtle)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center'
               }}>
-                <Film size={24} color="var(--accent-bright-blue)" />
+                <Film size={24} color="var(--text-primary)" />
               </div>
 
               <div>
                 <p style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-primary)', margin: 0 }}>
                   No Video Loaded
                 </p>
-                <p style={{ fontSize: '11px', marginTop: '4px', color: 'var(--text-tertiary)', maxWidth: '240px', lineHeight: '1.4' }}>
-                  Upload your video footage or load the sample demo audio to get started.
+                <p style={{ fontSize: '11px', marginTop: '4px', color: 'var(--text-tertiary)', maxWidth: '280px', lineHeight: '1.4' }}>
+                  Import video (.mp4, .avi, .mov, .mkv) or drop footage to begin.
                 </p>
               </div>
 
-              <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '4px', justifyContent: 'center' }}>
                 <button
-                  onClick={() => setUploadModalOpen(true)}
+                  onClick={() => linkLocalVideoFile()}
                   className="btn-primary"
-                  style={{ fontSize: '11px', padding: '6px 12px' }}
+                  style={{ fontSize: '11px', padding: '6px 12px', gap: '5px' }}
+                  title="Import video file directly"
+                >
+                  <FolderOpen size={13} />
+                  <span>Import Video (.mp4, .avi, .mov)</span>
+                </button>
+
+                <button
+                  onClick={triggerVideoPicker}
+                  className="btn-secondary"
+                  style={{ fontSize: '11px', padding: '6px 12px', gap: '5px' }}
                 >
                   <UploadCloud size={13} />
                   <span>Upload Video</span>
@@ -732,12 +848,93 @@ export const VideoPlayer = () => {
                 <button
                   onClick={() => loadDemoData()}
                   className="btn-secondary"
-                  style={{ fontSize: '11px', padding: '6px 12px' }}
+                  style={{ fontSize: '11px', padding: '6px 12px', gap: '5px' }}
                 >
-                  <Sparkles size={13} color="var(--accent-bright-blue)" />
+                  <Sparkles size={13} />
                   <span>Load Demo</span>
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* Premiere Pro-style Media Offline Warning Overlay */}
+          {isMediaLinked && mediaOffline && (
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              background: 'rgba(15, 23, 42, 0.94)',
+              backdropFilter: 'blur(8px)',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '24px',
+              textAlign: 'center',
+              gap: '12px',
+              zIndex: 25,
+              color: '#F8FAFC'
+            }}>
+              <div style={{
+                width: '50px',
+                height: '50px',
+                borderRadius: 'var(--radius-lg)',
+                background: 'rgba(239, 68, 68, 0.15)',
+                border: '1px solid rgba(239, 68, 68, 0.35)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#EF4444'
+              }}>
+                <AlertTriangle size={26} />
+              </div>
+
+              <div>
+                <span style={{
+                  fontSize: '10px',
+                  fontWeight: '700',
+                  letterSpacing: '0.08em',
+                  textTransform: 'uppercase',
+                  color: '#EF4444',
+                  display: 'block',
+                  marginBottom: '4px'
+                }}>
+                  Zero-Copy Media Offline
+                </span>
+                <h3 style={{ fontSize: '15px', fontWeight: '700', margin: 0, color: '#FFFFFF' }}>
+                  Source Video File Not Found
+                </h3>
+                <p style={{
+                  fontSize: '11px',
+                  color: '#94A3B8',
+                  marginTop: '6px',
+                  maxWidth: '300px',
+                  lineHeight: '1.4',
+                  wordBreak: 'break-all',
+                  fontFamily: 'monospace',
+                  background: 'rgba(0,0,0,0.35)',
+                  padding: '5px 8px',
+                  borderRadius: '4px',
+                  border: '1px solid rgba(255,255,255,0.06)'
+                }}>
+                  {linkedSourcePath || 'Original file location unavailable'}
+                </p>
+              </div>
+
+              <button
+                onClick={() => relinkProjectMedia(activeProjectId)}
+                className="btn-primary"
+                style={{
+                  marginTop: '6px',
+                  padding: '7px 16px',
+                  fontSize: '11.5px',
+                  background: '#FFFFFF',
+                  color: '#0F172A',
+                  gap: '6px'
+                }}
+              >
+                <RefreshCw size={13} />
+                <span>Locate & Relink Media</span>
+              </button>
             </div>
           )}
 
@@ -766,7 +963,7 @@ export const VideoPlayer = () => {
           )}
 
           {/* Social Safe Zones Overlay (TikTok / Reels / Shorts) */}
-          {showSafeZones && (
+          {showSafeZones && videoUrl && (
             <div style={{
               position: 'absolute',
               inset: 0,

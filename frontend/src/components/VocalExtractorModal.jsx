@@ -31,7 +31,7 @@ export const VocalExtractorModal = () => {
     videoFile,
     videoFilename,
     setVideo,
-    setUploadModalOpen
+    setTranscribeModalOpen
   } = useEditorStore();
 
   const [selectedFile, setSelectedFile] = useState(null);
@@ -256,7 +256,7 @@ export const VocalExtractorModal = () => {
     // Set video/audio source to clean vocals and open transcription modal
     setVideo(selectedFile, vocalUrl, `[Clean Vocals] ${selectedFile?.name || 'vocals.wav'}`, separationResult.duration);
     setVocalExtractorOpen(false);
-    setUploadModalOpen(true);
+    setTranscribeModalOpen(true);
   };
 
   if (!isVocalExtractorOpen) return null;
@@ -657,7 +657,8 @@ export const VocalExtractorModal = () => {
                     alignItems: 'center',
                     gap: '2px',
                     cursor: 'pointer',
-                    background: 'rgba(0, 0, 0, 0.25)',
+                    background: 'var(--bg-canvas)',
+                    border: '1px solid var(--border-subtle)',
                     borderRadius: '4px',
                     padding: '4px 6px',
                     position: 'relative'
@@ -778,7 +779,8 @@ export const VocalExtractorModal = () => {
                     alignItems: 'center',
                     gap: '2px',
                     cursor: 'pointer',
-                    background: 'rgba(0, 0, 0, 0.25)',
+                    background: 'var(--bg-canvas)',
+                    border: '1px solid var(--border-subtle)',
                     borderRadius: '4px',
                     padding: '4px 6px',
                     position: 'relative'
@@ -813,7 +815,7 @@ export const VocalExtractorModal = () => {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          background: 'rgba(255, 255, 255, 0.02)'
+          background: 'var(--bg-surface)'
         }}>
           <div>
             {separationResult && (

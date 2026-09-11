@@ -163,7 +163,7 @@ export const ConsoleDrawer = () => {
         <div style={{
           height: '140px',
           borderTop: '1px solid var(--border-subtle)',
-          backgroundColor: '#0a0a0c',
+          backgroundColor: 'var(--bg-canvas)',
           display: 'flex',
           flexDirection: 'column'
         }}>
@@ -174,7 +174,7 @@ export const ConsoleDrawer = () => {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            background: 'rgba(255, 255, 255, 0.02)',
+            background: 'var(--bg-surface)',
             fontSize: '10px',
             color: 'var(--text-tertiary)'
           }}>

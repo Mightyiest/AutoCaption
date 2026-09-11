@@ -416,7 +416,7 @@ export const KeywordLibraryModal = () => {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          background: 'rgba(0, 0, 0, 0.25)'
+          background: 'var(--bg-surface)'
         }}>
           <span style={{ fontSize: '10.5px', color: 'var(--text-tertiary)' }}>
             Rules are saved automatically in your browser.

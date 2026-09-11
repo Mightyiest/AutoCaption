@@ -5,8 +5,14 @@ import shutil
 import uuid
 import subprocess
 import psutil
+import mimetypes
+import re
+import urllib.parse
+import json
+import datetime
 from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Request
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -24,8 +30,9 @@ UPLOADS_DIR = os.path.join(STORAGE_DIR, "uploads")
 EXPORTS_DIR = os.path.join(STORAGE_DIR, "exports")
 FONTS_DIR = os.path.join(STORAGE_DIR, "fonts")
 DEMO_DIR = os.path.join(STORAGE_DIR, "demo")
+PROJECTS_DIR = os.path.join(STORAGE_DIR, "projects")
 
-for d in [UPLOADS_DIR, EXPORTS_DIR, FONTS_DIR, DEMO_DIR, VOCALS_DIR]:
+for d in [UPLOADS_DIR, EXPORTS_DIR, FONTS_DIR, DEMO_DIR, VOCALS_DIR, PROJECTS_DIR]:
     os.makedirs(d, exist_ok=True)
 
 app = FastAPI(title="AutoCaption Studio API", version="2.0.0")
@@ -66,9 +73,20 @@ class RenderRequest(BaseModel):
     encoder_mode: Optional[str] = "gpu_nvenc"  # "cpu" | "gpu_nvenc"
     engine_type: Optional[str] = "dom"        # "dom" (Ultra 1:1 Fidelity) | "ass" (Fast Burn)
     preview_metrics: Optional[Dict[str, Any]] = None
+    linked_path: Optional[str] = None
 
 class TranscribeSavedRequest(BaseModel):
     video_filename: str
+    model_name: Optional[str] = "base"
+    language: Optional[str] = None
+    max_words_per_segment: Optional[int] = 3
+    remove_punctuation: Optional[bool] = False
+
+class LinkPathRequest(BaseModel):
+    file_path: str
+
+class TranscribeLinkedRequest(BaseModel):
+    file_path: str
     model_name: Optional[str] = "base"
     language: Optional[str] = None
     max_words_per_segment: Optional[int] = 3
@@ -307,6 +325,278 @@ async def upload_for_preview(file: UploadFile = File(...)):
         "original_name": file.filename
     }
 
+# ---------------------------------------------------------------------------
+# Premiere Pro Zero-Copy Media Linking & Streaming Subsystem
+# ---------------------------------------------------------------------------
+
+def probe_media_file(file_path: str) -> dict:
+    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    cmd = [ffmpeg_exe, "-hide_banner", "-i", file_path]
+    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    out = res.stderr
+    dur = 0.0
+    w = 1080
+    h = 1920
+    fps = 30.0
+
+    dur_m = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)", out)
+    if dur_m:
+        h_val, m_val, s_val = dur_m.groups()
+        dur = int(h_val) * 3600 + int(m_val) * 60 + float(s_val)
+
+    res_m = re.search(r"Video:.*?,\s*(\d{3,5})x(\d{3,5})", out)
+    if res_m:
+        w = int(res_m.group(1))
+        h = int(res_m.group(2))
+
+    fps_m = re.search(r"(\d+(?:\.\d+)?)\s*fps", out)
+    if fps_m:
+        fps = float(fps_m.group(1))
+
+    return {"duration": round(dur, 2), "width": w, "height": h, "fps": fps}
+
+@app.post("/api/media/browse-file")
+def browse_file_endpoint():
+    """Launches the native Windows File Picker dialog in an STA process without copying files."""
+    try:
+        ps_cmd = (
+            "Add-Type -AssemblyName System.Windows.Forms; "
+            "$f = New-Object System.Windows.Forms.OpenFileDialog; "
+            "$f.Filter = 'Video Files (*.mp4;*.mov;*.mkv;*.webm;*.avi;*.m4v)|*.mp4;*.mov;*.mkv;*.webm;*.avi;*.m4v|Audio Files (*.mp3;*.wav;*.m4a;*.aac)|*.mp3;*.wav;*.m4a;*.aac|All Files (*.*)|*.*'; "
+            "$f.Title = 'Select Video to Link (AutoCaption Zero-Copy)'; "
+            "$f.RestoreDirectory = $true; "
+            "$f.Multiselect = $false; "
+            "$res = $f.ShowDialog(); "
+            "if ($res -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::WriteLine($f.FileName) }"
+        )
+        ps_run = subprocess.run(
+            ["powershell", "-STA", "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+        selected_file = ps_run.stdout.strip()
+        if not selected_file:
+            return {"cancelled": True}
+
+        norm_path = os.path.normpath(selected_file)
+        if not os.path.isfile(norm_path):
+            return {"cancelled": True}
+
+        file_size_mb = round(os.path.getsize(norm_path) / (1024 * 1024), 2)
+        probe = probe_media_file(norm_path)
+        quoted_path = urllib.parse.quote(norm_path)
+
+        log_msg("MEDIA", f"Linked local file: '{os.path.basename(norm_path)}' ({file_size_mb} MB) [Zero Copy]")
+        return {
+            "cancelled": False,
+            "file_path": norm_path,
+            "filename": os.path.basename(norm_path),
+            "size_mb": file_size_mb,
+            "duration": probe.get("duration", 0),
+            "width": probe.get("width", 1080),
+            "height": probe.get("height", 1920),
+            "fps": probe.get("fps", 30),
+            "stream_url": f"/api/media/stream?path={quoted_path}"
+        }
+    except Exception as e:
+        log_msg("ERROR", f"Native browse file failed: {e}")
+        return {"cancelled": True, "error": str(e)}
+
+@app.post("/api/media/link-path")
+def link_path_endpoint(req: LinkPathRequest):
+    """Directly links a known absolute path on the user's hard drive."""
+    p = os.path.normpath(req.file_path)
+    if not os.path.isfile(p):
+        raise HTTPException(status_code=404, detail="Specified media file does not exist on disk")
+
+    file_size_mb = round(os.path.getsize(p) / (1024 * 1024), 2)
+    probe = probe_media_file(p)
+    quoted_path = urllib.parse.quote(p)
+
+    log_msg("MEDIA", f"Linked media path: '{os.path.basename(p)}' ({file_size_mb} MB)")
+    return {
+        "file_path": p,
+        "filename": os.path.basename(p),
+        "size_mb": file_size_mb,
+        "duration": probe.get("duration", 0),
+        "width": probe.get("width", 1080),
+        "height": probe.get("height", 1920),
+        "fps": probe.get("fps", 30),
+        "stream_url": f"/api/media/stream?path={quoted_path}"
+    }
+
+@app.get("/api/media/stream")
+def stream_media_endpoint(path: str, request: Request):
+    """HTTP 206 Partial Content Range streaming of local video files directly from disk."""
+    norm_path = os.path.normpath(urllib.parse.unquote(path))
+    if not os.path.isfile(norm_path):
+        raise HTTPException(status_code=404, detail="Media file not found on disk")
+
+    file_size = os.path.getsize(norm_path)
+    mime_type, _ = mimetypes.guess_type(norm_path)
+    if not mime_type:
+        mime_type = "video/mp4"
+
+    range_header = request.headers.get("range")
+    if range_header:
+        range_match = re.match(r"bytes=(\d+)-(\d+)?", range_header)
+        if range_match:
+            start = int(range_match.group(1))
+            end = int(range_match.group(2)) if range_match.group(2) else file_size - 1
+            start = max(0, start)
+            end = min(file_size - 1, end)
+            content_length = (end - start) + 1
+
+            def iter_chunk():
+                with open(norm_path, "rb") as f:
+                    f.seek(start)
+                    remaining = content_length
+                    chunk_sz = 256 * 1024
+                    while remaining > 0:
+                        read_bytes = min(remaining, chunk_sz)
+                        buf = f.read(read_bytes)
+                        if not buf:
+                            break
+                        remaining -= len(buf)
+                        yield buf
+
+            headers = {
+                "Content-Range": f"bytes {start}-{end}/{file_size}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(content_length),
+                "Content-Type": mime_type,
+            }
+            return StreamingResponse(iter_chunk(), status_code=206, headers=headers)
+
+    def iter_full():
+        with open(norm_path, "rb") as f:
+            while chunk := f.read(256 * 1024):
+                yield chunk
+
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(file_size),
+        "Content-Type": mime_type,
+    }
+    return StreamingResponse(iter_full(), status_code=200, headers=headers)
+
+@app.post("/api/media/check-status")
+def check_media_status_endpoint(paths: List[str]):
+    """Premiere Pro-style offline media check: verifies if linked files still exist on disk."""
+    results = {}
+    for p in paths:
+        norm = os.path.normpath(p) if p else ""
+        results[p] = bool(norm and os.path.isfile(norm))
+    return results
+
+@app.post("/api/transcribe-linked")
+def transcribe_linked_endpoint(req: TranscribeLinkedRequest):
+    """Transcribes linked media directly from local disk path using ephemeral audio extraction."""
+    p = os.path.normpath(req.file_path)
+    if not os.path.isfile(p):
+        raise HTTPException(status_code=404, detail="Linked video file not found on disk")
+
+    try:
+        log_msg("TRANSCRIBE", f"Direct linked transcription: '{os.path.basename(p)}' (Model: {req.model_name})")
+        result = transcribe_media(
+            file_path=p,
+            model_name=req.model_name or "base",
+            language=req.language,
+            max_words_per_segment=req.max_words_per_segment or 3,
+            remove_punctuation=bool(req.remove_punctuation)
+        )
+        return {
+            "file_path": p,
+            "filename": os.path.basename(p),
+            "language": result["language"],
+            "language_probability": result["language_probability"],
+            "duration": result["duration"],
+            "total_words": result["total_words"],
+            "segments": result["segments"],
+            "elapsed_seconds": result["elapsed_seconds"]
+        }
+    except Exception as e:
+        log_msg("ERROR", f"Linked transcription failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/media/prune-storage")
+def prune_storage_endpoint():
+    """Cleans up stale duplicates in backend/storage/uploads to reclaim disk space."""
+    cleaned_bytes = 0
+    removed_files = 0
+    if os.path.exists(UPLOADS_DIR):
+        for fname in os.listdir(UPLOADS_DIR):
+            fpath = os.path.join(UPLOADS_DIR, fname)
+            try:
+                if os.path.isfile(fpath):
+                    cleaned_bytes += os.path.getsize(fpath)
+                    os.remove(fpath)
+                    removed_files += 1
+            except Exception:
+                pass
+    mb = round(cleaned_bytes / (1024 * 1024), 2)
+    log_msg("CLEANUP", f"Pruned {removed_files} files from uploads ({mb} MB reclaimed)")
+    return {"freed_mb": mb, "files_removed": removed_files}
+
+# ---------------------------------------------------------------------------
+# Project Management Storage Endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/projects")
+def list_projects_endpoint():
+    projects = []
+    if os.path.exists(PROJECTS_DIR):
+        for fname in os.listdir(PROJECTS_DIR):
+            if fname.endswith(".json"):
+                fpath = os.path.join(PROJECTS_DIR, fname)
+                try:
+                    with open(fpath, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if data.get("is_linked") and data.get("linked_path"):
+                            data["media_online"] = os.path.isfile(data["linked_path"])
+                        projects.append(data)
+                except Exception:
+                    pass
+    projects.sort(key=lambda p: p.get("updated_at", ""), reverse=True)
+    return {"projects": projects}
+
+@app.post("/api/projects")
+def save_project_endpoint(project_data: Dict[str, Any]):
+    pid = project_data.get("id")
+    if not pid:
+        pid = f"proj_{uuid.uuid4().hex[:10]}"
+        project_data["id"] = pid
+    if not project_data.get("created_at"):
+        project_data["created_at"] = datetime.datetime.now().isoformat()
+    project_data["updated_at"] = datetime.datetime.now().isoformat()
+
+    fpath = os.path.join(PROJECTS_DIR, f"{pid}.json")
+    with open(fpath, "w", encoding="utf-8") as f:
+        json.dump(project_data, f, indent=2)
+    log_msg("PROJECTS", f"Saved project '{project_data.get('title', pid)}' -> {pid}.json")
+    return {"status": "saved", "project": project_data}
+
+@app.get("/api/projects/{project_id}")
+def get_project_endpoint(project_id: str):
+    fpath = os.path.join(PROJECTS_DIR, f"{project_id}.json")
+    if not os.path.exists(fpath):
+        raise HTTPException(status_code=404, detail="Project not found")
+    with open(fpath, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if data.get("is_linked") and data.get("linked_path"):
+        data["media_online"] = os.path.isfile(data["linked_path"])
+    return data
+
+@app.delete("/api/projects/{project_id}")
+def delete_project_endpoint(project_id: str):
+    fpath = os.path.join(PROJECTS_DIR, f"{project_id}.json")
+    if os.path.exists(fpath):
+        os.remove(fpath)
+        log_msg("PROJECTS", f"Deleted project {project_id}")
+        return {"status": "deleted", "id": project_id}
+    raise HTTPException(status_code=404, detail="Project not found")
+
 @app.post("/api/transcribe-saved")
 async def transcribe_saved_endpoint(req: TranscribeSavedRequest):
     source_path = os.path.join(UPLOADS_DIR, req.video_filename)
@@ -447,13 +737,19 @@ async def render_endpoint(req: RenderRequest, background_tasks: BackgroundTasks)
     if (req.width or 0) <= 0 or (req.height or 0) <= 0:
         raise HTTPException(status_code=400, detail="Invalid export dimensions")
 
-    source_path = os.path.join(UPLOADS_DIR, req.video_filename)
-    if not os.path.exists(source_path):
-        demo_path = os.path.join(DEMO_DIR, req.video_filename)
-        if os.path.exists(demo_path):
-            source_path = demo_path
-        else:
-            raise HTTPException(status_code=404, detail="Source video file not found")
+    source_path = ""
+    if req.linked_path and os.path.isfile(req.linked_path):
+        source_path = req.linked_path
+    elif os.path.isabs(req.video_filename) and os.path.isfile(req.video_filename):
+        source_path = req.video_filename
+    else:
+        source_path = os.path.join(UPLOADS_DIR, req.video_filename)
+        if not os.path.exists(source_path):
+            demo_path = os.path.join(DEMO_DIR, req.video_filename)
+            if os.path.exists(demo_path):
+                source_path = demo_path
+            else:
+                raise HTTPException(status_code=404, detail="Source video file not found")
             
     _prune_old_jobs()
     job_id = uuid.uuid4().hex[:12]

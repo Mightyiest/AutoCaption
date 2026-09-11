@@ -1,11 +1,13 @@
 import React, { useEffect } from 'react';
+import { Sparkles, AlertTriangle } from 'lucide-react';
 import { Navbar } from './components/Navbar';
 import { VideoPlayer } from './components/VideoPlayer';
 import { CaptionListEditor } from './components/CaptionListEditor';
 import { StyleInspector } from './components/StyleInspector';
 import { HorizontalTimeline } from './components/HorizontalTimeline';
 import { ConsoleDrawer } from './components/ConsoleDrawer';
-import { UploadModal } from './components/UploadModal';
+import { ProjectsHub } from './components/ProjectsHub';
+import { ReplaceVideoModal } from './components/ReplaceVideoModal';
 import { TranscribeModal } from './components/TranscribeModal';
 import { ExportModal } from './components/ExportModal';
 import { SettingsModal } from './components/SettingsModal';
@@ -21,9 +23,48 @@ const BACKEND_URL = 'http://127.0.0.1:8000';
 export function App() {
   useGlobalShortcuts();
 
-  const { setBackendAvailable, fetchModelsStatus, canvasLayout } = useEditorStore();
+  const { 
+    currentView,
+    setCurrentView,
+    fetchProjectsList,
+    setBackendAvailable, 
+    fetchModelsStatus, 
+    canvasLayout,
+    registerVideoPickerTrigger,
+    handleFileSelected,
+    studioToast,
+    hideStudioToast
+  } = useEditorStore();
+  const fileInputRef = React.useRef(null);
   const [timelineHeight, setTimelineHeight] = React.useState(160);
   const [isResizingTimeline, setIsResizingTimeline] = React.useState(false);
+
+  // Sync route with URL hash (#projects vs #editor)
+  useEffect(() => {
+    fetchProjectsList();
+
+    const handleHash = () => {
+      const hash = window.location.hash.toLowerCase();
+      if (hash === '#projects' || hash === '#hub') {
+        setCurrentView('hub');
+      } else if (hash === '#editor') {
+        setCurrentView('editor');
+      }
+    };
+
+    handleHash();
+    window.addEventListener('hashchange', handleHash);
+    return () => window.removeEventListener('hashchange', handleHash);
+  }, [fetchProjectsList, setCurrentView]);
+
+  useEffect(() => {
+    registerVideoPickerTrigger(() => {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+        fileInputRef.current.click();
+      }
+    });
+  }, [registerVideoPickerTrigger]);
 
   useEffect(() => {
     // Check backend health and fetch model cache status
@@ -66,6 +107,16 @@ export function App() {
   };
 
   const layoutClass = `layout-${canvasLayout || 'right'}`;
+
+  if (currentView === 'hub') {
+    return (
+      <div className="app-container" style={{ overflow: 'hidden', height: '100vh', display: 'flex', flexDirection: 'column' }}>
+        <ProjectsHub />
+        <SettingsModal />
+        <HelpModal />
+      </div>
+    );
+  }
 
   return (
     <div
@@ -152,14 +203,69 @@ export function App() {
       {/* Bottom Live Hardware Monitor & Console Drawer */}
       <ConsoleDrawer />
 
+      {/* Hidden Global Video Picker Input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="video/*,audio/*"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) {
+            handleFileSelected(file);
+          }
+          e.target.value = '';
+        }}
+      />
+
       {/* Studio Sheets / Modals */}
-      <UploadModal />
+      <ReplaceVideoModal />
       <TranscribeModal />
       <ExportModal />
       <SettingsModal />
       <HelpModal />
       <KeywordLibraryModal />
       <VocalExtractorModal />
+
+      {/* Apple Studio Global Toast Notification */}
+      {studioToast && (
+        <div
+          onClick={hideStudioToast}
+          style={{
+            position: 'fixed',
+            bottom: '28px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'rgba(18, 20, 26, 0.92)',
+            backdropFilter: 'blur(20px)',
+            WebkitBackdropFilter: 'blur(20px)',
+            border: studioToast.type === 'warning'
+              ? '1px solid rgba(255, 153, 0, 0.45)'
+              : studioToast.type === 'error'
+              ? '1px solid rgba(255, 59, 48, 0.45)'
+              : '1px solid rgba(255, 255, 255, 0.16)',
+            boxShadow: '0 12px 36px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05)',
+            borderRadius: '999px',
+            padding: '10px 20px',
+            color: '#FFFFFF',
+            fontSize: '13px',
+            fontWeight: '600',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            zIndex: 9999,
+            cursor: 'pointer',
+            maxWidth: '90vw'
+          }}
+        >
+          {studioToast.type === 'warning' ? (
+            <AlertTriangle size={16} color="#FF9900" />
+          ) : (
+            <Sparkles size={16} color="#00FF66" />
+          )}
+          <span>{studioToast.message}</span>
+        </div>
+      )}
     </div>
   );
 }

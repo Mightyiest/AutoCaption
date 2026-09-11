@@ -83,8 +83,9 @@ export const TimelineTrackHeaders = ({
           fontWeight: '600',
           padding: '1px 5px',
           borderRadius: 'var(--radius-pill)',
-          background: 'rgba(255, 255, 255, 0.08)',
-          color: 'var(--text-tertiary)'
+          background: 'var(--bg-surface)',
+          border: '1px solid var(--border-subtle)',
+          color: 'var(--text-secondary)'
         }}>
           {segmentsCount}
         </span>

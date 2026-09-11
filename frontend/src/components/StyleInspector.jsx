@@ -86,7 +86,7 @@ const FONT_WEIGHTS = [
 
 export const StyleInspector = () => {
   const [activeTab, setActiveTab] = useState('presets'); // 'presets' | 'typography' | 'colors' | 'animation' | 'ai_effects'
-  const [enhancedSuccessToast, setEnhancedSuccessToast] = useState(false);
+  const [enhancedResult, setEnhancedResult] = useState(null);
 
   const { 
     style, 
@@ -111,9 +111,12 @@ export const StyleInspector = () => {
     if (e && e.currentTarget) {
       e.currentTarget.blur();
     }
-    autoEnhanceWithAI();
-    setEnhancedSuccessToast(true);
-    setTimeout(() => setEnhancedSuccessToast(false), 2500);
+    const res = autoEnhanceWithAI();
+    if (!res || !res.success) {
+      return;
+    }
+    setEnhancedResult(res);
+    setTimeout(() => setEnhancedResult(null), 3500);
   };
 
   return (
@@ -199,9 +202,9 @@ export const StyleInspector = () => {
                     padding: '10px 12px',
                     borderRadius: 'var(--radius-md)',
                     cursor: 'pointer',
-                    border: isSelected ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
-                    background: isSelected ? 'rgba(0, 113, 227, 0.12)' : 'var(--bg-surface)',
-                    boxShadow: isSelected ? '0 1px 4px rgba(0, 113, 227, 0.2)' : 'none',
+                    border: isSelected ? '1.5px solid var(--border-hover)' : '1px solid var(--border-subtle)',
+                    background: isSelected ? 'var(--bg-active)' : 'var(--bg-panel)',
+                    boxShadow: isSelected ? '0 1px 3px rgba(0, 0, 0, 0.08)' : 'var(--shadow-subtle)',
                     display: 'flex',
                     flexDirection: 'column',
                     gap: '6px',
@@ -209,7 +212,7 @@ export const StyleInspector = () => {
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: '12px', fontWeight: isSelected ? '600' : '500', color: isSelected ? 'var(--accent-bright-blue)' : 'var(--text-primary)' }}>
+                    <span style={{ fontSize: '12px', fontWeight: isSelected ? '700' : '600', color: 'var(--text-primary)' }}>
                       {preset.name}
                     </span>
                     <span style={{
@@ -217,8 +220,9 @@ export const StyleInspector = () => {
                       fontWeight: '600',
                       padding: '1px 5px',
                       borderRadius: '3px',
-                      background: 'rgba(255, 255, 255, 0.08)',
-                      color: 'var(--text-secondary)'
+                      background: isSelected ? 'var(--accent-primary)' : 'var(--bg-surface)',
+                      color: isSelected ? '#FFFFFF' : 'var(--text-secondary)',
+                      border: isSelected ? 'none' : '1px solid var(--border-subtle)'
                     }}>
                       {preset.badge}
                     </span>
@@ -282,15 +286,17 @@ export const StyleInspector = () => {
                       key={f.value}
                       onClick={() => handleStyleChange('fontFamily', f.value)}
                       style={{
-                        padding: '6px 8px',
+                        padding: '7px 10px',
                         borderRadius: 'var(--radius-sm)',
-                        border: isSelected ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
-                        background: isSelected ? 'rgba(0, 113, 227, 0.14)' : 'var(--bg-surface)',
+                        border: isSelected ? '1.5px solid var(--border-hover)' : '1px solid var(--border-subtle)',
+                        background: isSelected ? 'var(--bg-active)' : 'var(--bg-panel)',
+                        boxShadow: isSelected ? '0 1px 3px rgba(0, 0, 0, 0.08)' : 'none',
                         cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        textAlign: 'left'
+                        textAlign: 'left',
+                        transition: 'all var(--transition-fast)'
                       }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -298,12 +304,19 @@ export const StyleInspector = () => {
                           fontFamily: f.value, 
                           fontSize: '13px', 
                           fontWeight: '700',
-                          color: isSelected ? 'var(--accent-bright-blue)' : 'var(--text-primary)' 
+                          color: 'var(--text-primary)' 
                         }}>
                           {f.name}
                         </span>
                       </div>
-                      <span style={{ fontSize: '8px', color: 'var(--text-tertiary)' }}>{f.badge}</span>
+                      <span style={{ 
+                        fontSize: '8px', 
+                        fontWeight: '600',
+                        color: isSelected ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                        background: isSelected ? 'var(--bg-surface-elevated)' : 'transparent',
+                        padding: '1px 4px',
+                        borderRadius: '3px'
+                      }}>{f.badge}</span>
                     </button>
                   );
                 })}
@@ -316,23 +329,30 @@ export const StyleInspector = () => {
                 Weight & Formatting
               </span>
               <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                {FONT_WEIGHTS.map((w) => (
-                  <button
-                    key={w.value}
-                    onClick={() => handleStyleChange('fontWeight', w.value)}
-                    className="segmented-control-item"
-                    style={{
-                      flex: 1,
-                      padding: '4px 2px',
-                      fontSize: '11px',
-                      background: style.fontWeight === w.value ? 'rgba(255, 255, 255, 0.16)' : 'var(--bg-surface)',
-                      color: style.fontWeight === w.value ? '#FFFFFF' : 'var(--text-secondary)',
-                      border: '1px solid var(--border-subtle)'
-                    }}
-                  >
-                    {w.label}
-                  </button>
-                ))}
+                {FONT_WEIGHTS.map((w) => {
+                  const isWeightActive = style.fontWeight === w.value;
+                  return (
+                    <button
+                      key={w.value}
+                      onClick={() => handleStyleChange('fontWeight', w.value)}
+                      style={{
+                        flex: 1,
+                        padding: '6px 4px',
+                        fontSize: '11px',
+                        fontWeight: isWeightActive ? '700' : '500',
+                        borderRadius: 'var(--radius-sm)',
+                        background: isWeightActive ? 'var(--accent-primary)' : 'var(--bg-surface)',
+                        color: isWeightActive ? '#FFFFFF' : 'var(--text-secondary)',
+                        border: isWeightActive ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+                        boxShadow: isWeightActive ? '0 1px 3px rgba(0, 0, 0, 0.15)' : 'none',
+                        cursor: 'pointer',
+                        transition: 'all var(--transition-fast)'
+                      }}
+                    >
+                      {w.label}
+                    </button>
+                  );
+                })}
               </div>
 
               {/* Text Alignment & Case */}
@@ -399,9 +419,9 @@ export const StyleInspector = () => {
                   className="btn-secondary"
                   style={{
                     padding: '4px 8px',
-                    background: style.fontStyle === 'italic' ? 'rgba(0, 113, 227, 0.2)' : 'var(--bg-surface)',
-                    borderColor: style.fontStyle === 'italic' ? 'var(--accent-primary)' : 'var(--border-subtle)',
-                    color: style.fontStyle === 'italic' ? 'var(--accent-bright-blue)' : 'var(--text-secondary)'
+                    background: style.fontStyle === 'italic' ? 'var(--bg-active)' : 'var(--btn-secondary-bg)',
+                    borderColor: style.fontStyle === 'italic' ? 'var(--border-hover)' : 'var(--border-subtle)',
+                    color: style.fontStyle === 'italic' ? 'var(--text-primary)' : 'var(--text-secondary)'
                   }}
                   title="Italic Toggle"
                 >
@@ -512,7 +532,7 @@ export const StyleInspector = () => {
                 type="button"
                 onClick={stripAllPunctuation}
                 className="btn-secondary"
-                style={{ fontSize: '10px', padding: '4px 8px', color: 'var(--accent-bright-blue)' }}
+                style={{ fontSize: '11px', padding: '5px 10px', color: 'var(--accent-primary)', borderColor: 'var(--border-subtle)' }}
                 title="Remove all punctuation marks from existing captions"
               >
                 Clean Text
@@ -673,7 +693,7 @@ export const StyleInspector = () => {
                     flex: 1,
                     padding: '3px 8px',
                     fontSize: '10px',
-                    background: style.backgroundColor !== 'transparent' ? 'rgba(0, 113, 227, 0.18)' : 'transparent',
+                    background: style.backgroundColor !== 'transparent' ? 'var(--accent-blue-subtle)' : 'transparent',
                     borderColor: style.backgroundColor !== 'transparent' ? 'var(--accent-primary)' : 'var(--border-subtle)'
                   }}
                 >
@@ -720,10 +740,12 @@ export const StyleInspector = () => {
                       style={{
                         padding: '6px 8px',
                         fontSize: '11px',
-                        background: isSelected ? 'rgba(0, 113, 227, 0.18)' : 'var(--bg-surface)',
-                        color: isSelected ? 'var(--accent-bright-blue)' : 'var(--text-secondary)',
-                        border: isSelected ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
-                        borderRadius: 'var(--radius-sm)'
+                        fontWeight: isSelected ? '700' : '500',
+                        background: isSelected ? 'var(--bg-active)' : 'var(--bg-surface)',
+                        color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)',
+                        border: isSelected ? '1.5px solid var(--border-hover)' : '1px solid var(--border-subtle)',
+                        borderRadius: 'var(--radius-sm)',
+                        transition: 'all var(--transition-fast)'
                       }}
                     >
                       {anim.label}
@@ -814,7 +836,7 @@ export const StyleInspector = () => {
                 className="btn-primary"
                 style={{
                   width: '100%',
-                  padding: '8px 12px',
+                  padding: '9px 12px',
                   fontSize: '12px',
                   fontWeight: '700',
                   background: 'linear-gradient(135deg, #00FF66 0%, #00C853 100%)',
@@ -826,11 +848,21 @@ export const StyleInspector = () => {
                   border: 'none',
                   borderRadius: 'var(--radius-sm)',
                   cursor: 'pointer',
-                  boxShadow: '0 2px 8px rgba(0, 255, 102, 0.3)'
+                  boxShadow: '0 2px 10px rgba(0, 255, 102, 0.35)',
+                  transition: 'all var(--transition-fast)'
                 }}
               >
-                {enhancedSuccessToast ? <Check size={14} /> : <Wand2 size={14} />}
-                <span>{enhancedSuccessToast ? 'Captions Enhanced!' : 'Auto-Enhance Captions (AI)'}</span>
+                {enhancedResult ? (
+                  <>
+                    <Check size={14} />
+                    <span>Enhanced ({enhancedResult.emojiCount} Emojis, {enhancedResult.emphasisCount} Hooks)</span>
+                  </>
+                ) : (
+                  <>
+                    <Wand2 size={14} />
+                    <span>Auto-Enhance Captions (AI)</span>
+                  </>
+                )}
               </button>
             </div>
 
@@ -838,7 +870,7 @@ export const StyleInspector = () => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--border-subtle)', paddingTop: '10px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <Smile size={13} color="var(--accent-bright-blue)" />
+                  <Smile size={13} color="var(--accent-primary)" />
                   <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                     Auto-Emoji Stickers
                   </span>
@@ -870,9 +902,10 @@ export const StyleInspector = () => {
                             style={{
                               padding: '5px 6px',
                               fontSize: '10.5px',
-                              background: isSelected ? 'rgba(0, 113, 227, 0.18)' : 'var(--bg-surface)',
-                              color: isSelected ? 'var(--accent-bright-blue)' : 'var(--text-secondary)',
-                              border: isSelected ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+                              fontWeight: isSelected ? '700' : '500',
+                              background: isSelected ? 'var(--bg-active)' : 'var(--bg-surface)',
+                              color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)',
+                              border: isSelected ? '1.5px solid var(--border-hover)' : '1px solid var(--border-subtle)',
                               borderRadius: 'var(--radius-sm)'
                             }}
                           >
@@ -902,9 +935,10 @@ export const StyleInspector = () => {
                             style={{
                               padding: '6px 8px',
                               fontSize: '11px',
-                              background: isSelected ? 'rgba(0, 113, 227, 0.18)' : 'var(--bg-surface)',
-                              color: isSelected ? 'var(--accent-bright-blue)' : 'var(--text-secondary)',
-                              border: isSelected ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+                              fontWeight: isSelected ? '700' : '500',
+                              background: isSelected ? 'var(--bg-active)' : 'var(--bg-surface)',
+                              color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)',
+                              border: isSelected ? '1.5px solid var(--border-hover)' : '1px solid var(--border-subtle)',
                               borderRadius: 'var(--radius-sm)'
                             }}
                           >
@@ -933,9 +967,10 @@ export const StyleInspector = () => {
                             style={{
                               padding: '5px 4px',
                               fontSize: '10.5px',
-                              background: isSelected ? 'rgba(0, 113, 227, 0.18)' : 'var(--bg-surface)',
-                              color: isSelected ? 'var(--accent-bright-blue)' : 'var(--text-secondary)',
-                              border: isSelected ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+                              fontWeight: isSelected ? '700' : '500',
+                              background: isSelected ? 'var(--bg-active)' : 'var(--bg-surface)',
+                              color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)',
+                              border: isSelected ? '1.5px solid var(--border-hover)' : '1px solid var(--border-subtle)',
                               borderRadius: 'var(--radius-sm)'
                             }}
                           >
@@ -1102,7 +1137,7 @@ export const StyleInspector = () => {
                   fontWeight: '600',
                   padding: '2px 6px',
                   borderRadius: '10px',
-                  background: 'rgba(0, 113, 227, 0.18)',
+                  background: 'var(--accent-blue-subtle)',
                   color: 'var(--accent-bright-blue)'
                 }}>
                   {customKeywordRules?.length || 0} Rules

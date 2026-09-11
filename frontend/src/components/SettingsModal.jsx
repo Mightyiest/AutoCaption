@@ -679,7 +679,8 @@ export const SettingsModal = () => {
                 <div style={{
                   padding: '5px 8px',
                   borderRadius: 'var(--radius-sm)',
-                  background: 'rgba(0, 0, 0, 0.3)',
+                  background: 'var(--bg-canvas)',
+                  border: '1px solid var(--border-subtle)',
                   fontFamily: 'SF Mono, monospace',
                   fontSize: '10px',
                   color: 'var(--text-secondary)',
@@ -787,7 +788,8 @@ export const SettingsModal = () => {
                           gap: '10px',
                           fontSize: '10px',
                           color: 'var(--text-tertiary)',
-                          background: 'rgba(0, 0, 0, 0.25)',
+                          background: 'var(--bg-canvas)',
+                          border: '1px solid var(--border-subtle)',
                           padding: '4px 8px',
                           borderRadius: 'var(--radius-sm)'
                         }}>
@@ -801,7 +803,7 @@ export const SettingsModal = () => {
                         {/* Progress bar */}
                         {isDownloading && (
                           <div style={{ marginTop: '8px' }}>
-                            <div style={{ width: '100%', height: '4px', background: 'rgba(255, 255, 255, 0.08)', borderRadius: 'var(--radius-pill)', overflow: 'hidden' }}>
+                            <div style={{ width: '100%', height: '4px', background: 'var(--border-subtle)', borderRadius: 'var(--radius-pill)', overflow: 'hidden' }}>
                               <div style={{
                                 height: '100%',
                                 width: `${Math.max(3, downloadState.percent || 0)}%`,
@@ -1224,7 +1226,7 @@ export const SettingsModal = () => {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          background: 'rgba(255, 255, 255, 0.02)'
+          background: 'var(--bg-surface)'
         }}>
           <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <ShieldCheck size={13} color="var(--system-success)" />
@@ -1341,8 +1343,9 @@ export const SettingsModal = () => {
                   </div>
                   <code style={{
                     fontSize: '10.5px',
-                    color: 'var(--text-tertiary)',
-                    background: 'rgba(0, 0, 0, 0.3)',
+                    color: 'var(--text-secondary)',
+                    background: 'var(--bg-canvas)',
+                    border: '1px solid var(--border-subtle)',
                     padding: '4px 8px',
                     borderRadius: '4px',
                     wordBreak: 'break-all'
@@ -1385,7 +1388,8 @@ export const SettingsModal = () => {
                         <code key={i} style={{
                           fontSize: '10px',
                           color: 'var(--system-warning)',
-                          background: 'rgba(0, 0, 0, 0.3)',
+                          background: 'var(--bg-canvas)',
+                          border: '1px solid var(--border-subtle)',
                           padding: '3px 6px',
                           borderRadius: '4px',
                           wordBreak: 'break-all'
@@ -1437,7 +1441,7 @@ export const SettingsModal = () => {
               alignItems: 'center',
               justifyContent: 'flex-end',
               gap: '8px',
-              background: 'rgba(255, 255, 255, 0.02)'
+              background: 'var(--bg-surface)'
             }}>
               <button
                 onClick={() => setCachePromptData(null)}

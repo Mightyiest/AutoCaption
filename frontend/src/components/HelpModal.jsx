@@ -196,15 +196,15 @@ export const HelpModal = () => {
                             <kbd
                               key={kIdx}
                               style={{
-                                background: 'rgba(255, 255, 255, 0.08)',
-                                border: '1px solid rgba(255, 255, 255, 0.15)',
+                                background: 'var(--bg-surface)',
+                                border: '1px solid var(--border-subtle)',
                                 color: 'var(--text-primary)',
                                 fontSize: '10px',
                                 fontWeight: '600',
                                 padding: '2px 6px',
                                 borderRadius: '4px',
                                 fontFamily: 'SF Mono, Menlo, monospace',
-                                boxShadow: '0 1px 2px rgba(0,0,0,0.3)'
+                                boxShadow: '0 1px 2px rgba(0,0,0,0.06)'
                               }}
                             >
                               {k}
@@ -217,8 +217,8 @@ export const HelpModal = () => {
                                 <kbd
                                   key={akIdx}
                                   style={{
-                                    background: 'rgba(255, 255, 255, 0.06)',
-                                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                                    background: 'var(--bg-surface)',
+                                    border: '1px solid var(--border-subtle)',
                                     color: 'var(--text-secondary)',
                                     fontSize: '10px',
                                     fontWeight: '600',
@@ -314,7 +314,7 @@ export const HelpModal = () => {
           {/* TAB 3: Pro Tips */}
           {activeTab === 'tips' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <div style={{ padding: '12px', borderRadius: 'var(--radius-md)', background: 'rgba(0, 113, 227, 0.08)', border: '1px solid rgba(0, 113, 227, 0.25)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <div style={{ padding: '12px', borderRadius: 'var(--radius-md)', background: 'var(--accent-blue-subtle)', border: '1px solid var(--border-subtle)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--accent-bright-blue)' }}>
                   🎯 Vocal Peak Alignment
                 </span>
@@ -351,7 +351,7 @@ export const HelpModal = () => {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'flex-end',
-          background: 'rgba(255, 255, 255, 0.02)'
+          background: 'var(--bg-surface)'
         }}>
           <button
             onClick={() => setHelpModalOpen(false)}

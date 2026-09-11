@@ -309,7 +309,7 @@ function resolveWordAnimation({ word, currentTime, animationType, scaleFactor, s
  * @param {Object} params.layout - Measured layout result from measureCaptionLayout
  * @param {number} params.currentTime - Playback timestamp
  */
-export function drawCaptionFrame({ ctx, scene, layout, currentTime }) {
+export function drawCaptionFrame({ ctx, scene, layout, currentTime, isPlaying = false }) {
   if (!layout || !layout.lines || layout.lines.length === 0) return;
 
   const style = scene.style;
@@ -450,7 +450,7 @@ export function drawCaptionFrame({ ctx, scene, layout, currentTime }) {
       } else {
         ctx.fillStyle = style.activeColor || '#FFE600';
       }
-    } else if (anim.isEmphasized && style.emphasisMode === 'always') {
+    } else if (anim.isEmphasized && (style.emphasisMode === 'always' || !isPlaying)) {
       ctx.fillStyle = style.emphasisColor || '#00FF66';
     } else {
       ctx.fillStyle = style.primaryColor || '#FFFFFF';
@@ -480,25 +480,27 @@ export function drawCaptionFrame({ ctx, scene, layout, currentTime }) {
         let emojiScale = 1.0;
         let emojiTranslateY = 0;
 
-        switch (emojiAnimType) {
-          case 'pop': {
-            emojiScale = 1.0 + 0.30 * Math.sin(Math.min(1, progress * 4) * Math.PI);
-            break;
-          }
-          case 'bounce': {
-            emojiTranslateY = -14 * scaleFactor * Math.sin(Math.min(1, progress * 3) * Math.PI);
-            emojiScale = 1.0 + 0.12 * Math.sin(Math.min(1, progress * 3) * Math.PI);
-            break;
-          }
-          case 'float': {
-            emojiTranslateY = -6 * scaleFactor * Math.sin(currentTime * 6);
-            break;
-          }
-          case 'none':
-          default: {
-            emojiScale = 1.0;
-            emojiTranslateY = 0;
-            break;
+        if (isPlaying) {
+          switch (emojiAnimType) {
+            case 'pop': {
+              emojiScale = 1.0 + 0.30 * Math.sin(Math.min(1, progress * 4) * Math.PI);
+              break;
+            }
+            case 'bounce': {
+              emojiTranslateY = -14 * scaleFactor * Math.sin(Math.min(1, progress * 3) * Math.PI);
+              emojiScale = 1.0 + 0.12 * Math.sin(Math.min(1, progress * 3) * Math.PI);
+              break;
+            }
+            case 'float': {
+              emojiTranslateY = -6 * scaleFactor * Math.sin(currentTime * 6);
+              break;
+            }
+            case 'none':
+            default: {
+              emojiScale = 1.0;
+              emojiTranslateY = 0;
+              break;
+            }
           }
         }
 
@@ -526,32 +528,42 @@ export function drawCaptionFrame({ ctx, scene, layout, currentTime }) {
         const { rect, anim, emoji, start, end, rawText } = item;
         const targetEmoji = emoji || (style.autoEmojiEnabled ? detectEmojiForWord(rawText) : null);
 
-        if (targetEmoji && anim.isActive) {
+        const shouldShowEmoji = Boolean(
+          targetEmoji && (
+            anim.isActive || 
+            !isPlaying || 
+            emojiPosition === 'inline'
+          )
+        );
+
+        if (shouldShowEmoji) {
           const duration = Math.max(0.001, end - start);
           const progress = clamp((currentTime - start) / duration, 0, 1);
 
           let emojiScale = 1.0;
           let emojiTranslateY = 0;
 
-          switch (emojiAnimType) {
-            case 'pop': {
-              emojiScale = 1.0 + 0.35 * Math.sin(progress * Math.PI);
-              break;
-            }
-            case 'bounce': {
-              emojiTranslateY = -16 * scaleFactor * Math.sin(progress * Math.PI);
-              emojiScale = 1.0 + 0.15 * Math.sin(progress * Math.PI);
-              break;
-            }
-            case 'float': {
-              emojiTranslateY = -6 * scaleFactor * Math.sin(currentTime * 6);
-              break;
-            }
-            case 'none':
-            default: {
-              emojiScale = 1.0;
-              emojiTranslateY = 0;
-              break;
+          if (isPlaying && anim.isActive) {
+            switch (emojiAnimType) {
+              case 'pop': {
+                emojiScale = 1.0 + 0.35 * Math.sin(progress * Math.PI);
+                break;
+              }
+              case 'bounce': {
+                emojiTranslateY = -16 * scaleFactor * Math.sin(progress * Math.PI);
+                emojiScale = 1.0 + 0.15 * Math.sin(progress * Math.PI);
+                break;
+              }
+              case 'float': {
+                emojiTranslateY = -6 * scaleFactor * Math.sin(currentTime * 6);
+                break;
+              }
+              case 'none':
+              default: {
+                emojiScale = 1.0;
+                emojiTranslateY = 0;
+                break;
+              }
             }
           }
 
@@ -594,7 +606,7 @@ export function drawCaptionFrame({ ctx, scene, layout, currentTime }) {
  * @param {Object} params.scene - Normalized CaptionScene
  * @param {number} params.currentTime - Current video playback timestamp
  */
-export function renderPreviewOverlay({ canvas, scene, currentTime }) {
+export function renderPreviewOverlay({ canvas, scene, currentTime, isPlaying = false }) {
   if (!canvas) return;
 
   const ctx = canvas.getContext('2d');
@@ -619,7 +631,7 @@ export function renderPreviewOverlay({ canvas, scene, currentTime }) {
   // Measure and draw
   const layout = measureCaptionLayout({ scene, segment: activeSegment, ctx });
   if (layout) {
-    drawCaptionFrame({ ctx, scene, layout, currentTime });
+    drawCaptionFrame({ ctx, scene, layout, currentTime, isPlaying });
   }
 }
 

@@ -51,6 +51,7 @@ export const CaptionListEditor = () => {
     selectedModel,
     ensureModelDownloaded,
     backendAvailable,
+    triggerVideoPicker,
     setTranscribeModalOpen,
     clearAllSegments,
     autoEnhanceWithAI,
@@ -116,6 +117,10 @@ export const CaptionListEditor = () => {
   };
 
   const handleTranscribeCurrent = () => {
+    if (!videoFile && !videoFilename) {
+      triggerVideoPicker();
+      return;
+    }
     setTranscribeModalOpen(true);
   };
 
@@ -152,7 +157,7 @@ export const CaptionListEditor = () => {
           <span style={{ 
             fontSize: '10px', 
             fontWeight: '600',
-            background: 'rgba(255, 255, 255, 0.08)', 
+            background: 'var(--border-subtle)', 
             padding: '1px 6px', 
             borderRadius: 'var(--radius-pill)', 
             color: 'var(--text-tertiary)' 
@@ -162,6 +167,30 @@ export const CaptionListEditor = () => {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+          {segments.length > 0 && (
+            <button
+              onClick={() => autoEnhanceWithAI()}
+              className="btn-ghost"
+              style={{
+                padding: '4px 7px',
+                fontSize: '10.5px',
+                fontWeight: '600',
+                color: '#00FF66',
+                backgroundColor: 'rgba(0, 255, 102, 0.08)',
+                border: '1px solid rgba(0, 255, 102, 0.25)',
+                borderRadius: 'var(--radius-sm)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                cursor: 'pointer'
+              }}
+              title="AI Auto-Enhance captions with viral emojis & hook highlights"
+            >
+              <Sparkles size={11} color="#00FF66" />
+              <span>Enhance</span>
+            </button>
+          )}
+
           {segments.length > 0 && (
             <button
               onClick={handleClearAll}
@@ -182,7 +211,7 @@ export const CaptionListEditor = () => {
               title={showClearConfirm ? 'Click again to confirm delete all' : 'Delete all generated captions (Ctrl+Z to undo)'}
             >
               <Trash2 size={11} />
-              <span>{showClearConfirm ? 'Confirm?' : 'Clear All'}</span>
+              <span>{showClearConfirm ? 'Confirm?' : 'Clear'}</span>
             </button>
           )}
 
@@ -208,7 +237,7 @@ export const CaptionListEditor = () => {
           display: 'flex',
           alignItems: 'center',
           gap: '6px',
-          background: 'rgba(255, 255, 255, 0.06)',
+          background: 'var(--bg-surface)',
           borderRadius: 'var(--radius-md)',
           padding: '4px 8px',
           border: '1px solid var(--border-subtle)'
@@ -244,28 +273,67 @@ export const CaptionListEditor = () => {
       <div style={{ flex: 1, overflowY: 'auto', padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
         {segments.length === 0 ? (
           <div style={{
+            margin: '16px 4px',
+            padding: '24px 16px',
+            borderRadius: 'var(--radius-lg)',
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border-subtle)',
             textAlign: 'center',
-            padding: '36px 16px',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
-            gap: '12px'
+            gap: '10px'
           }}>
-            <p style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>No captions yet.</p>
+            <div style={{
+              width: '36px',
+              height: '36px',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--bg-active)',
+              border: '1px solid var(--border-subtle)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <Sparkles size={18} color="var(--text-primary)" />
+            </div>
+
+            <div>
+              <p style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)', margin: 0 }}>
+                No Captions Yet
+              </p>
+              <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '4px 0 0 0', lineHeight: '1.4' }}>
+                {!videoFile && !videoFilename
+                  ? 'Import a video to begin transcribing and styling captions.'
+                  : 'Transcribe spoken audio into word-timed caption blocks.'}
+              </p>
+            </div>
+
             <button
               onClick={handleTranscribeCurrent}
               className="btn-primary"
               disabled={isTranscribing}
-              style={{ padding: '6px 14px', fontSize: '11px', width: '100%', justifyContent: 'center' }}
+              style={{
+                marginTop: '4px',
+                padding: '7px 16px',
+                fontSize: '11.5px',
+                width: '100%',
+                justifyContent: 'center',
+                boxShadow: '0 2px 6px rgba(0, 0, 0, 0.2)'
+              }}
             >
               {isTranscribing ? (
                 <>
-                  <Loader2 size={12} className="animate-spin" />
+                  <Loader2 size={13} className="animate-spin" />
                   <span>Transcribing...</span>
+                </>
+              ) : !videoFile && !videoFilename ? (
+                <>
+                  <Sparkles size={13} />
+                  <span>Import Video to Caption</span>
                 </>
               ) : (
                 <>
-                  <Sparkles size={12} />
+                  <Sparkles size={13} />
                   <span>Auto-Caption ({selectedModel})</span>
                 </>
               )}
@@ -288,14 +356,14 @@ export const CaptionListEditor = () => {
                   border: isSelected 
                     ? '1px solid var(--accent-primary)' 
                     : isCurrentlyPlaying 
-                    ? '1px solid rgba(41, 151, 255, 0.4)' 
+                    ? '1px solid var(--accent-primary)' 
                     : '1px solid var(--border-subtle)',
                   backgroundColor: isSelected 
-                    ? 'rgba(0, 113, 227, 0.12)' 
+                    ? 'var(--accent-blue-subtle)' 
                     : isCurrentlyPlaying 
-                    ? 'rgba(41, 151, 255, 0.06)' 
+                    ? 'var(--accent-blue-subtle)' 
                     : 'var(--bg-surface)',
-                  boxShadow: isSelected ? '0 1px 4px rgba(0, 113, 227, 0.2)' : 'none',
+                  boxShadow: isSelected ? '0 1px 4px var(--accent-blue-subtle)' : 'none',
                   transition: 'background var(--transition-fast), border-color var(--transition-fast)',
                   display: 'flex',
                   flexDirection: 'column',
@@ -305,31 +373,62 @@ export const CaptionListEditor = () => {
               >
                 {/* Line Card Header */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  {/* Timecode & Seek Trigger */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      seekTo(seg.start);
-                    }}
-                    style={{
-                      background: 'rgba(255, 255, 255, 0.05)',
-                      border: '1px solid var(--border-subtle)',
-                      borderRadius: '4px',
-                      padding: '2px 5px',
-                      color: isCurrentlyPlaying ? 'var(--accent-bright-blue)' : 'var(--text-secondary)',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      fontSize: '10px',
-                      fontFamily: 'SF Mono, Menlo, monospace',
-                      fontWeight: '500'
-                    }}
-                    title="Jump playhead to start"
-                  >
-                    <Play size={8} fill={isCurrentlyPlaying ? 'currentColor' : 'none'} />
-                    {formatTimecode(seg.start)} ➔ {formatTimecode(seg.end)}
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    {/* Timecode & Seek Trigger */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        seekTo(seg.start);
+                      }}
+                      style={{
+                        background: 'var(--bg-canvas)',
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: '4px',
+                        padding: '2px 5px',
+                        color: isCurrentlyPlaying ? 'var(--accent-bright-blue)' : 'var(--text-secondary)',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        fontSize: '10px',
+                        fontFamily: 'SF Mono, Menlo, monospace',
+                        fontWeight: '500'
+                      }}
+                      title="Jump playhead to start"
+                    >
+                      <Play size={8} fill={isCurrentlyPlaying ? 'currentColor' : 'none'} />
+                      {formatTimecode(seg.start)} ➔ {formatTimecode(seg.end)}
+                    </button>
+
+                    {/* Segment Emoji Sticker Badge */}
+                    {seg.emoji && (
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '2px',
+                          padding: '1px 4px',
+                          borderRadius: '4px',
+                          background: 'var(--bg-active)',
+                          border: '1px solid var(--border-subtle)',
+                          fontSize: '11px',
+                          lineHeight: 1
+                        }}
+                        title={`Viral Sticker: ${seg.emoji}`}
+                      >
+                        <img
+                          src={getAppleEmojiUrl(seg.emoji)}
+                          alt={seg.emoji}
+                          style={{ width: '12px', height: '12px', objectFit: 'contain' }}
+                          onError={(evt) => {
+                            evt.currentTarget.style.display = 'none';
+                            if (evt.currentTarget.nextSibling) evt.currentTarget.nextSibling.style.display = 'inline';
+                          }}
+                        />
+                        <span style={{ display: 'none' }}>{seg.emoji}</span>
+                      </span>
+                    )}
+                  </div>
 
                   {/* Actions Row */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
@@ -454,7 +553,8 @@ export const CaptionListEditor = () => {
                     style={{
                       padding: '4px 6px',
                       borderRadius: 'var(--radius-sm)',
-                      background: 'rgba(255, 255, 255, 0.03)',
+                      background: 'var(--bg-canvas)',
+                      border: '1px solid var(--border-subtle)',
                       color: 'var(--text-primary)',
                       fontSize: '12px',
                       fontWeight: '500',
@@ -467,7 +567,44 @@ export const CaptionListEditor = () => {
                     }}
                     title="Click to edit text"
                   >
-                    <span>{seg.text}</span>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', alignItems: 'center' }}>
+                      {seg.words && seg.words.length > 0 ? (
+                        seg.words.map((w, wIdx) => {
+                          const isEmph = Boolean(w.isEmphasized);
+                          return (
+                            <span
+                              key={w.id || wIdx}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '2px',
+                                color: isEmph ? '#00FF66' : 'var(--text-primary)',
+                                fontWeight: isEmph ? '700' : '500',
+                                backgroundColor: isEmph ? 'rgba(0, 255, 102, 0.12)' : 'transparent',
+                                padding: isEmph ? '0 3px' : '0',
+                                borderRadius: '3px'
+                              }}
+                            >
+                              <span>{w.word || w.text}</span>
+                              {w.emoji && (
+                                <img
+                                  src={getAppleEmojiUrl(w.emoji)}
+                                  alt={w.emoji}
+                                  style={{ width: '11px', height: '11px', objectFit: 'contain', verticalAlign: 'middle' }}
+                                  onError={(evt) => {
+                                    evt.currentTarget.style.display = 'none';
+                                    if (evt.currentTarget.nextSibling) evt.currentTarget.nextSibling.style.display = 'inline';
+                                  }}
+                                />
+                              )}
+                              {w.emoji && <span style={{ display: 'none', fontSize: '9px' }}>{w.emoji}</span>}
+                            </span>
+                          );
+                        })
+                      ) : (
+                        <span>{seg.text}</span>
+                      )}
+                    </div>
                     <Edit3 size={10} style={{ opacity: 0.35, flexShrink: 0, marginLeft: '4px' }} />
                   </div>
                 )}
@@ -496,7 +633,8 @@ export const CaptionListEditor = () => {
                     <div style={{
                       marginTop: '4px',
                       padding: '5px',
-                      background: 'rgba(0, 0, 0, 0.35)',
+                      background: 'var(--bg-canvas)',
+                      border: '1px solid var(--border-subtle)',
                       borderRadius: 'var(--radius-sm)',
                       display: 'flex',
                       flexWrap: 'wrap',
@@ -528,8 +666,8 @@ export const CaptionListEditor = () => {
                                   ? 'var(--accent-primary)' 
                                   : isEmphasized 
                                   ? 'rgba(0, 255, 102, 0.12)' 
-                                  : 'rgba(255, 255, 255, 0.06)',
-                                border: isEmphasized ? '1px solid rgba(0, 255, 102, 0.35)' : '1px solid transparent',
+                                  : 'var(--bg-panel)',
+                                border: isEmphasized ? '1px solid rgba(0, 255, 102, 0.35)' : '1px solid var(--border-subtle)',
                                 color: isWordActive ? '#FFFFFF' : isEmphasized ? '#00FF66' : 'var(--text-secondary)',
                                 fontSize: '10px',
                                 fontWeight: isEmphasized ? '700' : '500',

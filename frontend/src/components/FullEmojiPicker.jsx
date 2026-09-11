@@ -252,7 +252,7 @@ export const FullEmojiPicker = ({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          background: 'rgba(0, 0, 0, 0.2)'
+          background: 'var(--bg-surface)'
         }}>
           <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>
             {filteredEmojis.length} Apple emojis available

@@ -41,7 +41,7 @@ export const TimelineToolbar = ({
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
-      background: 'rgba(255, 255, 255, 0.02)',
+      background: 'var(--bg-panel)',
       fontSize: '11px',
       gap: '8px',
       flexWrap: 'wrap',
@@ -50,7 +50,7 @@ export const TimelineToolbar = ({
       {/* Left: Title, Timecode & Undo/Redo */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--text-primary)', fontWeight: '600' }}>
-          <Layers size={13} color="var(--accent-bright-blue)" />
+          <Layers size={13} color="var(--accent-primary)" />
           <span>Timeline</span>
         </div>
 
@@ -59,13 +59,13 @@ export const TimelineToolbar = ({
           display: 'flex',
           alignItems: 'center',
           gap: '5px',
-          background: 'rgba(0, 0, 0, 0.45)',
+          background: 'var(--bg-surface)',
           padding: '2px 8px',
           borderRadius: 'var(--radius-sm)',
           border: '1px solid var(--border-subtle)',
           fontFamily: 'SF Mono, Menlo, monospace'
         }}>
-          <span style={{ color: 'var(--accent-bright-blue)', fontWeight: '700', fontSize: '11px' }}>
+          <span style={{ color: 'var(--accent-primary)', fontWeight: '700', fontSize: '11px' }}>
             {formatTimecode(currentTime)}
           </span>
           <span style={{ color: 'var(--text-tertiary)', fontSize: '10px' }}>/</span>
@@ -103,12 +103,12 @@ export const TimelineToolbar = ({
           display: 'flex',
           alignItems: 'center',
           gap: '6px',
-          background: 'rgba(0, 113, 227, 0.12)',
+          background: 'var(--bg-active)',
           padding: '2px 8px',
           borderRadius: 'var(--radius-sm)',
-          border: '1px solid rgba(0, 113, 227, 0.3)'
+          border: '1px solid var(--border-subtle)'
         }}>
-          <span style={{ fontSize: '11px', color: 'var(--accent-bright-blue)', fontWeight: '600' }}>
+          <span style={{ fontSize: '11px', color: 'var(--text-primary)', fontWeight: '600' }}>
             Selected: "{selectedSegment.text.slice(0, 18)}..."
           </span>
           <button
@@ -130,7 +130,7 @@ export const TimelineToolbar = ({
           <button
             onClick={onFocusSelected}
             className="btn-ghost"
-            style={{ padding: '1px 4px', fontSize: '10px', height: '18px', color: 'var(--accent-bright-blue)' }}
+            style={{ padding: '1px 4px', fontSize: '10px', height: '18px', color: 'var(--text-primary)' }}
             title="Zoom & focus block"
           >
             <Maximize2 size={10} /> Focus
@@ -151,8 +151,8 @@ export const TimelineToolbar = ({
           style={{
             padding: '2px 6px',
             fontSize: '10px',
-            color: timelineSnapEnabled ? 'var(--accent-bright-blue)' : 'var(--text-tertiary)',
-            background: timelineSnapEnabled ? 'rgba(0, 113, 227, 0.12)' : 'transparent'
+            color: timelineSnapEnabled ? 'var(--text-primary)' : 'var(--text-tertiary)',
+            background: timelineSnapEnabled ? 'var(--bg-active)' : 'transparent'
           }}
           title={timelineSnapEnabled ? 'Snapping ON' : 'Snapping OFF'}
         >
@@ -179,7 +179,7 @@ export const TimelineToolbar = ({
           display: 'flex', 
           alignItems: 'center', 
           gap: '1px', 
-          background: 'rgba(255, 255, 255, 0.05)', 
+          background: 'var(--bg-surface)', 
           padding: '1px 3px', 
           borderRadius: 'var(--radius-sm)', 
           border: '1px solid var(--border-subtle)' 
@@ -218,7 +218,7 @@ export const TimelineToolbar = ({
           <button
             onClick={onZoomFit}
             className="btn-ghost"
-            style={{ padding: '1px 4px', height: '18px', fontSize: '10px', fontWeight: '600', color: 'var(--accent-bright-blue)' }}
+            style={{ padding: '1px 4px', height: '18px', fontSize: '10px', fontWeight: '600', color: 'var(--accent-primary)' }}
             title="Fit entire duration"
           >
             Fit

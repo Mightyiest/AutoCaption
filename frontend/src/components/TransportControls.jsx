@@ -27,20 +27,20 @@ export const TransportControls = ({
   return (
     <div style={{
       width: '100%',
-      maxWidth: '440px',
-      padding: '7px 12px',
-      borderRadius: 'var(--radius-lg)',
-      background: 'rgba(18, 18, 20, 0.88)',
-      backdropFilter: 'blur(20px)',
-      WebkitBackdropFilter: 'blur(20px)',
-      border: '1px solid rgba(255, 255, 255, 0.14)',
-      boxShadow: '0 8px 30px rgba(0, 0, 0, 0.55)',
+      maxWidth: '460px',
+      padding: '8px 14px',
+      borderRadius: 'var(--radius-xl)',
+      background: 'var(--playback-glass-bg)',
+      backdropFilter: 'blur(28px) saturate(180%)',
+      WebkitBackdropFilter: 'blur(28px) saturate(180%)',
+      border: '1px solid var(--playback-glass-border)',
+      boxShadow: 'var(--playback-glass-shadow)',
       flexShrink: 0,
       userSelect: 'none'
     }}>
       {/* Scrubber Line */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-        <span style={{ fontSize: '11px', fontFamily: 'SF Mono, Menlo, monospace', color: 'var(--text-primary)', minWidth: '46px' }}>
+        <span style={{ fontSize: '11px', fontFamily: 'SF Mono, Menlo, monospace', fontWeight: '600', color: 'var(--text-primary)', minWidth: '46px' }}>
           {formatTimecode(currentTime)}
         </span>
         <input
@@ -52,12 +52,10 @@ export const TransportControls = ({
           onChange={onSeekChange}
           style={{
             flex: 1,
-            accentColor: 'var(--accent-primary)',
-            cursor: 'pointer',
-            height: '4px'
+            cursor: 'pointer'
           }}
         />
-        <span style={{ fontSize: '11px', fontFamily: 'SF Mono, Menlo, monospace', color: 'var(--text-tertiary)', minWidth: '46px', textAlign: 'right' }}>
+        <span style={{ fontSize: '11px', fontFamily: 'SF Mono, Menlo, monospace', fontWeight: '500', color: 'var(--text-tertiary)', minWidth: '46px', textAlign: 'right' }}>
           {formatTimecode(duration)}
         </span>
       </div>
@@ -69,7 +67,7 @@ export const TransportControls = ({
           <button
             onClick={() => onSeek(Math.max(0, currentTime - 2))}
             className="btn-ghost"
-            style={{ padding: '4px 6px' }}
+            style={{ padding: '4px 6px', color: 'var(--text-secondary)' }}
             title="Step Back 2s (Left Arrow)"
           >
             <RotateCcw size={13} />
@@ -78,22 +76,23 @@ export const TransportControls = ({
             onClick={onTogglePlay}
             className="btn-primary"
             style={{ 
-              width: '28px', 
-              height: '28px', 
+              width: '32px', 
+              height: '32px', 
               padding: 0, 
               borderRadius: 'var(--radius-pill)',
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center'
+              justifyContent: 'center',
+              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.25)'
             }}
             title="Play / Pause (Space)"
           >
-            {isPlaying ? <Pause size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" style={{ marginLeft: '1px' }} />}
+            {isPlaying ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" style={{ marginLeft: '2px' }} />}
           </button>
           <button
             onClick={() => onSeek(Math.min(duration, currentTime + 2))}
             className="btn-ghost"
-            style={{ padding: '4px 6px' }}
+            style={{ padding: '4px 6px', color: 'var(--text-secondary)' }}
             title="Step Forward 2s (Right Arrow)"
           >
             <RotateCw size={13} />
@@ -132,8 +131,6 @@ export const TransportControls = ({
             }}
             style={{
               width: '46px',
-              height: '3px',
-              accentColor: 'var(--accent-primary)',
               cursor: 'pointer'
             }}
             title={`Volume: ${Math.round((isMuted ? 0 : volume) * 100)}%`}
@@ -144,24 +141,24 @@ export const TransportControls = ({
             value={playbackRate}
             onChange={(e) => onSetPlaybackRate(parseFloat(e.target.value))}
             style={{
-              background: 'rgba(255, 255, 255, 0.06)',
+              background: 'var(--bg-surface)',
               border: '1px solid var(--border-subtle)',
               color: 'var(--text-secondary)',
-              fontSize: '10px',
-              fontWeight: '500',
-              padding: '2px 4px',
-              borderRadius: '4px',
+              fontSize: '11px',
+              fontWeight: '600',
+              padding: '3px 6px',
+              borderRadius: 'var(--radius-sm)',
               cursor: 'pointer',
               outline: 'none',
               marginLeft: '4px'
             }}
           >
-            <option value="0.5" style={{ background: '#1c1c1e' }}>0.5x</option>
-            <option value="0.75" style={{ background: '#1c1c1e' }}>0.75x</option>
-            <option value="1" style={{ background: '#1c1c1e' }}>1.0x</option>
-            <option value="1.25" style={{ background: '#1c1c1e' }}>1.25x</option>
-            <option value="1.5" style={{ background: '#1c1c1e' }}>1.5x</option>
-            <option value="2.0" style={{ background: '#1c1c1e' }}>2.0x</option>
+            <option value="0.5" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>0.5x</option>
+            <option value="0.75" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>0.75x</option>
+            <option value="1" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>1.0x</option>
+            <option value="1.25" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>1.25x</option>
+            <option value="1.5" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>1.5x</option>
+            <option value="2.0" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>2.0x</option>
           </select>
         </div>
       </div>

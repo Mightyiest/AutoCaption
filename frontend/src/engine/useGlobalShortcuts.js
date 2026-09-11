@@ -33,6 +33,7 @@ export function useGlobalShortcuts() {
           return;
         }
         if (store.isHelpModalOpen) store.setHelpModalOpen(false);
+        if (store.pendingImportFile) store.setPendingImportFile(null);
         if (store.isUploadModalOpen) store.setUploadModalOpen(false);
         if (store.isExportModalOpen) store.setExportModalOpen(false);
         if (store.isSettingsModalOpen) store.setSettingsModalOpen(false);
