@@ -1,4 +1,5 @@
 import os
+import sys
 # Disable Windows symlink warning from huggingface_hub
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 import shutil
@@ -10,9 +11,11 @@ import re
 import urllib.parse
 import json
 import datetime
+import time
+import hashlib
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -31,8 +34,9 @@ EXPORTS_DIR = os.path.join(STORAGE_DIR, "exports")
 FONTS_DIR = os.path.join(STORAGE_DIR, "fonts")
 DEMO_DIR = os.path.join(STORAGE_DIR, "demo")
 PROJECTS_DIR = os.path.join(STORAGE_DIR, "projects")
+THUMBNAILS_DIR = os.path.join(STORAGE_DIR, "thumbnails")
 
-for d in [UPLOADS_DIR, EXPORTS_DIR, FONTS_DIR, DEMO_DIR, VOCALS_DIR, PROJECTS_DIR]:
+for d in [UPLOADS_DIR, EXPORTS_DIR, FONTS_DIR, DEMO_DIR, VOCALS_DIR, PROJECTS_DIR, THUMBNAILS_DIR]:
     os.makedirs(d, exist_ok=True)
 
 app = FastAPI(title="AutoCaption Studio API", version="2.0.0")
@@ -49,6 +53,7 @@ app.mount("/static/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 app.mount("/static/exports", StaticFiles(directory=EXPORTS_DIR), name="exports")
 app.mount("/static/vocals", StaticFiles(directory=VOCALS_DIR), name="vocals")
 app.mount("/static/demo", StaticFiles(directory=DEMO_DIR), name="demo")
+app.mount("/static/thumbnails", StaticFiles(directory=THUMBNAILS_DIR), name="thumbnails")
 
 RENDER_JOBS: Dict[str, Dict[str, Any]] = {}
 ACTIVE_RENDER_PROCESSES: Dict[str, subprocess.Popen] = {}
@@ -63,6 +68,24 @@ def _prune_old_jobs():
         for k in list(SEPARATION_JOBS.keys())[:-40]:
             SEPARATION_JOBS.pop(k, None)
 
+    # Clean up temporary export and debug files older than 24 hours
+    try:
+        now = time.time()
+        cutoff = now - (24 * 3600)
+        for folder in [EXPORTS_DIR, os.path.join(STORAGE_DIR, "debug"), THUMBNAILS_DIR]:
+            if os.path.exists(folder):
+                for fname in os.listdir(folder):
+                    if fname.startswith(".gitkeep"):
+                        continue
+                    fpath = os.path.join(folder, fname)
+                    if os.path.isfile(fpath) and os.path.getmtime(fpath) < cutoff:
+                        try:
+                            os.remove(fpath)
+                        except Exception:
+                            pass
+    except Exception:
+        pass
+
 class RenderRequest(BaseModel):
     video_filename: str
     segments: List[Dict[str, Any]]
@@ -74,6 +97,7 @@ class RenderRequest(BaseModel):
     engine_type: Optional[str] = "dom"        # "dom" (Ultra 1:1 Fidelity) | "ass" (Fast Burn)
     preview_metrics: Optional[Dict[str, Any]] = None
     linked_path: Optional[str] = None
+    output_filename: Optional[str] = None
 
 class TranscribeSavedRequest(BaseModel):
     video_filename: str
@@ -81,6 +105,7 @@ class TranscribeSavedRequest(BaseModel):
     language: Optional[str] = None
     max_words_per_segment: Optional[int] = 3
     remove_punctuation: Optional[bool] = False
+    linked_path: Optional[str] = None
 
 class LinkPathRequest(BaseModel):
     file_path: str
@@ -355,28 +380,106 @@ def probe_media_file(file_path: str) -> dict:
 
     return {"duration": round(dur, 2), "width": w, "height": h, "fps": fps}
 
+def resolve_media_path(filename: Optional[str] = None, linked_path: Optional[str] = None) -> Optional[str]:
+    """
+    Robustly resolves a video or audio file across all storage locations and project registries:
+    1. Explicit linked_path (direct disk location)
+    2. Absolute path in filename
+    3. Storage uploads directory (UPLOADS_DIR)
+    4. Storage demo directory (DEMO_DIR)
+    5. Storage exports directory (EXPORTS_DIR)
+    6. Relative or normalized path on disk
+    7. Storage uploads directory using base filename
+    8. Saved projects directory (PROJECTS_DIR) matching filename, title, or project ID
+    """
+    if linked_path and isinstance(linked_path, str) and linked_path.strip():
+        norm_l = os.path.normpath(linked_path.strip())
+        if os.path.isfile(norm_l):
+            return norm_l
+
+    if filename and isinstance(filename, str) and filename.strip():
+        fn = filename.strip()
+        # 1. Direct path check
+        norm_fn = os.path.normpath(fn)
+        if os.path.isfile(norm_fn):
+            return norm_fn
+
+        # 2. Check uploads directory
+        up_path = os.path.join(UPLOADS_DIR, fn)
+        if os.path.isfile(up_path):
+            return up_path
+
+        # 3. Check demo directory
+        dm_path = os.path.join(DEMO_DIR, fn)
+        if os.path.isfile(dm_path):
+            return dm_path
+
+        # 4. Check exports directory
+        exp_path = os.path.join(EXPORTS_DIR, fn)
+        if os.path.isfile(exp_path):
+            return exp_path
+
+        # 5. Check uploads by basename
+        bname = os.path.basename(fn)
+        up_bname = os.path.join(UPLOADS_DIR, bname)
+        if os.path.isfile(up_bname):
+            return up_bname
+
+        # 6. Check saved projects in PROJECTS_DIR
+        if os.path.isdir(PROJECTS_DIR):
+            try:
+                for pf in os.listdir(PROJECTS_DIR):
+                    if pf.endswith(".json"):
+                        try:
+                            with open(os.path.join(PROJECTS_DIR, pf), "r", encoding="utf-8") as f:
+                                pdata = json.load(f)
+                                matches = (
+                                    pdata.get("videoFilename") == fn or
+                                    pdata.get("videoFilename") == bname or
+                                    pdata.get("title") == fn or
+                                    pdata.get("id") == fn
+                                )
+                                if matches:
+                                    # Check linkedSourcePath
+                                    lsp = pdata.get("linkedSourcePath")
+                                    if lsp and os.path.isfile(os.path.normpath(lsp)):
+                                        return os.path.normpath(lsp)
+                                    # Check videoFilename in uploads
+                                    pvf = pdata.get("videoFilename")
+                                    if pvf and os.path.isfile(os.path.join(UPLOADS_DIR, pvf)):
+                                        return os.path.join(UPLOADS_DIR, pvf)
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+
+    return None
+
 @app.post("/api/media/browse-file")
 def browse_file_endpoint():
-    """Launches the native Windows File Picker dialog in an STA process without copying files."""
+    """Launches the native Windows File Picker dialog in an isolated process without copying files."""
     try:
-        ps_cmd = (
-            "Add-Type -AssemblyName System.Windows.Forms; "
-            "$f = New-Object System.Windows.Forms.OpenFileDialog; "
-            "$f.Filter = 'Video Files (*.mp4;*.mov;*.mkv;*.webm;*.avi;*.m4v)|*.mp4;*.mov;*.mkv;*.webm;*.avi;*.m4v|Audio Files (*.mp3;*.wav;*.m4a;*.aac)|*.mp3;*.wav;*.m4a;*.aac|All Files (*.*)|*.*'; "
-            "$f.Title = 'Select Video to Link (AutoCaption Zero-Copy)'; "
-            "$f.RestoreDirectory = $true; "
-            "$f.Multiselect = $false; "
-            "$res = $f.ShowDialog(); "
-            "if ($res -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::WriteLine($f.FileName) }"
-        )
-        ps_run = subprocess.run(
-            ["powershell", "-STA", "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
+        picker_script = os.path.join(BASE_DIR, "file_picker.py")
+        res = subprocess.run(
+            [sys.executable, picker_script],
             capture_output=True,
             text=True,
-            timeout=120
+            timeout=180
         )
-        selected_file = ps_run.stdout.strip()
-        if not selected_file:
+        output = res.stdout.strip()
+        if not output:
+            return {"cancelled": True}
+
+        selected_file = None
+        try:
+            parsed = json.loads(output)
+            if parsed.get("cancelled", False):
+                return {"cancelled": True}
+            selected_file = parsed.get("file_path") or parsed.get("path")
+        except Exception:
+            selected_file = output
+
+        if not selected_file or selected_file == "__CANCELLED__":
             return {"cancelled": True}
 
         norm_path = os.path.normpath(selected_file)
@@ -480,6 +583,71 @@ def stream_media_endpoint(path: str, request: Request):
         "Content-Type": mime_type,
     }
     return StreamingResponse(iter_full(), status_code=200, headers=headers)
+
+@app.get("/api/media/thumbnail")
+def get_media_thumbnail_endpoint(
+    filename: Optional[str] = None,
+    path: Optional[str] = None,
+    time_offset: Optional[float] = 1.0
+):
+    """
+    Extracts, caches, and streams a real video snapshot thumbnail from a video file.
+    Supports linked direct disk files, uploaded files, and demo files.
+    """
+    raw_path = urllib.parse.unquote(path) if path else None
+    raw_filename = urllib.parse.unquote(filename) if filename else None
+
+    source_path = resolve_media_path(raw_filename, raw_path)
+    if not source_path or not os.path.isfile(source_path):
+        raise HTTPException(status_code=404, detail="Media file not found for thumbnail generation")
+
+    try:
+        mtime = os.path.getmtime(source_path)
+        size = os.path.getsize(source_path)
+        offset = max(0.0, float(time_offset) if time_offset is not None else 1.0)
+        cache_key = hashlib.md5(f"{source_path}_{mtime}_{size}_{offset:.2f}".encode("utf-8")).hexdigest()
+        thumb_path = os.path.join(THUMBNAILS_DIR, f"{cache_key}.jpg")
+
+        if os.path.isfile(thumb_path) and os.path.getsize(thumb_path) > 100:
+            return FileResponse(thumb_path, media_type="image/jpeg")
+
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+
+        # Try extracting frame at specified offset (default 1.0s)
+        cmd = [
+            ffmpeg_exe, "-y",
+            "-ss", f"{offset:.2f}",
+            "-i", source_path,
+            "-vframes", "1",
+            "-vf", "scale=480:-2",
+            "-q:v", "3",
+            thumb_path
+        ]
+        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=12)
+
+        # Fallback to 0.0s if first attempt failed (e.g. video shorter than offset)
+        if not os.path.isfile(thumb_path) or os.path.getsize(thumb_path) == 0:
+            cmd_fallback = [
+                ffmpeg_exe, "-y",
+                "-ss", "0.0",
+                "-i", source_path,
+                "-vframes", "1",
+                "-vf", "scale=480:-2",
+                "-q:v", "3",
+                thumb_path
+            ]
+            subprocess.run(cmd_fallback, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=12)
+
+        if os.path.isfile(thumb_path) and os.path.getsize(thumb_path) > 100:
+            return FileResponse(thumb_path, media_type="image/jpeg")
+        else:
+            raise HTTPException(status_code=404, detail="Could not extract video frame (audio-only or corrupt stream)")
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_msg("ERROR", f"Thumbnail generation error for '{source_path}': {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate thumbnail: {e}")
+
 
 @app.post("/api/media/check-status")
 def check_media_status_endpoint(paths: List[str]):
@@ -599,15 +767,13 @@ def delete_project_endpoint(project_id: str):
 
 @app.post("/api/transcribe-saved")
 async def transcribe_saved_endpoint(req: TranscribeSavedRequest):
-    source_path = os.path.join(UPLOADS_DIR, req.video_filename)
-    if not os.path.exists(source_path):
-        demo_path = os.path.join(DEMO_DIR, req.video_filename)
-        if os.path.exists(demo_path):
-            source_path = demo_path
-        else:
-            raise HTTPException(status_code=404, detail="Video file not found")
+    source_path = resolve_media_path(req.video_filename, req.linked_path)
+    if not source_path:
+        log_msg("TRANSCRIBE", f"File not found: video_filename='{req.video_filename}', linked_path='{req.linked_path}'")
+        raise HTTPException(status_code=404, detail="Video file not found")
             
     try:
+        log_msg("TRANSCRIBE", f"Transcribing '{os.path.basename(source_path)}' using model '{req.model_name}'")
         result = transcribe_media(
             file_path=source_path,
             model_name=req.model_name or "base",
@@ -737,23 +903,20 @@ async def render_endpoint(req: RenderRequest, background_tasks: BackgroundTasks)
     if (req.width or 0) <= 0 or (req.height or 0) <= 0:
         raise HTTPException(status_code=400, detail="Invalid export dimensions")
 
-    source_path = ""
-    if req.linked_path and os.path.isfile(req.linked_path):
-        source_path = req.linked_path
-    elif os.path.isabs(req.video_filename) and os.path.isfile(req.video_filename):
-        source_path = req.video_filename
-    else:
-        source_path = os.path.join(UPLOADS_DIR, req.video_filename)
-        if not os.path.exists(source_path):
-            demo_path = os.path.join(DEMO_DIR, req.video_filename)
-            if os.path.exists(demo_path):
-                source_path = demo_path
-            else:
-                raise HTTPException(status_code=404, detail="Source video file not found")
+    source_path = resolve_media_path(req.video_filename, req.linked_path)
+    if not source_path:
+        log_msg("RENDER", f"Source file not found: video_filename='{req.video_filename}', linked_path='{req.linked_path}'")
+        raise HTTPException(status_code=404, detail="Source video file not found")
             
     _prune_old_jobs()
     job_id = uuid.uuid4().hex[:12]
-    export_filename = f"export_{job_id}.mp4"
+    if req.output_filename and isinstance(req.output_filename, str) and req.output_filename.strip():
+        safe_name = re.sub(r'[/\\?%*:|"<>]+', '', req.output_filename).strip()
+        if safe_name.lower().endswith('.mp4'):
+            safe_name = safe_name[:-4]
+        export_filename = f"{safe_name}.mp4" if safe_name else f"export_{job_id}.mp4"
+    else:
+        export_filename = f"export_{job_id}.mp4"
     output_path = os.path.join(EXPORTS_DIR, export_filename)
     
     # Save debug payload snapshot
@@ -849,10 +1012,11 @@ async def separate_audio_endpoint(
     background_tasks: BackgroundTasks,
     file: Optional[UploadFile] = File(None),
     filename: Optional[str] = Form(None),
+    linked_path: Optional[str] = Form(None),
     engine: Optional[str] = Form("demucs")
 ):
-    if not file and not filename:
-        raise HTTPException(status_code=400, detail="Must provide either an uploaded file or an existing filename.")
+    if not file and not filename and not linked_path:
+        raise HTTPException(status_code=400, detail="Must provide either an uploaded file, an existing filename, or a linked file path.")
 
     _prune_old_jobs()
     job_id = f"sep_{uuid.uuid4().hex[:10]}"
@@ -866,9 +1030,10 @@ async def separate_audio_endpoint(
             shutil.copyfileobj(file.file, buffer)
         input_file_path = saved_path
     else:
-        input_file_path = os.path.join(UPLOADS_DIR, filename)
-        if not os.path.exists(input_file_path):
-            raise HTTPException(status_code=404, detail=f"File '{filename}' not found in uploads directory.")
+        source_path = resolve_media_path(filename, linked_path)
+        if not source_path:
+            raise HTTPException(status_code=404, detail=f"Audio/video file not found on disk or storage.")
+        input_file_path = source_path
 
     SEPARATION_JOBS[job_id] = {
         "job_id": job_id,

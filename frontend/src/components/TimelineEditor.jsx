@@ -33,7 +33,8 @@ export const TimelineEditor = () => {
     backendAvailable,
     style,
     selectedModel,
-    ensureModelDownloaded
+    ensureModelDownloaded,
+    linkedSourcePath
   } = useEditorStore();
 
   const [editingWordId, setEditingWordId] = useState(null);
@@ -97,12 +98,14 @@ export const TimelineEditor = () => {
         if (!res.ok) throw new Error('Transcription failed');
         const data = await res.json();
         setSegments(data.segments);
-      } else if (backendAvailable && videoFilename) {
+      } else if (backendAvailable && (videoFilename || linkedSourcePath)) {
+        const effectiveFilename = videoFilename || (linkedSourcePath ? linkedSourcePath.split(/[/\\]/).pop() : '');
         const res = await fetch(`${BACKEND_URL}/api/transcribe-saved`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            video_filename: videoFilename,
+            video_filename: effectiveFilename,
+            linked_path: linkedSourcePath || null,
             model_name: selectedModel,
             max_words_per_segment: style.maxWordsPerSegment || 3
           })

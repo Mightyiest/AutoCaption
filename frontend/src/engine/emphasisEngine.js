@@ -57,21 +57,30 @@ function cleanKeywordToken(text = '') {
  * @param {Set|Array} [customKeywords] - Optional user custom keyword list/set
  * @returns {boolean}
  */
-export function isPowerKeyword(wordText = '', customKeywords = null) {
+export function isPowerKeyword(wordText = '', customKeywords = null, options = {}) {
+  const onlyCustom = Boolean(options.onlyCustom);
   if (!wordText) return false;
   const raw = String(wordText).trim();
   const clean = cleanKeywordToken(raw);
 
   if (!clean) return false;
 
-  // 1. User custom power keywords
+  // 1. User custom power keywords (top priority with smart prefix & root matching)
   if (customKeywords) {
-    if (customKeywords instanceof Set) {
-      if (customKeywords.has(clean)) return true;
-    } else if (Array.isArray(customKeywords)) {
-      if (customKeywords.some(k => cleanKeywordToken(k) === clean)) return true;
+    const list = customKeywords instanceof Set ? Array.from(customKeywords) : (Array.isArray(customKeywords) ? customKeywords : []);
+    for (const k of list) {
+      const cleanK = cleanKeywordToken(k);
+      if (!cleanK) continue;
+      if (clean === cleanK) return true;
+      // Word starts with keyword (e.g. word "painful" starts with keyword "pain", "cracking" starts with "crack")
+      if (cleanK.length >= 3 && clean.startsWith(cleanK)) return true;
+      // Keyword starts with word (e.g. keyword "cracks" matches word "crack")
+      if (clean.length >= 4 && cleanK.startsWith(clean)) return true;
     }
   }
+
+  // If onlyCustom is requested (e.g. from Keyword Library "Apply to Captions"), do not fall back to generic keywords
+  if (onlyCustom) return false;
 
   // 2. Direct power keyword dictionary match
   if (POWER_KEYWORDS.has(clean)) return true;
@@ -107,12 +116,14 @@ export function isPowerKeyword(wordText = '', customKeywords = null) {
  * @param {Object} options - Configuration options
  * @param {boolean} [options.overwrite=false] - Whether to overwrite existing user emphasis choices
  * @param {Set|Array} [options.customKeywords] - Custom keyword list
+ * @param {boolean} [options.onlyCustom=false] - When true, only apply emphasis to matched customKeywords
  * @returns {Array} Updated segments
  */
 export function autoApplyEmphasis(segments = [], options = {}) {
   if (!Array.isArray(segments)) return [];
   const overwrite = Boolean(options.overwrite);
   const customKeywords = options.customKeywords || null;
+  const onlyCustom = Boolean(options.onlyCustom);
 
   return segments.map((seg) => {
     let segmentHasEmphasis = false;
@@ -123,7 +134,7 @@ export function autoApplyEmphasis(segments = [], options = {}) {
         return w;
       }
       const wordStr = String(w.word || w.text || '');
-      const emph = isPowerKeyword(wordStr, customKeywords);
+      const emph = isPowerKeyword(wordStr, customKeywords, { onlyCustom });
       if (emph) segmentHasEmphasis = true;
       return {
         ...w,
@@ -131,23 +142,18 @@ export function autoApplyEmphasis(segments = [], options = {}) {
       };
     });
 
-    // If no word matched a power keyword, smartly pick the highest-impact content word in the segment
-    if (!segmentHasEmphasis && updatedWords.length > 0) {
+    // If no word matched and NOT onlyCustom, smartly pick the highest-impact content word in the segment
+    if (!onlyCustom && !segmentHasEmphasis && updatedWords.length > 0) {
       // Find candidate words excluding common stopwords
       let bestIdx = -1;
       let maxLen = 0;
 
       for (let i = 0; i < updatedWords.length; i++) {
         const wStr = String(updatedWords[i].word || updatedWords[i].text || '').toLowerCase().replace(/[^a-z]/g, '');
-        if (!STOP_WORDS.has(wStr) && wStr.length > maxLen) {
+        if (!STOP_WORDS.has(wStr) && wStr.length > maxLen && wStr.length >= 4) {
           maxLen = wStr.length;
           bestIdx = i;
         }
-      }
-
-      // If all words were stopwords, pick the central word
-      if (bestIdx === -1) {
-        bestIdx = Math.floor(updatedWords.length / 2);
       }
 
       if (bestIdx >= 0 && bestIdx < updatedWords.length) {

@@ -259,15 +259,14 @@ body {{
 
 .word-token.is-active.is-emphasized {{
   color: {emphasis_color} !important;
-  transform: scale({emphasis_scale}) !important;
 }}
 
 .word-token.is-active.anim-pop {{
-  transform: scale(1.08) translateY(0);
+  transform: scale(1.12) translateY(0);
 }}
 
 .word-token.is-active.anim-bounce {{
-  transform: translateY(0) scale(1.04) rotate(0deg);
+  transform: translateY(-8px) scale(1.05) rotate(0deg);
 }}
 
 .word-token.is-active.anim-karaoke {{

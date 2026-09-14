@@ -172,7 +172,7 @@ export const StyleInspector = () => {
             onClick={() => setActiveTab('ai_effects')}
             className={`segmented-control-item ${activeTab === 'ai_effects' ? 'active' : ''}`}
             title="AI Viral Emojis & Keyword Emphasis"
-            style={{ padding: '6px 2px', fontSize: '10.5px', color: activeTab === 'ai_effects' ? 'var(--accent-bright-blue)' : '#00FF66' }}
+            style={{ padding: '6px 2px', fontSize: '10.5px' }}
           >
             <Wand2 size={11} />
             <span>AI Viral</span>
@@ -823,7 +823,7 @@ export const StyleInspector = () => {
               gap: '8px'
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Sparkles size={14} color="#00FF66" />
+                <Sparkles size={14} color="var(--accent-bright-blue)" />
                 <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-primary)' }}>
                   AI Instant Viral Enhancer
                 </span>
@@ -836,19 +836,19 @@ export const StyleInspector = () => {
                 className="btn-primary"
                 style={{
                   width: '100%',
-                  padding: '9px 12px',
+                  padding: '9px 16px',
                   fontSize: '12px',
-                  fontWeight: '700',
-                  background: 'linear-gradient(135deg, #00FF66 0%, #00C853 100%)',
-                  color: '#000000',
+                  fontWeight: '600',
+                  background: 'var(--btn-primary-bg)',
+                  color: 'var(--btn-primary-text)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   gap: '6px',
                   border: 'none',
-                  borderRadius: 'var(--radius-sm)',
+                  borderRadius: 'var(--radius-pill)',
                   cursor: 'pointer',
-                  boxShadow: '0 2px 10px rgba(0, 255, 102, 0.35)',
+                  boxShadow: 'var(--shadow-subtle)',
                   transition: 'all var(--transition-fast)'
                 }}
               >
@@ -1005,7 +1005,7 @@ export const StyleInspector = () => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--border-subtle)', paddingTop: '10px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <Flame size={13} color="#00FF66" />
+                  <Flame size={13} color="var(--text-primary)" />
                   <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                     Smart Keyword Emphasis
                   </span>
@@ -1098,12 +1098,12 @@ export const StyleInspector = () => {
                             onClick={() => handleStyleChange('emphasisMode', mode.id)}
                             className="btn-ghost"
                             style={{
-                              padding: '5px 4px',
+                              padding: '5px 8px',
                               fontSize: '10px',
                               fontWeight: isSelected ? '600' : '400',
-                              background: isSelected ? 'rgba(0, 255, 102, 0.15)' : 'var(--bg-surface)',
-                              color: isSelected ? '#00FF66' : 'var(--text-secondary)',
-                              border: isSelected ? '1px solid #00FF66' : '1px solid var(--border-subtle)',
+                              background: isSelected ? 'var(--bg-active)' : 'var(--bg-surface)',
+                              color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)',
+                              border: isSelected ? '1.5px solid var(--border-hover)' : '1px solid var(--border-subtle)',
                               borderRadius: 'var(--radius-sm)'
                             }}
                           >
@@ -1173,9 +1173,9 @@ export const StyleInspector = () => {
                         fontSize: '9.5px',
                         padding: '2px 5px',
                         borderRadius: '3px',
-                        background: 'rgba(255, 255, 255, 0.05)',
+                        background: 'var(--bg-surface)',
                         border: '1px solid var(--border-subtle)',
-                        color: r.isEmphasized ? '#00FF66' : 'var(--text-secondary)',
+                        color: 'var(--text-primary)',
                         display: 'inline-flex',
                         alignItems: 'center',
                         gap: '3px'

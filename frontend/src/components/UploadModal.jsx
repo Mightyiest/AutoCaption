@@ -31,7 +31,8 @@ export const UploadModal = () => {
     backendAvailable,
     videoFilename,
     removePunctuation,
-    setRemovePunctuation
+    setRemovePunctuation,
+    linkedSourcePath
   } = useEditorStore();
 
   const [selectedFile, setSelectedFile] = useState(null);
@@ -122,13 +123,15 @@ export const UploadModal = () => {
         setRemovePunctuation(stripPunct);
         setVideo(selectedFile, `${BACKEND_URL}${data.video_url}`, data.video_filename, data.duration);
         setSegments(data.segments);
-      } else if (backendAvailable && videoFilename) {
+      } else if (backendAvailable && (videoFilename || linkedSourcePath)) {
         setIsTranscribing(true, `Running Whisper ${selectedModel.toUpperCase()} speech alignment...`);
+        const effectiveFilename = videoFilename || (linkedSourcePath ? linkedSourcePath.split(/[/\\]/).pop() : '');
         const response = await fetch(`${BACKEND_URL}/api/transcribe-saved`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            video_filename: videoFilename,
+            video_filename: effectiveFilename,
+            linked_path: linkedSourcePath || null,
             model_name: selectedModel,
             language: language !== 'auto' ? language : null,
             max_words_per_segment: wordsPerChunk,

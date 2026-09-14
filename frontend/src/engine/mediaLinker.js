@@ -9,12 +9,22 @@ const BACKEND_URL = 'http://127.0.0.1:8000';
  * Trigger native Windows File Picker dialog via backend to select any video file on disk.
  * Returns file path, metadata, and direct streaming URL with zero file duplication.
  */
-export async function browseLocalFile() {
+export async function browseLocalFile(signal = null) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 120000);
+
+  if (signal) {
+    signal.addEventListener('abort', () => controller.abort());
+  }
+
   try {
     const res = await fetch(`${BACKEND_URL}/api/media/browse-file`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal
     });
+    clearTimeout(timeoutId);
+
     if (!res.ok) {
       throw new Error(`Browse failed with status ${res.status}`);
     }
@@ -34,6 +44,10 @@ export async function browseLocalFile() {
       streamUrl: `${BACKEND_URL}${data.stream_url}`
     };
   } catch (err) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      return { cancelled: true };
+    }
     console.error('Failed to open native file browser:', err);
     throw err;
   }

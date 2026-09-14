@@ -5,6 +5,14 @@ import {
   BufferTarget,
   CanvasSource,
   AudioBufferSource,
+  AudioSampleSource,
+  AudioSampleSink,
+  EncodedAudioPacketSource,
+  EncodedPacketSink,
+  Input,
+  BlobSource,
+  UrlSource,
+  ALL_FORMATS,
   QUALITY_LOW,
   QUALITY_MEDIUM,
   QUALITY_HIGH,
@@ -41,24 +49,53 @@ export class ClientSceneExporter {
     this.format = format;
     this.quality = quality;
     this.isCancelled = false;
+    this._audioInput = null;
   }
 
   cancel() {
     this.isCancelled = true;
+    if (this._audioInput) {
+      try {
+        this._audioInput.dispose();
+      } catch (_) {}
+    }
   }
 
   /**
-   * Extracts an AudioBuffer from an audio/video File or Blob using Web Audio.
+   * Extracts an AudioBuffer from an audio/video File, Blob, or URL using Web Audio.
    */
-  async extractAudioBuffer(file) {
+  async extractAudioBuffer(fileOrUrl) {
     try {
-      const arrayBuffer = await file.arrayBuffer();
-      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-      await audioCtx.close();
-      return audioBuffer;
+      let arrayBuffer = null;
+      if (fileOrUrl instanceof Blob) {
+        arrayBuffer = await fileOrUrl.arrayBuffer();
+      } else if (typeof fileOrUrl === 'string' && fileOrUrl.trim()) {
+        let fetchUrl = fileOrUrl.trim();
+        if (fetchUrl.startsWith('/') && typeof window !== 'undefined') {
+          fetchUrl = window.location.origin + fetchUrl;
+        }
+        const res = await fetch(fetchUrl);
+        if (res.ok) {
+          arrayBuffer = await res.arrayBuffer();
+        }
+      }
+
+      if (!arrayBuffer) return null;
+
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return null;
+
+      const audioCtx = new AudioCtx();
+      try {
+        const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer.slice(0));
+        return audioBuffer;
+      } finally {
+        if (audioCtx.state !== 'closed') {
+          audioCtx.close().catch(() => {});
+        }
+      }
     } catch (err) {
-      console.warn('Could not extract AudioBuffer from source video:', err);
+      console.warn('Could not extract AudioBuffer via Web Audio fallback:', err);
       return null;
     }
   }
@@ -67,8 +104,8 @@ export class ClientSceneExporter {
    * Runs the full client-side rendering and export pipeline.
    *
    * @param {Object} params
-   * @param {File|Blob} params.videoFile - Original uploaded video file
-   * @param {string} [params.videoUrl] - Video preview URL
+   * @param {File|Blob} [params.videoFile] - Original uploaded video file
+   * @param {string} [params.videoUrl] - Video preview URL / stream endpoint
    * @param {number} params.duration - Total video duration in seconds
    * @param {Array} params.segments - Caption segments
    * @param {Object} params.style - Caption style configuration
@@ -108,48 +145,133 @@ export class ClientSceneExporter {
 
     output.addVideoTrack(videoSource, { frameRate: this.fps });
 
-    // Extract & Attach Audio Track
-    let audioBuffer = null;
+    // Extract & Attach Audio Track using Multi-Tier Pipeline
+    let audioInput = null;
+    let audioTrack = null;
     let audioSource = null;
-    if (videoFile) {
-      audioBuffer = await this.extractAudioBuffer(videoFile);
-    }
+    let audioMode = null; // 'transmux' | 'transcode' | 'buffer'
+    let audioBuffer = null;
 
-    if (audioBuffer) {
-      try {
-        let audioCodec = this.format === 'webm' ? 'opus' : 'aac';
-        if (audioCodec === 'aac' && typeof AudioEncoder !== 'undefined') {
-          const { supported } = await AudioEncoder.isConfigSupported({
-            codec: 'mp4a.40.2',
-            sampleRate: audioBuffer.sampleRate,
-            numberOfChannels: audioBuffer.numberOfChannels,
-            bitrate: 192000
-          });
-          if (!supported) audioCodec = 'opus';
+    try {
+      // Resolve media source for Mediabunny Input
+      let mediaSource = null;
+      if (videoFile instanceof Blob) {
+        mediaSource = new BlobSource(videoFile);
+      } else if (typeof videoUrl === 'string' && videoUrl.trim()) {
+        let fullUrl = videoUrl.trim();
+        if (fullUrl.startsWith('/') && typeof window !== 'undefined') {
+          fullUrl = window.location.origin + fullUrl;
         }
-
-        audioSource = new AudioBufferSource({
-          codec: audioCodec,
-          bitrate: QUALITY_HIGH
-        });
-        output.addAudioTrack(audioSource);
-      } catch (audioErr) {
-        console.warn('Audio track setup failed, continuing video-only export:', audioErr);
-        audioSource = null;
+        mediaSource = new UrlSource(fullUrl);
       }
+
+      if (mediaSource) {
+        try {
+          audioInput = new Input({
+            source: mediaSource,
+            formats: ALL_FORMATS
+          });
+          this._audioInput = audioInput;
+          const tracks = await audioInput.getAudioTracks();
+          if (tracks && tracks.length > 0) {
+            audioTrack = tracks[0];
+          }
+        } catch (inputErr) {
+          console.warn('Could not initialize audio input via Mediabunny:', inputErr);
+        }
+      }
+
+      const supportedCodecs = outputFormat.getSupportedAudioCodecs();
+
+      // Tier 1: Fast Direct Packet Transmuxing (Lossless, Instant)
+      if (audioTrack && supportedCodecs.includes(audioTrack.codec)) {
+        audioSource = new EncodedAudioPacketSource(audioTrack.codec);
+        output.addAudioTrack(audioSource);
+        audioMode = 'transmux';
+      }
+      // Tier 2: WebCodecs Re-encoding (AudioSampleSource)
+      else if (audioTrack && typeof AudioDecoder !== 'undefined' && typeof AudioEncoder !== 'undefined') {
+        try {
+          const canDecode = await audioTrack.canDecode();
+          if (canDecode) {
+            const targetCodec = this.format === 'webm' ? 'opus' : 'aac';
+            audioSource = new AudioSampleSource({
+              codec: targetCodec,
+              quality: QUALITY_HIGH
+            });
+            output.addAudioTrack(audioSource);
+            audioMode = 'transcode';
+          }
+        } catch (sampleErr) {
+          console.warn('WebCodecs audio sample track setup failed:', sampleErr);
+        }
+      }
+
+      // Tier 3: Web Audio Buffer Fallback
+      if (!audioMode) {
+        audioBuffer = await this.extractAudioBuffer(videoFile || videoUrl);
+        if (audioBuffer) {
+          let audioCodec = this.format === 'webm' ? 'opus' : 'aac';
+          if (audioCodec === 'aac' && typeof AudioEncoder !== 'undefined') {
+            const { supported } = await AudioEncoder.isConfigSupported({
+              codec: 'mp4a.40.2',
+              sampleRate: audioBuffer.sampleRate,
+              numberOfChannels: audioBuffer.numberOfChannels,
+              bitrate: 192000
+            }).catch(() => ({ supported: false }));
+            if (!supported) audioCodec = 'opus';
+          }
+
+          audioSource = new AudioBufferSource({
+            codec: audioCodec,
+            bitrate: QUALITY_HIGH
+          });
+          output.addAudioTrack(audioSource);
+          audioMode = 'buffer';
+        }
+      }
+    } catch (audioSetupErr) {
+      console.warn('Failed to configure audio track, continuing video-only:', audioSetupErr);
+      audioSource = null;
+      audioMode = null;
     }
 
     // Start encoder
     await output.start();
 
-    // Write Audio
-    if (audioSource && audioBuffer) {
-      try {
-        await audioSource.add(audioBuffer);
-        audioSource.close();
-      } catch (err) {
-        console.warn('Audio buffer write error:', err);
-      }
+    // Start Audio Pump concurrently with video frame rendering
+    let audioPumpPromise = null;
+    if (audioSource && audioMode) {
+      audioPumpPromise = (async () => {
+        try {
+          if (audioMode === 'transmux' && audioTrack) {
+            const sink = new EncodedPacketSink(audioTrack);
+            const decoderConfig = await audioTrack.getDecoderConfig();
+            const meta = { decoderConfig: decoderConfig ?? undefined };
+            for await (const packet of sink.packets()) {
+              if (this.isCancelled) break;
+              if (packet.timestamp >= duration) break;
+              await audioSource.add(packet, meta);
+            }
+            audioSource.close();
+          } else if (audioMode === 'transcode' && audioTrack) {
+            const sink = new AudioSampleSink(audioTrack);
+            for await (const sample of sink.samples(0, duration)) {
+              if (this.isCancelled) break;
+              await audioSource.add(sample);
+            }
+            audioSource.close();
+          } else if (audioMode === 'buffer' && audioBuffer) {
+            await audioSource.add(audioBuffer);
+            audioSource.close();
+          }
+        } catch (pumpErr) {
+          console.warn('Audio pump error:', pumpErr);
+          try {
+            audioSource.close();
+          } catch (_) {}
+        }
+      })();
     }
 
     // Precise frame-time calculations (integer frame indices)
@@ -219,12 +341,22 @@ export class ClientSceneExporter {
     if (this.isCancelled) {
       await output.cancel();
       videoSourceCache.clear();
+      if (audioInput) {
+        try { await audioInput.dispose(); } catch (_) {}
+      }
       throw new Error('Export cancelled by user');
     }
 
-    // Finalize
+    // Finalize video and audio tracks
     videoSource.close();
+    if (audioPumpPromise) {
+      await audioPumpPromise.catch(err => console.warn('Audio pump error on finalize:', err));
+    }
     await output.finalize();
+
+    if (audioInput) {
+      try { await audioInput.dispose(); } catch (_) {}
+    }
 
     const buffer = target.buffer;
     if (!buffer) {
@@ -235,3 +367,4 @@ export class ClientSceneExporter {
     return new Blob([buffer], { type: mimeType });
   }
 }
+

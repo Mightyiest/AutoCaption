@@ -71,9 +71,12 @@ export const Navbar = () => {
     toggleTheme,
     // Projects & Media Linking
     setCurrentView,
+    activeProjectId,
     activeProjectTitle,
     renameCurrentProject,
     saveStatus,
+    lastSavedTime,
+    relinkProjectMedia,
     isMediaLinked,
     linkedSourcePath,
     mediaOffline
@@ -226,35 +229,40 @@ export const Navbar = () => {
             <span style={{
               fontSize: '9.5px',
               fontWeight: '600',
-              color: saveStatus === 'saving' ? 'var(--system-warning)' : 'var(--system-success)',
+              color: saveStatus === 'saving' 
+                ? 'var(--system-warning)' 
+                : (saveStatus === 'unsaved' ? 'var(--text-tertiary)' : 'var(--system-success)'),
               display: 'flex',
               alignItems: 'center',
               gap: '3px'
             }}>
-              ● {saveStatus === 'saving' ? 'Saving...' : 'Saved'}
+              ● {saveStatus === 'saving' ? 'Saving...' : (saveStatus === 'unsaved' ? 'Unsaved' : (lastSavedTime ? `Saved ${lastSavedTime}` : 'Saved'))}
             </span>
           </div>
         )}
 
         {isMediaLinked && (
-          <span 
+          <button 
+            type="button"
+            onClick={() => mediaOffline && activeProjectId && relinkProjectMedia(activeProjectId)}
             style={{ 
               fontSize: '10px', 
               fontWeight: '600', 
-              padding: '2px 7px', 
+              padding: '2px 8px', 
               borderRadius: 'var(--radius-pill)', 
-              background: 'var(--bg-surface)', 
-              border: '1px solid var(--border-subtle)',
+              background: mediaOffline ? 'rgba(239, 68, 68, 0.12)' : 'var(--bg-surface)', 
+              border: mediaOffline ? '1px solid rgba(239, 68, 68, 0.35)' : '1px solid var(--border-subtle)',
               color: mediaOffline ? 'var(--system-error)' : 'var(--text-secondary)',
               display: 'flex',
               alignItems: 'center',
-              gap: '4px'
+              gap: '4px',
+              cursor: mediaOffline ? 'pointer' : 'default'
             }}
-            title={`Video File: ${linkedSourcePath || ''}`}
+            title={mediaOffline ? `Media offline! Click to relink file: ${linkedSourcePath || ''}` : `Video File: ${linkedSourcePath || ''}`}
           >
             <Link2 size={11} />
-            <span>{mediaOffline ? 'Offline' : 'Linked Video'}</span>
-          </span>
+            <span>{mediaOffline ? 'Relink Offline Media' : 'Linked Video'}</span>
+          </button>
         )}
       </div>
 

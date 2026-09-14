@@ -20,11 +20,14 @@ import {
   Check,
   Sparkles,
   AlertCircle,
-  FileVideo
+  FileVideo,
+  Upload
 } from 'lucide-react';
 import { useEditorStore } from '../store/useEditorStore';
 import { browseLocalFile } from '../engine/mediaLinker';
 import './ProjectsHub.css';
+
+const BACKEND_URL = 'http://127.0.0.1:8000';
 
 export const ProjectsHub = () => {
   const {
@@ -51,7 +54,6 @@ export const ProjectsHub = () => {
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newAspect, setNewAspect] = useState('9:16');
-  const [newPreset, setNewPreset] = useState('mrbeast');
   const [newLinkedFile, setNewLinkedFile] = useState(null);
   const [isLinking, setIsLinking] = useState(false);
 
@@ -63,6 +65,7 @@ export const ProjectsHub = () => {
 
   const titleInputRef = useRef(null);
   const renameInputRef = useRef(null);
+  const modalFileInputRef = useRef(null);
 
   useEffect(() => {
     fetchProjectsList();
@@ -122,24 +125,21 @@ export const ProjectsHub = () => {
     const defaultName = defaultTitle || `New ${aspect === '9:16' ? 'Vertical' : aspect === '16:9' ? 'Widescreen' : 'Square'} Project #${projectsList.length + 1}`;
     setNewTitle(defaultName);
     setNewAspect(aspect);
-    setNewPreset('mrbeast');
     setNewLinkedFile(null);
     setIsNewModalOpen(true);
   };
 
-  // Browse local file directly from the New Project modal
+  // Browse local file directly from the New Project modal (Zero-Copy)
   const handleBrowseLocalFileInModal = async () => {
     setIsLinking(true);
     try {
       const result = await browseLocalFile();
       if (!result.cancelled) {
         setNewLinkedFile(result);
-        // Automatically suggest filename as project title if default was unchanged
         if (!newTitle || newTitle.startsWith('New ')) {
           const cleanName = result.filename.replace(/\.[^/.]+$/, "");
           setNewTitle(cleanName);
         }
-        // Auto-select aspect ratio if video is wider than tall
         if (result.width && result.height) {
           if (result.width > result.height) {
             setNewAspect('16:9');
@@ -151,10 +151,55 @@ export const ProjectsHub = () => {
         }
       }
     } catch (e) {
-      console.warn('File browse error:', e);
+      console.warn('File browse error, falling back to browser picker:', e);
+      if (modalFileInputRef.current) {
+        modalFileInputRef.current.click();
+      }
     } finally {
       setIsLinking(false);
     }
+  };
+
+  // Fallback: handle browser HTML file picker selection
+  const handleModalBrowserFileSelected = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const objectUrl = URL.createObjectURL(file);
+    const sizeMb = Math.round((file.size / (1024 * 1024)) * 10) / 10;
+
+    const tempVideo = document.createElement('video');
+    tempVideo.preload = 'metadata';
+    tempVideo.src = objectUrl;
+    tempVideo.onloadedmetadata = () => {
+      const width = tempVideo.videoWidth || 1080;
+      const height = tempVideo.videoHeight || 1920;
+      const duration = tempVideo.duration || 0;
+
+      setNewLinkedFile({
+        file: file,
+        filePath: null,
+        filename: file.name,
+        sizeMb: sizeMb,
+        duration: duration,
+        width: width,
+        height: height,
+        streamUrl: objectUrl
+      });
+
+      if (!newTitle || newTitle.startsWith('New ')) {
+        const cleanName = file.name.replace(/\.[^/.]+$/, "");
+        setNewTitle(cleanName);
+      }
+      if (width > height) {
+        setNewAspect('16:9');
+      } else if (width === height) {
+        setNewAspect('1:1');
+      } else {
+        setNewAspect('9:16');
+      }
+    };
+    e.target.value = '';
   };
 
   // Submit and create new project
@@ -163,11 +208,15 @@ export const ProjectsHub = () => {
     const titleToUse = newTitle.trim() || `New ${newAspect} Project`;
 
     setIsNewModalOpen(false);
+    setIsLinking(false);
     await createNewProject({
       aspect: newAspect,
       title: titleToUse,
       linkedPath: newLinkedFile ? newLinkedFile.filePath : null,
-      presetId: newPreset
+      videoFile: newLinkedFile ? newLinkedFile.file : null,
+      videoFilename: newLinkedFile ? (newLinkedFile.savedFilename || newLinkedFile.filename) : null,
+      videoUrl: newLinkedFile ? newLinkedFile.streamUrl : null,
+      presetId: 'mrbeast'
     });
     triggerToast(`Created "${titleToUse}"`);
   };
@@ -431,16 +480,30 @@ export const ProjectsHub = () => {
                   ? `${Math.floor(p.duration / 60)}:${(Math.floor(p.duration % 60)).toString().padStart(2, '0')}`
                   : '0:30';
 
-              const linesText = p.linesCount || p.lines || 14;
+              const linesText = p.linesCount || p.lines || (p.segments ? p.segments.length : 0);
               const presetText = p.activePresetName || p.preset || p.activePresetId || 'MrBeast Pop';
-              const captionText = p.captionSnippet || p.caption || 'SAMPLE CAPTION 🚀';
+
+              // Resolve authentic video snapshot thumbnail
+              const rawThumb = p.thumbnailUrl || p.thumb;
+              const isPlaceholder = !rawThumb || rawThumb.includes('unsplash.com');
+              const videoSnapshotUrl = (p.linkedSourcePath || p.videoFilename)
+                ? `${BACKEND_URL}/api/media/thumbnail?filename=${encodeURIComponent(p.videoFilename || '')}&path=${encodeURIComponent(p.linkedSourcePath || '')}`
+                : null;
+              const thumbUrl = !isPlaceholder ? rawThumb : videoSnapshotUrl;
+
+              // Only show snippet text if it's a real user caption and not a dummy template string
+              const isDummySnippet = !p.captionSnippet || 
+                p.captionSnippet === 'SAMPLE CAPTION 🚀' || 
+                p.captionSnippet === 'Studio Caption' || 
+                p.captionSnippet === 'NEW PROJECT 🔥';
+              const captionText = !isDummySnippet ? p.captionSnippet : null;
               const captionClass = p.captionStyleClass || p.captionClass || 'cap-style-mrbeast';
-              const thumbUrl = p.thumbnailUrl || p.thumb || 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=600&auto=format&fit=crop&q=80';
 
               return (
                 <div
                   key={p.id}
-                  className="project-card"
+                  className={`project-card ${menuOpenId === p.id ? 'menu-active' : ''}`}
+                  style={{ zIndex: menuOpenId === p.id ? 60 : 1 }}
                   onClick={() => handleOpenProject(p.id, p.title)}
                 >
                   <div className="card-stage">
@@ -461,15 +524,42 @@ export const ProjectsHub = () => {
                       </div>
                     )}
 
-                    <img
-                      className="card-thumb"
-                      src={thumbUrl}
-                      alt={p.title}
-                    />
+                    {thumbUrl ? (
+                      <img
+                        className="card-thumb"
+                        src={thumbUrl}
+                        alt={p.title}
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none';
+                          const fallback = e.currentTarget.parentElement?.querySelector('.card-thumb-fallback');
+                          if (fallback) fallback.style.display = 'flex';
+                        }}
+                      />
+                    ) : null}
 
-                    <div className="stage-caption">
-                      <div className={captionClass}>{captionText}</div>
+                    <div
+                      className="card-thumb-fallback"
+                      style={{
+                        display: thumbUrl ? 'none' : 'flex',
+                        position: 'absolute',
+                        inset: 0,
+                        background: 'linear-gradient(135deg, #111219 0%, #1c1d29 100%)',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px',
+                        color: 'var(--text-tertiary)'
+                      }}
+                    >
+                      <Film size={26} style={{ opacity: 0.35 }} />
+                      <span style={{ fontSize: '11px', fontWeight: 600, opacity: 0.5, letterSpacing: '0.04em' }}>VIDEO SNAPSHOT</span>
                     </div>
+
+                    {captionText && (
+                      <div className="stage-caption">
+                        <div className={captionClass}>{captionText}</div>
+                      </div>
+                    )}
 
                     <div className="card-stage-scrim">
                       <button
@@ -490,7 +580,7 @@ export const ProjectsHub = () => {
                       <span className="card-title" title={p.title}>{p.title}</span>
                       <button
                         className="card-menu-btn"
-                        title="Project Options"
+                        title={menuOpenId === p.id ? undefined : "Project Options"}
                         onClick={(e) => handleOptionsClick(e, p.id)}
                       >
                         <MoreVertical size={16} />
@@ -502,49 +592,50 @@ export const ProjectsHub = () => {
                           style={{
                             position: 'absolute',
                             right: '0',
-                            top: '28px',
+                            top: '32px',
                             background: 'var(--bg-panel)',
+                            backdropFilter: 'blur(16px)',
                             border: '1px solid var(--border-subtle)',
-                            borderRadius: 'var(--radius-md)',
-                            boxShadow: 'var(--shadow-card-hover)',
-                            zIndex: 60,
-                            minWidth: '150px',
-                            padding: '4px',
+                            borderRadius: 'var(--radius-lg)',
+                            boxShadow: 'var(--shadow-popover)',
+                            zIndex: 100,
+                            minWidth: '160px',
+                            padding: '6px',
                             display: 'flex',
                             flexDirection: 'column',
-                            gap: '2px'
+                            gap: '3px'
                           }}
                         >
                           <button
                             onClick={() => { setMenuOpenId(null); openRenameModal(p); }}
                             className="btn-ghost"
-                            style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: '11.5px', gap: '8px' }}
+                            style={{ width: '100%', justifyContent: 'flex-start', padding: '7px 10px', fontSize: '12px', gap: '9px' }}
                           >
-                            <Edit3 size={13} /> Rename
+                            <Edit3 size={14} /> Rename
                           </button>
                           <button
                             onClick={() => { setMenuOpenId(null); handleDuplicate(p); }}
                             className="btn-ghost"
-                            style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: '11.5px', gap: '8px' }}
+                            style={{ width: '100%', justifyContent: 'flex-start', padding: '7px 10px', fontSize: '12px', gap: '9px' }}
                           >
-                            <Copy size={13} /> Duplicate
+                            <Copy size={14} /> Duplicate
                           </button>
                           {p.isMediaLinked && (
                             <button
                               onClick={() => { setMenuOpenId(null); relinkProjectMedia(p.id); }}
                               className="btn-ghost"
-                              style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: '11.5px', gap: '8px' }}
+                              style={{ width: '100%', justifyContent: 'flex-start', padding: '7px 10px', fontSize: '12px', gap: '9px' }}
                             >
-                              <Link2 size={13} /> Relink Media
+                              <Link2 size={14} /> Relink Media
                             </button>
                           )}
-                          <div style={{ height: '1px', background: 'var(--border-subtle)', margin: '3px 0' }} />
+                          <div style={{ height: '1px', background: 'var(--border-subtle)', margin: '4px 0' }} />
                           <button
                             onClick={() => { setMenuOpenId(null); openDeleteModal(p); }}
                             className="btn-ghost"
-                            style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: '11.5px', gap: '8px', color: 'var(--system-error)' }}
+                            style={{ width: '100%', justifyContent: 'flex-start', padding: '7px 10px', fontSize: '12px', gap: '9px', color: 'var(--system-error)' }}
                           >
-                            <Trash2 size={13} /> Delete
+                            <Trash2 size={14} /> Delete
                           </button>
                         </div>
                       )}
@@ -575,7 +666,10 @@ export const ProjectsHub = () => {
           APPLE-STYLE NEW PROJECT MODAL DIALOG
           ======================================================================== */}
       {isNewModalOpen && (
-        <div className="apple-modal-backdrop" onClick={() => setIsNewModalOpen(false)}>
+        <div className="apple-modal-backdrop" onClick={() => {
+          setIsNewModalOpen(false);
+          setIsLinking(false);
+        }}>
           <div className="apple-modal-window" onClick={(e) => e.stopPropagation()}>
             {/* Header */}
             <div className="apple-modal-header">
@@ -595,17 +689,18 @@ export const ProjectsHub = () => {
                   <Sparkles size={18} />
                 </div>
                 <div>
-                  <h3 style={{ fontSize: '15px', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>
-                    New Studio Project
-                  </h3>
-                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0 0' }}>
-                    Select aspect ratio and subtitle styling preset
+                  <h2 className="apple-modal-title">New Studio Project</h2>
+                  <p className="apple-modal-subtitle">
+                    Select canvas aspect ratio and media source
                   </p>
                 </div>
               </div>
 
               <button
-                onClick={() => setIsNewModalOpen(false)}
+                onClick={() => {
+                  setIsNewModalOpen(false);
+                  setIsLinking(false);
+                }}
                 className="apple-modal-close-btn"
                 title="Close dialog (Esc)"
               >
@@ -668,29 +763,7 @@ export const ProjectsHub = () => {
                 </div>
               </div>
 
-              {/* Caption Preset Picker */}
-              <div>
-                <label className="apple-input-label">Initial Caption Style</label>
-                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                  {[
-                    { id: 'mrbeast', label: '🔥 MrBeast Pop' },
-                    { id: 'hormozi', label: '💰 Hormozi Gold' },
-                    { id: 'neon', label: '⚡ Neon Cyan' },
-                    { id: 'minimal', label: '✨ Clean Minimal' }
-                  ].map((pr) => (
-                    <button
-                      key={pr.id}
-                      type="button"
-                      onClick={() => setNewPreset(pr.id)}
-                      className={`apple-preset-chip ${newPreset === pr.id ? 'selected' : ''}`}
-                    >
-                      {pr.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Zero-Copy Media Link Option */}
+              {/* Media Source (Zero-Copy) */}
               <div>
                 <label className="apple-input-label">Media Source (Zero-Copy)</label>
                 {newLinkedFile ? (
@@ -713,7 +786,7 @@ export const ProjectsHub = () => {
                           {newLinkedFile.filename}
                         </div>
                         <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                          {newLinkedFile.sizeMb} MB • {Math.floor(newLinkedFile.duration / 60)}:{(Math.floor(newLinkedFile.duration % 60)).toString().padStart(2, '0')} • Attached
+                          {newLinkedFile.sizeMb} MB • {Math.floor((newLinkedFile.duration || 0) / 60)}:{(Math.floor((newLinkedFile.duration || 0) % 60)).toString().padStart(2, '0')} • Attached
                         </div>
                       </div>
                     </div>
@@ -728,28 +801,39 @@ export const ProjectsHub = () => {
                     </button>
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={handleBrowseLocalFileInModal}
-                    disabled={isLinking}
-                    className="btn-secondary"
-                    style={{
-                      width: '100%',
-                      padding: '10px 14px',
-                      borderRadius: 'var(--radius-md)',
-                      border: '1.5px dashed var(--border-hover)',
-                      background: 'var(--bg-surface)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
-                      fontSize: '12.5px',
-                      fontWeight: 600
-                    }}
-                  >
-                    <FolderOpen size={16} />
-                    <span>{isLinking ? 'Browsing...' : 'Choose Video File (.mp4, .avi, .mov, .mkv)'}</span>
-                  </button>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <input
+                      ref={modalFileInputRef}
+                      type="file"
+                      accept="video/*,audio/*"
+                      style={{ display: 'none' }}
+                      onChange={handleModalBrowserFileSelected}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleBrowseLocalFileInModal}
+                      disabled={isLinking}
+                      className="btn-secondary"
+                      style={{
+                        width: '100%',
+                        padding: '10px 14px',
+                        borderRadius: 'var(--radius-md)',
+                        border: '1.5px dashed var(--border-hover)',
+                        background: 'var(--bg-surface)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px',
+                        fontSize: '12.5px',
+                        fontWeight: 600,
+                        opacity: isLinking ? 0.7 : 1,
+                        cursor: isLinking ? 'wait' : 'pointer'
+                      }}
+                    >
+                      <FolderOpen size={16} />
+                      <span>{isLinking ? 'Opening File Dialog...' : 'Choose Video File (.mp4, .avi, .mov, .mkv)'}</span>
+                    </button>
+                  </div>
                 )}
               </div>
 
@@ -761,7 +845,10 @@ export const ProjectsHub = () => {
             <div className="apple-modal-footer">
               <button
                 type="button"
-                onClick={() => setIsNewModalOpen(false)}
+                onClick={() => {
+                  setIsNewModalOpen(false);
+                  setIsLinking(false);
+                }}
                 className="btn-secondary"
                 style={{ height: '36px', padding: '0 16px', fontSize: '12.5px', borderRadius: 'var(--radius-pill)' }}
               >

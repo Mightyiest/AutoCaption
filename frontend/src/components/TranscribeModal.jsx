@@ -47,7 +47,8 @@ export const TranscribeModal = () => {
     style,
     updateStyle,
     removePunctuation,
-    setRemovePunctuation
+    setRemovePunctuation,
+    linkedSourcePath
   } = useEditorStore();
 
   const [language, setLanguage] = useState('auto');
@@ -111,12 +112,14 @@ export const TranscribeModal = () => {
           throw new Error(err.detail || 'Transcription failed on server');
         }
         resultData = await res.json();
-      } else if (backendAvailable && videoFilename) {
+      } else if (backendAvailable && (videoFilename || linkedSourcePath)) {
+        const effectiveFilename = videoFilename || (linkedSourcePath ? linkedSourcePath.split(/[/\\]/).pop() : '');
         const res = await fetch(`${BACKEND_URL}/api/transcribe-saved`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            video_filename: videoFilename,
+            video_filename: effectiveFilename,
+            linked_path: linkedSourcePath || null,
             model_name: selectedModel,
             language: language !== 'auto' ? language : null,
             max_words_per_segment: wordsPerChunk,

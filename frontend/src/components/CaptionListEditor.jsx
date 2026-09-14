@@ -172,12 +172,12 @@ export const CaptionListEditor = () => {
               onClick={() => autoEnhanceWithAI()}
               className="btn-ghost"
               style={{
-                padding: '4px 7px',
-                fontSize: '10.5px',
+                padding: '4px 8px',
+                fontSize: '11px',
                 fontWeight: '600',
-                color: '#00FF66',
-                backgroundColor: 'rgba(0, 255, 102, 0.08)',
-                border: '1px solid rgba(0, 255, 102, 0.25)',
+                color: 'var(--text-primary)',
+                backgroundColor: 'var(--bg-surface)',
+                border: '1px solid var(--border-subtle)',
                 borderRadius: 'var(--radius-sm)',
                 display: 'flex',
                 alignItems: 'center',
@@ -186,7 +186,7 @@ export const CaptionListEditor = () => {
               }}
               title="AI Auto-Enhance captions with viral emojis & hook highlights"
             >
-              <Sparkles size={11} color="#00FF66" />
+              <Sparkles size={11} color="var(--accent-bright-blue)" />
               <span>Enhance</span>
             </button>
           )}
@@ -570,7 +570,7 @@ export const CaptionListEditor = () => {
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', alignItems: 'center' }}>
                       {seg.words && seg.words.length > 0 ? (
                         seg.words.map((w, wIdx) => {
-                          const isEmph = Boolean(w.isEmphasized);
+                          const isEmph = (style?.autoEmphasisEnabled !== false) && Boolean(w.isEmphasized);
                           return (
                             <span
                               key={w.id || wIdx}
@@ -578,15 +578,15 @@ export const CaptionListEditor = () => {
                                 display: 'inline-flex',
                                 alignItems: 'center',
                                 gap: '2px',
-                                color: isEmph ? '#00FF66' : 'var(--text-primary)',
+                                color: isEmph ? (style?.emphasisColor || 'var(--text-primary)') : 'var(--text-primary)',
                                 fontWeight: isEmph ? '700' : '500',
-                                backgroundColor: isEmph ? 'rgba(0, 255, 102, 0.12)' : 'transparent',
+                                backgroundColor: isEmph ? 'var(--accent-subtle)' : 'transparent',
                                 padding: isEmph ? '0 3px' : '0',
                                 borderRadius: '3px'
                               }}
                             >
                               <span>{w.word || w.text}</span>
-                              {w.emoji && (
+                              {style?.autoEmojiEnabled !== false && w.emoji && (
                                 <img
                                   src={getAppleEmojiUrl(w.emoji)}
                                   alt={w.emoji}
@@ -597,7 +597,7 @@ export const CaptionListEditor = () => {
                                   }}
                                 />
                               )}
-                              {w.emoji && <span style={{ display: 'none', fontSize: '9px' }}>{w.emoji}</span>}
+                              {style?.autoEmojiEnabled !== false && w.emoji && <span style={{ display: 'none', fontSize: '9px' }}>{w.emoji}</span>}
                             </span>
                           );
                         })
@@ -643,7 +643,7 @@ export const CaptionListEditor = () => {
                     }}>
                       {(seg.words || []).map((w, wIdx) => {
                         const isWordActive = currentTime >= w.start && currentTime <= w.end;
-                        const isEmphasized = w.isEmphasized !== undefined ? Boolean(w.isEmphasized) : isPowerKeyword(w.word);
+                        const isEmphasized = (style?.autoEmphasisEnabled !== false) && (w.isEmphasized !== undefined ? Boolean(w.isEmphasized) : isPowerKeyword(w.word));
                         const isPickerOpen = activeEmojiPicker?.segId === seg.id && activeEmojiPicker?.wordId === w.id;
 
                         return (
@@ -665,10 +665,10 @@ export const CaptionListEditor = () => {
                                 background: isWordActive 
                                   ? 'var(--accent-primary)' 
                                   : isEmphasized 
-                                  ? 'rgba(0, 255, 102, 0.12)' 
+                                  ? 'var(--accent-subtle)' 
                                   : 'var(--bg-panel)',
-                                border: isEmphasized ? '1px solid rgba(0, 255, 102, 0.35)' : '1px solid var(--border-subtle)',
-                                color: isWordActive ? '#FFFFFF' : isEmphasized ? '#00FF66' : 'var(--text-secondary)',
+                                border: isEmphasized ? '1px solid var(--border-hover)' : '1px solid var(--border-subtle)',
+                                color: isWordActive ? '#FFFFFF' : isEmphasized ? (style?.emphasisColor || 'var(--text-primary)') : 'var(--text-secondary)',
                                 fontSize: '10px',
                                 fontWeight: isEmphasized ? '700' : '500',
                                 cursor: 'pointer',
@@ -730,12 +730,12 @@ export const CaptionListEditor = () => {
                                   cursor: 'pointer',
                                   display: 'flex',
                                   alignItems: 'center',
-                                  color: isEmphasized ? '#00FF66' : 'var(--text-tertiary)',
+                                  color: isEmphasized ? (style.emphasisColor || 'var(--accent-primary)') : 'var(--text-tertiary)',
                                   opacity: isEmphasized ? 1 : 0.4
                                 }}
                                 title={isEmphasized ? 'Remove emphasis' : 'Add keyword punch emphasis'}
                               >
-                                <Zap size={9} fill={isEmphasized ? '#00FF66' : 'none'} />
+                                <Zap size={9} fill={isEmphasized ? (style.emphasisColor || 'var(--accent-primary)') : 'none'} />
                               </button>
 
                               <span style={{ fontSize: '8px', opacity: 0.5, fontFamily: 'SF Mono, monospace' }}>

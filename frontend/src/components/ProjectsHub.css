@@ -250,7 +250,7 @@ main.studio-content {
   background: var(--bg-panel);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-xl);
-  overflow: hidden;
+  overflow: visible;
   box-shadow: var(--shadow-card);
   display: flex;
   flex-direction: column;
@@ -265,11 +265,18 @@ main.studio-content {
   border-color: var(--border-hover);
 }
 
+.project-card.menu-active {
+  z-index: 50;
+  border-color: var(--border-hover);
+}
+
 .card-stage {
   position: relative;
   aspect-ratio: 16 / 10;
   background: #0A0A0E;
   overflow: hidden;
+  border-top-left-radius: var(--radius-xl);
+  border-top-right-radius: var(--radius-xl);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -413,6 +420,8 @@ main.studio-content {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  border-bottom-left-radius: var(--radius-xl);
+  border-bottom-right-radius: var(--radius-xl);
 }
 
 .card-title-row {

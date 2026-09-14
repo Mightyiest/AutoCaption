@@ -69,45 +69,50 @@ export const KeywordLibraryModal = () => {
   return (
     <div className="modal-backdrop" onClick={() => setKeywordLibraryModalOpen(false)}>
       <div 
-        className="modal-content"
+        className="studio-panel apple-modal-content"
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: '560px',
+          width: '580px',
           maxWidth: '92vw',
-          maxHeight: '85vh',
+          maxHeight: '86vh',
           display: 'flex',
           flexDirection: 'column',
           padding: 0,
-          overflow: 'hidden'
+          overflow: 'hidden',
+          backgroundColor: 'var(--bg-panel)',
+          borderRadius: 'var(--radius-xl)',
+          border: '1px solid var(--border-subtle)',
+          boxShadow: 'var(--shadow-modal)'
         }}
       >
         {/* Header */}
         <div style={{
-          padding: '16px 20px 14px',
+          padding: '16px 20px',
           borderBottom: '1px solid var(--border-subtle)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          background: 'rgba(255, 255, 255, 0.02)'
+          background: 'var(--bg-panel)'
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <div style={{
-              width: '28px',
-              height: '28px',
-              borderRadius: 'var(--radius-sm)',
-              background: 'rgba(0, 255, 102, 0.15)',
+              width: '32px',
+              height: '32px',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--accent-subtle)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: '#00FF66'
+              color: 'var(--text-primary)',
+              border: '1px solid var(--border-subtle)'
             }}>
               <BookOpen size={16} />
             </div>
             <div>
-              <h3 style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-primary)' }}>
+              <h3 style={{ fontSize: '14.5px', fontWeight: '700', color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
                 Keyword & Apple Emoji Library
               </h3>
-              <p style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+              <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
                 Add custom words (e.g. CRACK, PAIN, SUDDEN) with Apple emojis & punch emphasis
               </p>
             </div>
@@ -117,7 +122,8 @@ export const KeywordLibraryModal = () => {
             type="button"
             onClick={() => setKeywordLibraryModalOpen(false)}
             className="btn-ghost"
-            style={{ padding: '4px', borderRadius: '50%' }}
+            style={{ width: '28px', height: '28px', padding: 0, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            title="Close modal"
           >
             <X size={16} />
           </button>
@@ -129,13 +135,13 @@ export const KeywordLibraryModal = () => {
           style={{
             padding: '14px 20px',
             borderBottom: '1px solid var(--border-subtle)',
-            background: 'rgba(0, 113, 227, 0.05)',
+            background: 'var(--bg-surface)',
             display: 'flex',
             flexDirection: 'column',
-            gap: '8px'
+            gap: '10px'
           }}
         >
-          <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)' }}>
+          <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
             Add New Keyword Rule
           </span>
 
@@ -148,11 +154,11 @@ export const KeywordLibraryModal = () => {
               placeholder="Word (e.g. crack, pain, sudden)..."
               style={{
                 flex: 1,
-                background: 'var(--bg-canvas)',
+                background: 'var(--bg-panel)',
                 border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-sm)',
-                padding: '6px 10px',
-                fontSize: '12px',
+                borderRadius: 'var(--radius-md)',
+                padding: '7px 12px',
+                fontSize: '12.5px',
                 color: 'var(--text-primary)',
                 outline: 'none'
               }}
@@ -168,12 +174,13 @@ export const KeywordLibraryModal = () => {
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: '4px',
-                padding: '5px 8px',
-                background: 'var(--bg-canvas)',
+                gap: '6px',
+                padding: '6px 10px',
+                background: 'var(--bg-panel)',
                 border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-sm)',
-                cursor: 'pointer'
+                borderRadius: 'var(--radius-md)',
+                cursor: 'pointer',
+                color: 'var(--text-primary)'
               }}
               title="Pick Apple Emoji"
             >
@@ -181,7 +188,7 @@ export const KeywordLibraryModal = () => {
                 <img
                   src={getAppleEmojiUrl(newEmoji)}
                   alt={newEmoji}
-                  style={{ width: '18px', height: '18px', objectFit: 'contain' }}
+                  style={{ width: '20px', height: '20px', objectFit: 'contain' }}
                   onError={(evt) => {
                     evt.currentTarget.style.display = 'none';
                     evt.currentTarget.parentNode.innerText = newEmoji;
@@ -196,15 +203,17 @@ export const KeywordLibraryModal = () => {
             <label style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '4px',
-              fontSize: '11px',
-              color: newEmphasize ? '#00FF66' : 'var(--text-secondary)',
+              gap: '6px',
+              fontSize: '11.5px',
+              fontWeight: '600',
               cursor: 'pointer',
               userSelect: 'none',
-              padding: '4px 6px',
-              borderRadius: 'var(--radius-sm)',
-              background: newEmphasize ? 'rgba(0, 255, 102, 0.1)' : 'transparent',
-              border: newEmphasize ? '1px solid rgba(0, 255, 102, 0.3)' : '1px solid transparent'
+              padding: '6px 11px',
+              background: newEmphasize ? 'var(--accent-primary)' : 'var(--bg-panel)',
+              border: newEmphasize ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-md)',
+              color: newEmphasize ? 'var(--btn-primary-text)' : 'var(--text-secondary)',
+              transition: 'all var(--transition-fast)'
             }}>
               <input
                 type="checkbox"
@@ -212,7 +221,7 @@ export const KeywordLibraryModal = () => {
                 onChange={(e) => setNewEmphasize(e.target.checked)}
                 style={{ display: 'none' }}
               />
-              <Zap size={12} fill={newEmphasize ? '#00FF66' : 'none'} />
+              <Zap size={12} fill={newEmphasize ? 'currentColor' : 'none'} />
               <span>Emphasis</span>
             </label>
 
@@ -221,23 +230,29 @@ export const KeywordLibraryModal = () => {
               type="submit"
               disabled={!newWord.trim()}
               className="btn-primary"
-              style={{ padding: '6px 12px', fontSize: '11px' }}
+              style={{
+                padding: '7px 14px',
+                fontSize: '12px',
+                borderRadius: 'var(--radius-md)',
+                opacity: !newWord.trim() ? 0.5 : 1
+              }}
             >
-              <Plus size={13} /> Add
+              <Plus size={14} /> Add
             </button>
           </div>
         </form>
 
         {/* Search & Actions Bar */}
         <div style={{
-          padding: '10px 20px',
+          padding: '12px 20px 8px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          gap: '8px'
+          gap: '10px',
+          background: 'var(--bg-panel)'
         }}>
           <div style={{ position: 'relative', flex: 1 }}>
-            <Search size={12} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)' }} />
+            <Search size={13} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)' }} />
             <input
               type="text"
               value={searchFilter}
@@ -245,11 +260,11 @@ export const KeywordLibraryModal = () => {
               placeholder={`Search ${customKeywordRules.length} rules...`}
               style={{
                 width: '100%',
-                background: 'rgba(255, 255, 255, 0.04)',
+                background: 'var(--bg-surface)',
                 border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-sm)',
-                padding: '4px 8px 4px 26px',
-                fontSize: '11px',
+                borderRadius: 'var(--radius-md)',
+                padding: '6px 10px 6px 30px',
+                fontSize: '12px',
                 color: 'var(--text-primary)',
                 outline: 'none'
               }}
@@ -261,16 +276,17 @@ export const KeywordLibraryModal = () => {
             onClick={handleApply}
             className="btn-primary"
             style={{
-              padding: '5px 12px',
-              fontSize: '11px',
-              background: 'linear-gradient(135deg, #00FF66 0%, #009944 100%)',
-              color: '#000000',
-              fontWeight: '700',
-              border: 'none'
+              height: '32px',
+              padding: '0 16px',
+              fontSize: '12px',
+              borderRadius: 'var(--radius-pill)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
             }}
             title="Scan and apply custom keywords across the active video"
           >
-            <Sparkles size={12} /> Apply to Captions
+            <Sparkles size={13} /> Apply to Captions
           </button>
         </div>
 
@@ -278,12 +294,12 @@ export const KeywordLibraryModal = () => {
         {statusMsg && (
           <div style={{
             margin: '0 20px 8px',
-            padding: '6px 12px',
-            borderRadius: 'var(--radius-sm)',
-            background: 'rgba(0, 255, 102, 0.15)',
-            border: '1px solid rgba(0, 255, 102, 0.35)',
-            color: '#00FF66',
-            fontSize: '11px',
+            padding: '8px 14px',
+            borderRadius: 'var(--radius-md)',
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border-hover)',
+            color: 'var(--text-primary)',
+            fontSize: '11.5px',
             fontWeight: '600'
           }}>
             {statusMsg}
@@ -294,13 +310,14 @@ export const KeywordLibraryModal = () => {
         <div style={{
           flex: 1,
           overflowY: 'auto',
-          padding: '0 20px 14px',
+          padding: '6px 20px 16px',
           display: 'flex',
           flexDirection: 'column',
-          gap: '4px'
+          gap: '6px',
+          background: 'var(--bg-panel)'
         }}>
           {filteredRules.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '30px 0', color: 'var(--text-tertiary)', fontSize: '11.5px' }}>
+            <div style={{ textAlign: 'center', padding: '36px 0', color: 'var(--text-tertiary)', fontSize: '12px' }}>
               No custom keyword rules found. Add one above!
             </div>
           ) : (
@@ -314,11 +331,11 @@ export const KeywordLibraryModal = () => {
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    padding: '6px 10px',
-                    borderRadius: 'var(--radius-sm)',
-                    background: 'rgba(255, 255, 255, 0.03)',
+                    padding: '8px 12px',
+                    borderRadius: 'var(--radius-md)',
+                    background: 'var(--bg-surface)',
                     border: '1px solid var(--border-subtle)',
-                    transition: 'background var(--transition-fast)'
+                    transition: 'background var(--transition-fast), border-color var(--transition-fast)'
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -330,10 +347,10 @@ export const KeywordLibraryModal = () => {
                         setIsEmojiPickerOpen(true);
                       }}
                       style={{
-                        width: '28px',
-                        height: '28px',
-                        borderRadius: '4px',
-                        background: 'rgba(255, 255, 255, 0.06)',
+                        width: '32px',
+                        height: '32px',
+                        borderRadius: 'var(--radius-sm)',
+                        background: 'var(--bg-panel)',
                         border: '1px solid var(--border-subtle)',
                         display: 'flex',
                         alignItems: 'center',
@@ -346,22 +363,22 @@ export const KeywordLibraryModal = () => {
                         <img
                           src={appleUrl}
                           alt={rule.emoji}
-                          style={{ width: '20px', height: '20px', objectFit: 'contain' }}
+                          style={{ width: '22px', height: '22px', objectFit: 'contain' }}
                           onError={(evt) => {
                             evt.currentTarget.style.display = 'none';
                             evt.currentTarget.parentNode.innerText = rule.emoji;
                           }}
                         />
                       ) : (
-                        <span style={{ fontSize: '9px', color: 'var(--text-tertiary)' }}>none</span>
+                        <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>none</span>
                       )}
                     </button>
 
-                    {/* Keyword Text */}
+                    {/* Keyword Text - High Contrast Clean Label */}
                     <span style={{
-                      fontSize: '12px',
+                      fontSize: '13px',
                       fontWeight: '700',
-                      color: rule.isEmphasized ? '#00FF66' : 'var(--text-primary)',
+                      color: 'var(--text-primary)',
                       textTransform: 'uppercase',
                       letterSpacing: '0.03em'
                     }}>
@@ -369,7 +386,7 @@ export const KeywordLibraryModal = () => {
                     </span>
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     {/* Toggle Emphasis */}
                     <button
                       type="button"
@@ -377,18 +394,20 @@ export const KeywordLibraryModal = () => {
                       style={{
                         display: 'flex',
                         alignItems: 'center',
-                        gap: '3px',
-                        padding: '3px 7px',
-                        borderRadius: '3px',
-                        fontSize: '10px',
+                        gap: '5px',
+                        padding: '4px 10px',
+                        borderRadius: 'var(--radius-pill)',
+                        fontSize: '11px',
+                        fontWeight: '600',
                         cursor: 'pointer',
-                        background: rule.isEmphasized ? 'rgba(0, 255, 102, 0.15)' : 'rgba(255, 255, 255, 0.05)',
-                        border: rule.isEmphasized ? '1px solid #00FF66' : '1px solid var(--border-subtle)',
-                        color: rule.isEmphasized ? '#00FF66' : 'var(--text-tertiary)'
+                        background: rule.isEmphasized ? 'var(--accent-primary)' : 'var(--bg-panel)',
+                        border: rule.isEmphasized ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+                        color: rule.isEmphasized ? 'var(--btn-primary-text)' : 'var(--text-secondary)',
+                        transition: 'all var(--transition-fast)'
                       }}
                       title="Toggle Power Word Punch"
                     >
-                      <Zap size={10} fill={rule.isEmphasized ? '#00FF66' : 'none'} />
+                      <Zap size={11} fill={rule.isEmphasized ? 'currentColor' : 'none'} />
                       <span>{rule.isEmphasized ? 'Punch ON' : 'Punch OFF'}</span>
                     </button>
 
@@ -397,10 +416,10 @@ export const KeywordLibraryModal = () => {
                       type="button"
                       onClick={() => deleteKeywordRule(rule.id)}
                       className="btn-ghost"
-                      style={{ padding: '4px', color: 'var(--system-error)' }}
+                      style={{ padding: '6px', color: 'var(--system-error)', borderRadius: 'var(--radius-sm)' }}
                       title="Delete rule"
                     >
-                      <Trash2 size={12} />
+                      <Trash2 size={13} />
                     </button>
                   </div>
                 </div>
@@ -411,22 +430,41 @@ export const KeywordLibraryModal = () => {
 
         {/* Footer */}
         <div style={{
-          padding: '10px 20px',
+          padding: '12px 20px',
           borderTop: '1px solid var(--border-subtle)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           background: 'var(--bg-surface)'
         }}>
-          <span style={{ fontSize: '10.5px', color: 'var(--text-tertiary)' }}>
-            Rules are saved automatically in your browser.
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
+              {customKeywordRules.length} rules saved in project & browser.
+            </span>
+            {customKeywordRules.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.confirm('Reset all custom keyword rules to empty?')) {
+                    clearCustomKeywordRules();
+                    setStatusMsg('Cleared all custom rules.');
+                    setTimeout(() => setStatusMsg(''), 2500);
+                  }
+                }}
+                className="btn-ghost"
+                style={{ fontSize: '11px', color: 'var(--system-error)', padding: '2px 6px' }}
+                title="Clear all rules"
+              >
+                Clear All
+              </button>
+            )}
+          </div>
 
           <button
             type="button"
             onClick={() => setKeywordLibraryModalOpen(false)}
-            className="btn-ghost"
-            style={{ padding: '4px 12px', fontSize: '11px' }}
+            className="btn-secondary"
+            style={{ height: '32px', padding: '0 16px', fontSize: '12px', borderRadius: 'var(--radius-pill)' }}
           >
             Close
           </button>

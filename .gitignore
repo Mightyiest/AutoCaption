@@ -26,6 +26,8 @@ backend/storage/exports/*
 backend/storage/debug/*
 backend/storage/demo/*
 backend/storage/temp/*
+backend/storage/thumbnails/*
+!backend/storage/thumbnails/.gitkeep
 *.ass
 backend/*.ass
 backend/test_sub_out.mp4

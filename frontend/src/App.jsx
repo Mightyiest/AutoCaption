@@ -261,7 +261,7 @@ export function App() {
           {studioToast.type === 'warning' ? (
             <AlertTriangle size={16} color="#FF9900" />
           ) : (
-            <Sparkles size={16} color="#00FF66" />
+            <Sparkles size={16} color="var(--accent-primary)" />
           )}
           <span>{studioToast.message}</span>
         </div>

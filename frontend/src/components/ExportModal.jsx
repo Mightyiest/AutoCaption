@@ -38,9 +38,21 @@ export const ExportModal = () => {
     segments,
     style,
     backendAvailable,
-    aspectRatio
+    aspectRatio,
+    linkedSourcePath,
+    isMediaLinked,
+    activeProjectTitle
   } = useEditorStore();
 
+  const getCleanProjectBase = () => {
+    const raw = (activeProjectTitle || videoFilename || 'Untitled Project').trim();
+    return raw
+      .replace(/\.[^/.]+$/, '')
+      .replace(/[/\\?%*:|"<>]/g, '')
+      .trim() || 'Untitled Project';
+  };
+
+  const [customFilename, setCustomFilename] = useState(getCleanProjectBase());
   const [exportMode, setExportMode] = useState('client_canvas'); // 'client_canvas' | 'backend_ffmpeg'
   const [resolution, setResolution] = useState(
     aspectRatio === '9:16' ? '1080x1920' : aspectRatio === '1:1' ? '1080x1080' : '1920x1080'
@@ -58,6 +70,9 @@ export const ExportModal = () => {
   const clientExporterRef = useRef(null);
   const pollIntervalRef = useRef(null);
   const activeJobIdRef = useRef(null);
+
+  const finalBaseName = (customFilename || getCleanProjectBase()).replace(/\.[^/.]+$/, '').replace(/[/\\?%*:|"<>]/g, '').trim() || 'Untitled Project';
+  const finalFilename = `${finalBaseName}.mp4`;
 
   useEffect(() => {
     return () => {
@@ -83,8 +98,9 @@ export const ExportModal = () => {
       setExportStats({ percent: 0, currentFrame: 0, totalFrames: 0, etaSeconds: 0 });
       setExportResultUrl(null);
       setErrorMessage(null);
+      setCustomFilename(getCleanProjectBase());
     }
-  }, [isExportModalOpen]);
+  }, [isExportModalOpen, activeProjectTitle, videoFilename]);
 
   if (!isExportModalOpen) return null;
 
@@ -143,9 +159,11 @@ export const ExportModal = () => {
         });
         clientExporterRef.current = exporter;
 
+        const effectiveVideoUrl = videoUrl || (linkedSourcePath ? `${BACKEND_URL}/api/media/stream?path=${encodeURIComponent(linkedSourcePath)}` : '');
+
         const blob = await exporter.exportVideo({
           videoFile,
-          videoUrl,
+          videoUrl: effectiveVideoUrl,
           duration: duration || 10,
           segments,
           style: sanitizeStyle(style),
@@ -179,7 +197,9 @@ export const ExportModal = () => {
 
         try {
           // Compute exact word-wrapping line breaks & vertical baseline offsets matching DOM preview
-          const layoutResult = await measureAllSegmentsLayout(segments, sanitizeStyle(style), 360, 640);
+          const previewBaseH = 640;
+          const previewBaseW = Math.max(160, Math.round(previewBaseH * (w / (h || 1))));
+          const layoutResult = await measureAllSegmentsLayout(segments, sanitizeStyle(style), previewBaseW, previewBaseH);
           if (layoutResult && layoutResult.segments) {
             exportSegments = layoutResult.segments;
             previewMetrics = layoutResult.previewMetrics;
@@ -188,11 +208,14 @@ export const ExportModal = () => {
           console.warn('Layout measurement fallback, using default segments:', layoutErr);
         }
 
+        const effectiveFilename = videoFilename || (linkedSourcePath ? linkedSourcePath.split(/[/\\]/).pop() : '');
         const response = await fetch(`${BACKEND_URL}/api/render`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            video_filename: videoFilename,
+            video_filename: effectiveFilename,
+            output_filename: finalFilename,
+            linked_path: linkedSourcePath || null,
             engine_type: engineType,
             segments: exportSegments,
             preview_metrics: previewMetrics,
@@ -296,6 +319,47 @@ export const ExportModal = () => {
 
         {/* Body */}
         <div style={{ padding: '18px', display: 'flex', flexDirection: 'column', gap: '14px', overflowY: 'auto' }}>
+          {/* File Name Field */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <label style={{ fontSize: '11px', fontWeight: '500', color: 'var(--text-secondary)' }}>
+                File Name
+              </label>
+              <span style={{ fontSize: '10px', color: 'var(--accent-bright-blue)', fontWeight: '500' }}>
+                Project Name
+              </span>
+            </div>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-md)',
+              padding: '0 10px'
+            }}>
+              <input
+                type="text"
+                value={customFilename}
+                onChange={(e) => setCustomFilename(e.target.value)}
+                disabled={isExporting}
+                placeholder="Project Name"
+                style={{
+                  flex: 1,
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--text-primary)',
+                  fontSize: '12px',
+                  padding: '7px 0',
+                  outline: 'none',
+                  fontWeight: '500'
+                }}
+              />
+              <span style={{ fontSize: '11px', color: 'var(--text-tertiary)', fontWeight: '600' }}>
+                .mp4
+              </span>
+            </div>
+          </div>
+
           {/* Resolution Options */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <label style={{ fontSize: '11px', fontWeight: '500', color: 'var(--text-secondary)' }}>
@@ -494,18 +558,23 @@ export const ExportModal = () => {
           {/* Export Complete Result */}
           {exportResultUrl && (
             <div style={{
+              padding: '12px',
+              borderRadius: 'var(--radius-md)',
+              background: 'rgba(52, 199, 89, 0.08)',
+              border: '1px solid rgba(52, 199, 89, 0.25)',
               display: 'flex',
               flexDirection: 'column',
               gap: '10px',
-              padding: '12px',
-              borderRadius: 'var(--radius-md)',
-              background: 'rgba(48, 209, 88, 0.12)',
-              border: '1px solid rgba(48, 209, 88, 0.3)',
               color: 'var(--system-success)'
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '600' }}>
-                <FileCheck size={16} />
-                <span>Export Complete!</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '600' }}>
+                  <FileCheck size={16} />
+                  <span>Export Complete!</span>
+                </div>
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)', paddingLeft: '22px', wordBreak: 'break-all' }}>
+                  {finalFilename}
+                </span>
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
@@ -520,7 +589,7 @@ export const ExportModal = () => {
 
                 <a
                   href={exportResultUrl}
-                  download="AutoCaptioned_Video.mp4"
+                  download={finalFilename}
                   className="btn-primary"
                   style={{
                     justifyContent: 'center',
@@ -528,6 +597,7 @@ export const ExportModal = () => {
                     fontSize: '11px',
                     padding: '6px'
                   }}
+                  title={`Download ${finalFilename}`}
                 >
                   <Download size={12} />
                   <span>Download MP4</span>

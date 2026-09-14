@@ -207,6 +207,7 @@ def generate_ass_subtitle(
     ass_shadow_depth = int(round(max(abs(shadow_offset_x), abs(shadow_offset_y), 4))) if has_shadow else 0
     back_col = shadow_col if has_shadow else "&H00000000&"
     blur_tag = f"\\blur{ass_blur}" if ass_blur > 0 else ""
+    shad_tag = f"\\xshad{shadow_offset_x}\\yshad{shadow_offset_y}" if has_shadow else "\\xshad0\\yshad0"
 
     ass_content = [
         "[Script Info]",
@@ -286,7 +287,7 @@ def generate_ass_subtitle(
 
                 line_str = " ".join(tokens)
                 ass_content.append(
-                    f"Dialogue: 1,{start_ts},{end_ts},MainStyle,,0,0,0,,{{\\an{align_num}\\pos({pos_x},{line_y})\\fsp{ass_spacing}{italic_tag}{blur_tag}}}{line_str}"
+                    f"Dialogue: 1,{start_ts},{end_ts},MainStyle,,0,0,0,,{{\\an{align_num}\\pos({pos_x},{line_y})\\fsp{ass_spacing}{italic_tag}{blur_tag}{shad_tag}}}{line_str}"
                 )
 
     return "\n".join(ass_content)

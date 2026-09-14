@@ -24,7 +24,9 @@ export function createCaptionScene({
   segments = [],
   canvasSize = { width: 1080, height: 1920, fps: 30 },
   currentTime = 0,
-  videoInfo = {}
+  videoInfo = {},
+  customDictionary = {},
+  customEmphasisKeywords = []
 }) {
   const sanitized = sanitizeStyle(style);
   const width = Math.max(1, Number(canvasSize.width || 1080));
@@ -71,6 +73,8 @@ export function createCaptionScene({
     style: scaledStyle,
     rawStyle: sanitized,
     segments: Array.isArray(segments) ? segments : [],
+    customDictionary: customDictionary || {},
+    customEmphasisKeywords: customEmphasisKeywords || [],
     video: {
       url: videoInfo.url || '',
       file: videoInfo.file || null,

@@ -11,7 +11,8 @@ import {
   Hand,
   Link2,
   AlertTriangle,
-  RefreshCw
+  RefreshCw,
+  FolderOpen
 } from 'lucide-react';
 import { useEditorStore } from '../store/useEditorStore';
 import { renderPreviewOverlay } from '../engine/captionCanvasRenderer';
@@ -41,6 +42,7 @@ export const VideoPlayer = () => {
     isMuted,
     playbackRate,
     aspectRatio,
+    setAspectRatio,
     showSafeZones,
     segments,
     style,
@@ -62,7 +64,10 @@ export const VideoPlayer = () => {
     mediaOffline,
     activeProjectId,
     linkLocalVideoFile,
-    relinkProjectMedia
+    relinkProjectMedia,
+    customKeywordRules,
+    getCustomDictionary,
+    getCustomEmphasisKeywords
   } = useEditorStore();
 
   // Drag and Drop Import State
@@ -205,6 +210,9 @@ export const VideoPlayer = () => {
     if (!canvasRef.current) return;
 
     try {
+      const customDict = typeof getCustomDictionary === 'function' ? getCustomDictionary() : {};
+      const customEmphasis = typeof getCustomEmphasisKeywords === 'function' ? getCustomEmphasisKeywords() : [];
+
       const scene = createCaptionScene({
         style,
         segments,
@@ -214,7 +222,9 @@ export const VideoPlayer = () => {
           file: videoFile,
           url: videoUrl,
           duration
-        }
+        },
+        customDictionary: customDict,
+        customEmphasisKeywords: customEmphasis
       });
 
       renderPreviewOverlay({
@@ -226,12 +236,12 @@ export const VideoPlayer = () => {
     } catch (err) {
       console.warn('Canvas render error:', err);
     }
-  }, [style, segments, canonical.exportW, canonical.exportH, videoFile, videoUrl, duration, videoFps, isPlaying]);
+  }, [style, segments, canonical.exportW, canonical.exportH, videoFile, videoUrl, duration, videoFps, isPlaying, customKeywordRules, getCustomDictionary, getCustomEmphasisKeywords]);
 
   // Re-render canvas on state / style changes
   useEffect(() => {
     drawOverlay(currentTime);
-  }, [drawOverlay, currentTime, style, segments, aspectRatio]);
+  }, [drawOverlay, currentTime, style, segments, aspectRatio, customKeywordRules]);
 
   // Keep drawOverlay ref updated for animation loop without recreating RAF
   const drawOverlayRef = useRef(drawOverlay);
@@ -254,6 +264,8 @@ export const VideoPlayer = () => {
       if (drawOverlayRef.current) {
         drawOverlayRef.current(targetTime);
       }
+      // Immediately clear seekRequestTime so subsequent seeks to the same time trigger reliably
+      useEditorStore.setState({ seekRequestTime: null });
     }
   }, [seekRequestTime]);
 
@@ -303,7 +315,7 @@ export const VideoPlayer = () => {
     setMediaElement(el);
   }, [setMediaElement]);
 
-  // Sync video duration when media loads
+  // Sync video duration & dimensions when media loads
   const handleMediaLoaded = () => {
     const video = videoRef.current;
     if (!video) return;
@@ -314,6 +326,16 @@ export const VideoPlayer = () => {
     video.volume = Math.max(0, Math.min(1, volume));
     video.muted = isMuted;
     video.playbackRate = playbackRate;
+
+    // Auto-detect aspect ratio for fresh projects when video is clearly landscape
+    if (video.videoWidth > 0 && video.videoHeight > 0) {
+      const vidRatio = video.videoWidth / video.videoHeight;
+      if (vidRatio >= 1.35 && aspectRatio === '9:16' && (!segments || segments.length === 0)) {
+        setAspectRatio('16:9');
+      } else if (vidRatio >= 0.95 && vidRatio <= 1.05 && aspectRatio === '9:16' && (!segments || segments.length === 0)) {
+        setAspectRatio('1:1');
+      }
+    }
   };
 
   // Playback animation frame loop (Hardware Video + Software fallback)

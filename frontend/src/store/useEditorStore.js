@@ -50,6 +50,27 @@ function saveCustomKeywordRulesToStorage(rules) {
 
 const DEFAULT_PRESET = PRESETS[0];
 
+export function captureVideoSnapshot(mediaEl, maxWidth = 480) {
+  try {
+    const media = mediaEl || (typeof document !== 'undefined' ? document.querySelector('video') : null);
+    if (!media || !(media instanceof HTMLVideoElement)) return null;
+    if (media.readyState < 2 || !media.videoWidth || !media.videoHeight) return null;
+
+    const canvas = document.createElement('canvas');
+    const aspect = media.videoHeight / media.videoWidth;
+    const w = Math.min(maxWidth, media.videoWidth);
+    const h = Math.round(w * aspect);
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(media, 0, 0, w, h);
+    return canvas.toDataURL('image/jpeg', 0.82);
+  } catch (err) {
+    return null;
+  }
+}
+
 export const DEMO_SEGMENTS = [
   {
     id: 'seg-1',
@@ -233,10 +254,27 @@ export const useEditorStore = create((set, get) => ({
   activeProjectId: null,
   activeProjectTitle: 'Untitled Project',
   saveStatus: 'saved', // 'saved' | 'saving' | 'unsaved'
+  lastSavedTime: null,
+  autoSaveTimer: null,
   projectsList: INITIAL_SHOWCASE_PROJECTS,
   isMediaLinked: false,
   linkedSourcePath: null,
   mediaOffline: false,
+  videoSnapshotUrl: null,
+  setVideoSnapshotUrl: (videoSnapshotUrl) => set({ videoSnapshotUrl }),
+
+  triggerAutoSave: () => {
+    const { activeProjectId, autoSaveTimer } = get();
+    if (!activeProjectId) return;
+    if (autoSaveTimer) {
+      clearTimeout(autoSaveTimer);
+    }
+    set({ saveStatus: 'unsaved' });
+    const timer = setTimeout(() => {
+      get().saveCurrentProject();
+    }, 1500);
+    set({ autoSaveTimer: timer });
+  },
 
   // UI State
   canvasLayout: 'center', // 'right' | 'center' | 'left'
@@ -281,6 +319,13 @@ export const useEditorStore = create((set, get) => ({
         streamUrl = getStreamUrl(proj.linkedSourcePath);
       }
 
+      const loadedRules = (proj.customKeywordRules && Array.isArray(proj.customKeywordRules) && proj.customKeywordRules.length > 0)
+        ? proj.customKeywordRules
+        : get().customKeywordRules;
+      if (proj.customKeywordRules && Array.isArray(proj.customKeywordRules) && proj.customKeywordRules.length > 0) {
+        saveCustomKeywordRulesToStorage(loadedRules);
+      }
+
       set({
         activeProjectId: proj.id,
         activeProjectTitle: proj.title || 'Untitled Project',
@@ -295,9 +340,11 @@ export const useEditorStore = create((set, get) => ({
         segments: proj.segments || [],
         style: projectStyle,
         activePresetId: proj.activePresetId || preset.id,
+        customKeywordRules: loadedRules,
         currentTime: 0,
         isPlaying: false,
-        saveStatus: 'saved'
+        saveStatus: 'saved',
+        lastSavedTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       });
 
       if (typeof window !== 'undefined') {
@@ -309,11 +356,24 @@ export const useEditorStore = create((set, get) => ({
   },
 
   saveCurrentProject: async () => {
-    const { activeProjectId, activeProjectTitle, aspectRatio, duration, segments, style, activePresetId, videoFilename, videoUrl, linkedSourcePath, isMediaLinked } = get();
+    const { activeProjectId, activeProjectTitle, aspectRatio, duration, segments, style, activePresetId, videoFilename, videoUrl, linkedSourcePath, isMediaLinked, customKeywordRules, autoSaveTimer, mediaElement, videoSnapshotUrl } = get();
     if (!activeProjectId) return;
+    if (autoSaveTimer) {
+      clearTimeout(autoSaveTimer);
+      set({ autoSaveTimer: null });
+    }
 
     set({ saveStatus: 'saving' });
     try {
+      const BACKEND_URL = 'http://127.0.0.1:8000';
+      let calculatedThumb = captureVideoSnapshot(mediaElement);
+      if (!calculatedThumb && videoSnapshotUrl && !videoSnapshotUrl.includes('unsplash.com')) {
+        calculatedThumb = videoSnapshotUrl;
+      }
+      if (!calculatedThumb && (linkedSourcePath || videoFilename)) {
+        calculatedThumb = `${BACKEND_URL}/api/media/thumbnail?path=${encodeURIComponent(linkedSourcePath || '')}&filename=${encodeURIComponent(videoFilename || '')}`;
+      }
+
       await saveProject({
         id: activeProjectId,
         title: activeProjectTitle,
@@ -324,14 +384,15 @@ export const useEditorStore = create((set, get) => ({
         segments,
         style,
         activePresetId,
+        customKeywordRules: customKeywordRules || [],
         videoFilename,
         videoUrl,
         linkedSourcePath,
         isMediaLinked,
-        captionSnippet: segments[0]?.text || 'Studio Caption',
-        thumbnailUrl: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=600&auto=format&fit=crop&q=80'
+        captionSnippet: segments[0]?.text || '',
+        thumbnailUrl: calculatedThumb || null
       });
-      set({ saveStatus: 'saved' });
+      set({ saveStatus: 'saved', lastSavedTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
       get().fetchProjectsList();
     } catch (e) {
       console.warn('Project save failed:', e);
@@ -339,19 +400,44 @@ export const useEditorStore = create((set, get) => ({
     }
   },
 
-  createNewProject: async ({ aspect = '9:16', title = '', linkedPath = null, videoFile = null, presetId = 'mrbeast' } = {}) => {
+  createNewProject: async ({ aspect = '9:16', title = '', linkedPath = null, videoFile = null, videoFilename = null, videoUrl = null, presetId = 'mrbeast' } = {}) => {
     const newId = 'proj-' + Date.now();
-    let streamUrl = '';
-    let filename = null;
-    let isLinked = false;
+    let streamUrl = videoUrl || '';
+    let filename = videoFilename || null;
+    let isLinked = Boolean(linkedPath);
 
     if (linkedPath) {
       streamUrl = getStreamUrl(linkedPath);
       filename = linkedPath.split(/[/\\]/).pop();
       isLinked = true;
     } else if (videoFile) {
-      streamUrl = URL.createObjectURL(videoFile);
-      filename = videoFile.name;
+      if (!filename) filename = videoFile.name;
+      if (!streamUrl) streamUrl = URL.createObjectURL(videoFile);
+      // Ensure file is in backend uploads cache for Whisper and FFmpeg
+      const BACKEND_URL = 'http://127.0.0.1:8000';
+      if (get().backendAvailable) {
+        try {
+          const formData = new FormData();
+          formData.append('file', videoFile);
+          const res = await fetch(`${BACKEND_URL}/api/upload-preview`, {
+            method: 'POST',
+            body: formData
+          });
+          if (res.ok) {
+            const data = await res.json();
+            filename = data.video_filename;
+            streamUrl = `${BACKEND_URL}${data.video_url}`;
+          }
+        } catch (err) {
+          console.warn('Backend upload-preview failed during create project:', err);
+        }
+      }
+    }
+
+    const BACKEND_URL = 'http://127.0.0.1:8000';
+    let newThumb = null;
+    if (linkedPath || filename) {
+      newThumb = `${BACKEND_URL}/api/media/thumbnail?path=${encodeURIComponent(linkedPath || '')}&filename=${encodeURIComponent(filename || '')}`;
     }
 
     const selectedPreset = PRESETS.find(p => p.id === presetId) || PRESETS[0];
@@ -371,8 +457,8 @@ export const useEditorStore = create((set, get) => ({
       videoUrl: streamUrl,
       linkedSourcePath: linkedPath,
       isMediaLinked: isLinked,
-      captionSnippet: 'NEW PROJECT 🔥',
-      thumbnailUrl: 'https://images.unsplash.com/photo-1536240478700-b869070f9279?w=600&auto=format&fit=crop&q=80',
+      captionSnippet: '',
+      thumbnailUrl: newThumb,
       isActive: true
     };
 
@@ -436,6 +522,8 @@ export const useEditorStore = create((set, get) => ({
       proj.videoFilename = res.filename;
       proj.mediaOffline = false;
       proj.isMediaLinked = true;
+      const BACKEND_URL = 'http://127.0.0.1:8000';
+      proj.thumbnailUrl = `${BACKEND_URL}/api/media/thumbnail?path=${encodeURIComponent(res.filePath)}&filename=${encodeURIComponent(res.filename)}`;
       await saveProject(proj);
 
       if (get().activeProjectId === projectId) {
@@ -630,6 +718,9 @@ export const useEditorStore = create((set, get) => ({
       duration: duration || state.duration || 0,
       currentTime: 0.0,
       isPlaying: false,
+      isMediaLinked: file ? false : state.isMediaLinked,
+      linkedSourcePath: file ? null : state.linkedSourcePath,
+      mediaOffline: false,
       segments: keepCaptions ? state.segments : [],
       audioPeaks: null
     }));
@@ -679,8 +770,12 @@ export const useEditorStore = create((set, get) => ({
           // Update store with persistent backend URL and filename
           set(() => ({
             videoUrl: `${BACKEND_URL}${data.video_url}`,
-            videoFilename: data.video_filename
+            videoFilename: data.video_filename,
+            isMediaLinked: false,
+            linkedSourcePath: null,
+            mediaOffline: false
           }));
+          get().saveCurrentProject();
         }
       } catch (err) {
         console.warn('Background upload-preview error:', err);
@@ -774,7 +869,10 @@ export const useEditorStore = create((set, get) => ({
   setPlaybackRate: (rate) => set({ playbackRate: rate }),
   setVolume: (volume) => set({ volume }),
   setIsMuted: (isMuted) => set({ isMuted }),
-  setAspectRatio: (aspectRatio) => set({ aspectRatio }),
+  setAspectRatio: (aspectRatio) => {
+    set({ aspectRatio });
+    get().triggerAutoSave();
+  },
   toggleSafeZones: () => set((state) => ({ showSafeZones: !state.showSafeZones })),
   setUploadModalOpen: (isUploadModalOpen) => set({ isUploadModalOpen }),
   setExportModalOpen: (isExportModalOpen) => set({ isExportModalOpen }),
@@ -798,6 +896,7 @@ export const useEditorStore = create((set, get) => ({
     }
 
     set({ segments: finalSegments });
+    get().triggerAutoSave();
     if (!get().audioPeaks) {
       get().extractAudioWaveform();
     }
@@ -815,6 +914,7 @@ export const useEditorStore = create((set, get) => ({
         selectedSegmentId: state.selectedSegmentId === segmentId ? null : state.selectedSegmentId
       };
     });
+    get().triggerAutoSave();
   },
 
   clearAllSegments: () => {
@@ -977,6 +1077,7 @@ export const useEditorStore = create((set, get) => ({
       });
       return { segments: updatedSegments };
     });
+    get().triggerAutoSave();
   },
 
   deleteWord: (segmentId, wordId) => {
@@ -999,6 +1100,7 @@ export const useEditorStore = create((set, get) => ({
         .filter(Boolean);
       return { segments: updatedSegments };
     });
+    get().triggerAutoSave();
   },
 
   updateSegmentText: (segmentId, newText) => {
@@ -1050,6 +1152,7 @@ export const useEditorStore = create((set, get) => ({
 
       return { segments: updatedSegments };
     });
+    get().triggerAutoSave();
   },
 
   // AI Effects & Auto-Enhancement Actions
@@ -1165,6 +1268,7 @@ export const useEditorStore = create((set, get) => ({
       saveCustomKeywordRulesToStorage(updated);
       return { customKeywordRules: updated };
     });
+    get().triggerAutoSave();
   },
 
   deleteKeywordRule: (ruleId) => {
@@ -1173,6 +1277,7 @@ export const useEditorStore = create((set, get) => ({
       saveCustomKeywordRulesToStorage(updated);
       return { customKeywordRules: updated };
     });
+    get().triggerAutoSave();
   },
 
   toggleRuleEmphasis: (ruleId) => {
@@ -1184,6 +1289,7 @@ export const useEditorStore = create((set, get) => ({
       saveCustomKeywordRulesToStorage(updated);
       return { customKeywordRules: updated };
     });
+    get().triggerAutoSave();
   },
 
   setRuleEmoji: (ruleId, emoji) => {
@@ -1195,18 +1301,29 @@ export const useEditorStore = create((set, get) => ({
       saveCustomKeywordRulesToStorage(updated);
       return { customKeywordRules: updated };
     });
+    get().triggerAutoSave();
   },
 
   applyKeywordRulesToCaptions: () => {
-    const { segments, getCustomDictionary, getCustomEmphasisKeywords, style } = get();
+    const { segments, getCustomDictionary, getCustomEmphasisKeywords, style, showStudioToast } = get();
     if (!segments || segments.length === 0) return;
     get().pushHistoryState();
 
     const customDict = getCustomDictionary();
     const customEmphasis = getCustomEmphasisKeywords();
 
-    let enhanced = autoAssignEmojis(segments, { overwrite: true, customDictionary: customDict });
-    enhanced = autoApplyEmphasis(enhanced, { overwrite: true, customKeywords: customEmphasis });
+    let enhanced = autoAssignEmojis(segments, { overwrite: true, customDictionary: customDict, onlyCustom: true });
+    enhanced = autoApplyEmphasis(enhanced, { overwrite: true, customKeywords: customEmphasis, onlyCustom: true });
+
+    let emojiCount = 0;
+    let emphasisCount = 0;
+    enhanced.forEach((seg) => {
+      (seg.words || []).forEach((w) => {
+        if (w.emoji) emojiCount++;
+        if (w.isEmphasized) emphasisCount++;
+      });
+    });
+
     set({
       segments: enhanced,
       style: {
@@ -1215,11 +1332,21 @@ export const useEditorStore = create((set, get) => ({
         autoEmphasisEnabled: true
       }
     });
+    get().triggerAutoSave();
+
+    if (typeof showStudioToast === 'function') {
+      if (emojiCount > 0 || emphasisCount > 0) {
+        showStudioToast(`✨ Applied Keyword Library: ${emojiCount} custom emojis & ${emphasisCount} punch words!`, { type: 'success' });
+      } else {
+        showStudioToast('Keyword rules updated (no matching words found in current video transcript).', { type: 'info' });
+      }
+    }
   },
 
   clearCustomKeywordRules: () => {
     set({ customKeywordRules: [] });
     saveCustomKeywordRulesToStorage([]);
+    get().triggerAutoSave();
   },
 
   toggleWordEmphasis: (segmentId, wordId) => {
@@ -1236,6 +1363,7 @@ export const useEditorStore = create((set, get) => ({
       });
       return { segments: updated };
     });
+    get().triggerAutoSave();
   },
 
   setWordEmoji: (segmentId, wordId, emoji) => {
@@ -1253,6 +1381,7 @@ export const useEditorStore = create((set, get) => ({
       });
       return { segments: updated };
     });
+    get().triggerAutoSave();
   },
 
   setSegmentEmoji: (segmentId, emoji) => {
@@ -1365,6 +1494,7 @@ export const useEditorStore = create((set, get) => ({
         activePresetId: presetId,
         style: newStyle
       });
+      get().triggerAutoSave();
       if (newStyle.maxWordsPerSegment && newStyle.maxWordsPerSegment !== prevMax) {
         get().rechunkSegments(newStyle.maxWordsPerSegment);
       }
@@ -1376,6 +1506,7 @@ export const useEditorStore = create((set, get) => ({
     set((state) => ({
       style: sanitizeStyle({ ...state.style, ...partialStyle })
     }));
+    get().triggerAutoSave();
 
     if (partialStyle.maxWordsPerSegment !== undefined && Number(partialStyle.maxWordsPerSegment) !== prevMax) {
       get().rechunkSegments(Number(partialStyle.maxWordsPerSegment));

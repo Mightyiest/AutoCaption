@@ -102,8 +102,12 @@ export function measureCaptionLayout({ scene, segment, ctx }) {
   }
 
   // Measure word dimensions
-  const wordSpacing = style.scaledWordSpacing;
+  const baseWordSpacing = style.scaledWordSpacing;
+  // Ensure minimum safe inter-word spacing so animated or emphasized words never collide
+  const minSafeGap = Math.round(style.scaledFontSize * 0.28);
+  const wordSpacing = Math.max(baseWordSpacing, minSafeGap);
   const scaledEmojiSize = style.scaledEmojiSize || (42 * scaleFactor);
+  const customDict = scene?.customDictionary || {};
   const isInlineEmoji = (style.autoEmojiEnabled !== false) && (style.emojiPosition === 'inline');
 
   const measuredWords = words.map(w => {
@@ -111,7 +115,7 @@ export function measureCaptionLayout({ scene, segment, ctx }) {
     let width = metrics.width;
     let emojiWidth = 0;
 
-    const hasEmoji = w.emoji || (style.autoEmojiEnabled ? detectEmojiForWord(w.rawText) : null);
+    const hasEmoji = w.emoji || (style.autoEmojiEnabled ? detectEmojiForWord(w.rawText, customDict) : null);
     if (isInlineEmoji && hasEmoji) {
       emojiWidth = scaledEmojiSize + (wordSpacing * 0.4);
       width += emojiWidth;
@@ -227,15 +231,17 @@ export function measureCaptionLayout({ scene, segment, ctx }) {
 /**
  * Computes deterministic animation state for the active word.
  */
-function resolveWordAnimation({ word, currentTime, animationType, scaleFactor, style }) {
+function resolveWordAnimation({ word, currentTime, animationType, scaleFactor, style, customKeywords = null }) {
   const isSpoken = currentTime >= word.end;
   const isUpcoming = currentTime < word.start;
   const isActive = currentTime >= word.start && currentTime <= word.end;
 
-  // Check emphasis status
-  const isEmphasized = word.isEmphasized !== undefined
-    ? Boolean(word.isEmphasized)
-    : (style?.autoEmphasisEnabled && isPowerKeyword(word.rawText || word.text));
+  // Check emphasis status (strictly disabled when style.autoEmphasisEnabled is false)
+  const isEmphasized = (style?.autoEmphasisEnabled !== false) && (
+    word.isEmphasized !== undefined
+      ? Boolean(word.isEmphasized)
+      : isPowerKeyword(word.rawText || word.text, customKeywords)
+  );
 
   let scale = 1.0;
   let translateY = 0;
@@ -245,30 +251,38 @@ function resolveWordAnimation({ word, currentTime, animationType, scaleFactor, s
   if (isActive) {
     const duration = Math.max(0.001, word.end - word.start);
     const progress = clamp((currentTime - word.start) / duration, 0, 1);
+    const sinCurve = Math.sin(progress * Math.PI);
+
+    // Harmonize animationType with smart keyword emphasis to prevent compounding/collision
+    const emphasisScale = Number(style?.emphasisScale || 1.15);
+    const emphasisDelta = isEmphasized ? Math.max(0, emphasisScale - 1.0) : 0;
 
     switch (animationType) {
       case 'pop': {
-        // Crisp pop curve: overshoot then settle
-        scale = 1.0 + 0.16 * Math.sin(progress * Math.PI);
+        // Pop scale: smooth overshoot and settle, harmonized with emphasis without double-stacking
+        const popAmp = Math.min(0.18, 0.14 + emphasisDelta * 0.3);
+        scale = 1.0 + popAmp * sinCurve;
         break;
       }
       case 'bounce': {
-        // Vertical bounce jump
-        translateY = -10 * scaleFactor * Math.sin(progress * Math.PI);
-        scale = 1.0 + 0.08 * Math.sin(progress * Math.PI);
+        // Vertical bounce jump: punchy vertical motion without excessive horizontal distortion
+        translateY = -10 * scaleFactor * sinCurve;
+        scale = 1.0 + (isEmphasized ? 0.10 : 0.06) * sinCurve;
         break;
       }
       case 'glow': {
-        glowBoost = 1.0 + 1.2 * Math.sin(progress * Math.PI);
-        scale = 1.0 + 0.05 * Math.sin(progress * Math.PI);
+        glowBoost = isEmphasized ? (1.5 + 1.8 * sinCurve) : (1.0 + 1.2 * sinCurve);
+        scale = 1.0 + 0.05 * sinCurve;
         break;
       }
       case 'fade': {
         alpha = 0.4 + 0.6 * progress;
+        scale = 1.0;
         break;
       }
       case 'none': {
-        scale = 1.0;
+        // Static: no active pop scaling unless keyword emphasis boost is specified
+        scale = isEmphasized ? Math.min(1.10, 1.0 + emphasisDelta * 0.5) : 1.0;
         translateY = 0;
         alpha = 1.0;
         glowBoost = 1.0;
@@ -276,17 +290,14 @@ function resolveWordAnimation({ word, currentTime, animationType, scaleFactor, s
       }
       case 'karaoke':
       default: {
-        scale = 1.0;
+        scale = isEmphasized ? 1.06 : 1.02;
         break;
       }
     }
-
-    // Apply emphasis scale boost if emphasized
-    if (isEmphasized) {
-      const emphasisBoost = (style?.emphasisScale || 1.15) - 1.0;
-      scale += emphasisBoost;
-    }
   }
+
+  // Strict clamp to guarantee words never blow out and overlap neighbors
+  scale = Math.min(scale, 1.18);
 
   return {
     isActive,
@@ -360,11 +371,17 @@ export function drawCaptionFrame({ ctx, scene, layout, currentTime, isPlaying = 
         currentTime,
         animationType: style.animationType,
         scaleFactor,
-        style
+        style,
+        customKeywords: scene?.customEmphasisKeywords
       });
       allWords.push({ ...w, anim });
     }
   }
+
+  // Draw order: inactive words first, active words last so active/emphasized words always stay on top
+  const inactiveWords = allWords.filter(item => !item.anim.isActive);
+  const activeWords = allWords.filter(item => item.anim.isActive);
+  const drawOrderedWords = [...inactiveWords, ...activeWords];
 
   // ----------------------------------------------------
   // Layer 2: Outer Glow Pass
@@ -377,7 +394,7 @@ export function drawCaptionFrame({ ctx, scene, layout, currentTime, isPlaying = 
     ctx.shadowOffsetY = 0;
     ctx.fillStyle = style.glowColor || style.activeColor;
 
-    for (const item of allWords) {
+    for (const item of drawOrderedWords) {
       const { rect, anim, text } = item;
       ctx.save();
       ctx.translate(rect.centerX, rect.centerY + anim.translateY);
@@ -402,7 +419,7 @@ export function drawCaptionFrame({ ctx, scene, layout, currentTime, isPlaying = 
     ctx.shadowOffsetY = style.scaledShadowOffsetY;
     ctx.fillStyle = style.shadowColor || '#000000';
 
-    for (const item of allWords) {
+    for (const item of drawOrderedWords) {
       const { rect, anim, text } = item;
       ctx.save();
       ctx.translate(rect.centerX, rect.centerY + anim.translateY);
@@ -423,7 +440,7 @@ export function drawCaptionFrame({ ctx, scene, layout, currentTime, isPlaying = 
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
 
-    for (const item of allWords) {
+    for (const item of drawOrderedWords) {
       const { rect, anim, text } = item;
       ctx.save();
       ctx.translate(rect.centerX, rect.centerY + anim.translateY);
@@ -437,7 +454,7 @@ export function drawCaptionFrame({ ctx, scene, layout, currentTime, isPlaying = 
   // ----------------------------------------------------
   // Layer 5: Word Fill & Active Color Highlight Pass
   // ----------------------------------------------------
-  for (const item of allWords) {
+  for (const item of drawOrderedWords) {
     const { rect, anim, text } = item;
     ctx.save();
     ctx.translate(rect.centerX, rect.centerY + anim.translateY);
@@ -464,13 +481,14 @@ export function drawCaptionFrame({ ctx, scene, layout, currentTime, isPlaying = 
   // Layer 6: Auto-Emoji & Kinetic Sticker Pop Pass
   // ----------------------------------------------------
   if (style.autoEmojiEnabled !== false) {
+    const customDict = scene?.customDictionary || {};
     const scaledEmojiSize = style.scaledEmojiSize || (42 * scaleFactor);
     const emojiAnimType = style.emojiAnimation || 'pop';
     const emojiPosition = style.emojiPosition || 'above_word';
 
     if (emojiPosition === 'top_center') {
       // Continuous top-center emoji across the active segment window
-      const segEmoji = layout.segmentEmoji || allWords.find(w => w.emoji)?.emoji || (style.autoEmojiEnabled ? allWords.map(w => detectEmojiForWord(w.rawText)).find(Boolean) : null);
+      const segEmoji = layout.segmentEmoji || allWords.find(w => w.emoji)?.emoji || (style.autoEmojiEnabled ? allWords.map(w => detectEmojiForWord(w.rawText, customDict)).find(Boolean) : null);
       if (segEmoji && layout.segment) {
         const segStart = layout.segment.start;
         const segEnd = layout.segment.end;
@@ -524,9 +542,9 @@ export function drawCaptionFrame({ ctx, scene, layout, currentTime, isPlaying = 
       }
     } else {
       // Word-level positioning: above_word or inline
-      for (const item of allWords) {
+      for (const item of drawOrderedWords) {
         const { rect, anim, emoji, start, end, rawText } = item;
-        const targetEmoji = emoji || (style.autoEmojiEnabled ? detectEmojiForWord(rawText) : null);
+        const targetEmoji = emoji || (style.autoEmojiEnabled ? detectEmojiForWord(rawText, customDict) : null);
 
         const shouldShowEmoji = Boolean(
           targetEmoji && (
@@ -569,7 +587,8 @@ export function drawCaptionFrame({ ctx, scene, layout, currentTime, isPlaying = 
 
           ctx.save();
           let posX = rect.centerX;
-          let posY = Math.max(scaledEmojiSize * 0.6, rect.top - (scaledEmojiSize * 0.65) + anim.translateY + emojiTranslateY);
+          const wordTopExpansion = (anim.scale - 1.0) * (layout.lineHeightPx * 0.5);
+          let posY = Math.max(scaledEmojiSize * 0.6, rect.top - (scaledEmojiSize * 0.75) - wordTopExpansion + anim.translateY + emojiTranslateY);
 
           if (emojiPosition === 'inline') {
             const wordTextW = item.textWidth || rect.width;
