@@ -60,4 +60,5 @@ opencut_autocaption_ai_and_effects_report.md
 .agent/
 .gemini/
 
-
+
+/backend/storage/projects
