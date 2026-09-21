@@ -36,6 +36,7 @@ export const KeywordLibraryModal = () => {
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
   const [editingRuleIdForEmoji, setEditingRuleIdForEmoji] = useState(null);
   const [statusMsg, setStatusMsg] = useState('');
+  const backdropMouseDownRef = useRef(null);
 
   if (!isKeywordLibraryModalOpen) return null;
 
@@ -65,8 +66,6 @@ export const KeywordLibraryModal = () => {
     const q = searchFilter.toLowerCase().trim();
     return r.keyword.toLowerCase().includes(q) || (r.emoji && r.emoji.includes(q));
   });
-
-  const backdropMouseDownRef = useRef(null);
 
   return (
     <div 

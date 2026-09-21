@@ -19,6 +19,8 @@ export const ReplaceVideoModal = () => {
     videoFile
   } = useEditorStore();
 
+  const backdropMouseDownRef = React.useRef(null);
+
   if (!pendingImportFile) return null;
 
   const currentVideoName = videoFilename || (videoFile ? videoFile.name : 'Current Video');
@@ -38,8 +40,6 @@ export const ReplaceVideoModal = () => {
   const handleCancel = () => {
     setPendingImportFile(null);
   };
-
-  const backdropMouseDownRef = React.useRef(null);
 
   return (
     <div 
