@@ -6,6 +6,7 @@ import base64
 import shutil
 import subprocess
 import urllib.parse
+import re
 from concurrent.futures import ThreadPoolExecutor
 import imageio_ffmpeg
 
@@ -424,6 +425,29 @@ def capture_single_snapshot(browser_exe: str, html_path: str, out_png_path: str,
     except (subprocess.TimeoutExpired, Exception):
         return False
 
+def get_video_stream_info(video_path: str) -> tuple:
+    """Inspects video file to get exact (duration_seconds, fps). Defaults to (10.0, 30.0)."""
+    try:
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        cmd = [ffmpeg_exe, "-hide_banner", "-i", video_path]
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
+        output = res.stderr
+        
+        dur = 10.0
+        dur_match = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)", output)
+        if dur_match:
+            h, m, s = dur_match.groups()
+            dur = int(h) * 3600 + int(m) * 60 + float(s)
+            
+        fps = 30.0
+        fps_match = re.search(r"(\d+(?:\.\d+)?)\s*fps", output)
+        if fps_match:
+            fps = float(fps_match.group(1))
+            
+        return max(0.1, dur), max(1.0, fps)
+    except Exception:
+        return 10.0, 30.0
+
 def render_captioned_video_dom(
     source_video_path: str,
     output_video_path: str,
@@ -439,16 +463,21 @@ def render_captioned_video_dom(
     ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
     browser_exe = get_browser_executable()
     
-    # Uniform Scale from 360 canonical preview baseline to target resolution
-    base_w = 360.0 if video_width <= video_height else 640.0
-    scale = video_width / base_w
+    # Probe true native source video duration & framerate to guarantee smooth 30/60 FPS playback
+    probed_dur, native_fps = get_video_stream_info(source_video_path)
+    effective_duration = float(video_duration) if video_duration and float(video_duration) > 0.5 else probed_dur
+    if effective_duration < probed_dur:
+        effective_duration = probed_dur
+    # Canonical scale relative to standard 1080x1920 reference canvas (1:1 with frontend)
+    ref_h = 1920.0 if video_height >= video_width else 1080.0
+    scale = video_height / ref_h
     
     temp_dir = os.path.join(os.path.dirname(os.path.abspath(output_video_path)), f"tmp_dom_{int(time.time() * 1000)}")
     os.makedirs(temp_dir, exist_ok=True)
     
     try:
-        # 1. Extract Timeline intervals
-        intervals = extract_timeline_intervals(segments, video_duration or 10.0)
+        # 1. Extract Timeline intervals covering full video duration
+        intervals = extract_timeline_intervals(segments, effective_duration)
         
         # 2. Identify unique display states and generate HTML files
         state_map = {} # html_content -> png_path
@@ -502,7 +531,13 @@ def render_captioned_video_dom(
             last_p = frame_manifest[-1]["path"].replace("\\", "/")
             f.write(f"file '{last_p}'\n")
             
-        # 5. FFmpeg Video Normalization (Cover Crop to 1080x1920) + Concat Overlay
+        # 5. FFmpeg Video Normalization + Resampled Concat Overlay (Preserves smooth 30/60 native FPS)
+        filter_complex = (
+            f"[0:v]scale={video_width}:{video_height}:force_original_aspect_ratio=increase,crop={video_width}:{video_height}[bg]; "
+            f"[1:v]fps=fps={native_fps},format=rgba[fg]; "
+            f"[bg][fg]overlay=0:0:eof_action=pass:repeatlast=1[outv]"
+        )
+        
         cmd = [
             ffmpeg_exe,
             "-y",
@@ -510,10 +545,11 @@ def render_captioned_video_dom(
             "-f", "concat",
             "-safe", "0",
             "-i", concat_txt,
-            "-filter_complex",
-            f"[0:v]scale={video_width}:{video_height}:force_original_aspect_ratio=increase,crop={video_width}:{video_height}[bg]; [bg][1:v]overlay=0:0:shortest=1[outv]",
+            "-filter_complex", filter_complex,
             "-map", "[outv]",
             "-map", "0:a?",
+
+            "-pix_fmt", "yuv420p",
         ]
         
         if encoder_mode == "gpu_nvenc":

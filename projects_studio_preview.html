@@ -1078,7 +1078,7 @@
   <div class="toast" id="toast">Project saved</div>
 
   <!-- Apple-Style New Project Modal -->
-  <div id="newProjectModal" class="apple-modal-backdrop" style="display: none;" onclick="closeNewProjectModal()">
+  <div id="newProjectModal" class="apple-modal-backdrop" style="display: none;" onclick="handleBackdropClick(event, closeNewProjectModal)">
     <div class="apple-modal-window" onclick="event.stopPropagation()">
       <div class="apple-modal-header">
         <div style="display: flex; align-items: center; gap: 12px;">
@@ -1150,7 +1150,7 @@
   </div>
 
   <!-- Apple-Style Rename Project Modal -->
-  <div id="renameProjectModal" class="apple-modal-backdrop" style="display: none;" onclick="closeRenameModal()">
+  <div id="renameProjectModal" class="apple-modal-backdrop" style="display: none;" onclick="handleBackdropClick(event, closeRenameModal)">
     <div class="apple-modal-window" style="max-width: 440px;" onclick="event.stopPropagation()">
       <div class="apple-modal-header">
         <div style="display: flex; align-items: center; gap: 10px;">
@@ -1178,7 +1178,7 @@
   </div>
 
   <!-- Apple-Style Delete Confirmation Dialog -->
-  <div id="deleteProjectModal" class="apple-modal-backdrop" style="display: none;" onclick="closeDeleteModal()">
+  <div id="deleteProjectModal" class="apple-modal-backdrop" style="display: none;" onclick="handleBackdropClick(event, closeDeleteModal)">
     <div class="apple-modal-window" style="max-width: 420px;" onclick="event.stopPropagation()">
       <div style="padding: 24px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 14px;">
         <div style="width: 48px; height: 48px; border-radius: 50%; background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.25); display: flex; align-items: center; justify-content: center; color: #EF4444;">
@@ -1360,6 +1360,19 @@
       searchQuery = e.target.value;
       renderGrid();
     });
+
+    // Track mousedown target to prevent modals from closing when highlighting/copy-pasting text
+    // and releasing the mouse outside the modal dialog window
+    let backdropMouseDownTarget = null;
+    document.addEventListener('mousedown', (e) => {
+      backdropMouseDownTarget = e.target;
+    });
+
+    function handleBackdropClick(e, closeFn) {
+      if (e.target === e.currentTarget && backdropMouseDownTarget === e.currentTarget) {
+        closeFn();
+      }
+    }
 
     let modalSelectedAspect = '9:16';
     let modalSelectedPreset = 'MrBeast Pop';

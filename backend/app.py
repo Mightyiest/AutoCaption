@@ -25,6 +25,7 @@ from transcriber import transcribe_media, scan_model_cache, trigger_model_downlo
 from renderer import render_captioned_video
 from dom_renderer import render_captioned_video_dom
 from audio_separator import process_audio_separation, VOCALS_DIR
+from upscaler import is_upscaler_installed, ensure_upscaler_ready, upscale_video, AVAILABLE_MODELS, get_video_stream_info as get_upscaler_video_info
 
 # Base Directories
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -58,15 +59,20 @@ app.mount("/static/thumbnails", StaticFiles(directory=THUMBNAILS_DIR), name="thu
 RENDER_JOBS: Dict[str, Dict[str, Any]] = {}
 ACTIVE_RENDER_PROCESSES: Dict[str, subprocess.Popen] = {}
 SEPARATION_JOBS: Dict[str, Dict[str, Any]] = {}
+UPSCALE_JOBS: Dict[str, Dict[str, Any]] = {}
+ACTIVE_UPSCALE_PROCESSES: Dict[str, subprocess.Popen] = {}
 
 def _prune_old_jobs():
-    global RENDER_JOBS, SEPARATION_JOBS
+    global RENDER_JOBS, SEPARATION_JOBS, UPSCALE_JOBS
     if len(RENDER_JOBS) > 80:
         for k in list(RENDER_JOBS.keys())[:-40]:
             RENDER_JOBS.pop(k, None)
     if len(SEPARATION_JOBS) > 80:
         for k in list(SEPARATION_JOBS.keys())[:-40]:
             SEPARATION_JOBS.pop(k, None)
+    if len(UPSCALE_JOBS) > 80:
+        for k in list(UPSCALE_JOBS.keys())[:-40]:
+            UPSCALE_JOBS.pop(k, None)
 
     # Clean up temporary export and debug files older than 24 hours
     try:
@@ -97,6 +103,18 @@ class RenderRequest(BaseModel):
     engine_type: Optional[str] = "dom"        # "dom" (Ultra 1:1 Fidelity) | "ass" (Fast Burn)
     preview_metrics: Optional[Dict[str, Any]] = None
     linked_path: Optional[str] = None
+    output_filename: Optional[str] = None
+    ai_upscale: Optional[bool] = False
+    ai_model: Optional[str] = "realesr-animevideov3"
+
+class UpscaleRequest(BaseModel):
+    video_filename: Optional[str] = None
+    linked_path: Optional[str] = None
+    scale: Optional[int] = 2
+    model_name: Optional[str] = "realesr-animevideov3"
+    target_width: Optional[int] = None
+    target_height: Optional[int] = None
+    encoder_mode: Optional[str] = "gpu_nvenc"
     output_filename: Optional[str] = None
 
 class TranscribeSavedRequest(BaseModel):
@@ -419,6 +437,11 @@ def resolve_media_path(filename: Optional[str] = None, linked_path: Optional[str
         if os.path.isfile(exp_path):
             return exp_path
 
+        # 4b. Check debug directory
+        dbg_path = os.path.join(STORAGE_DIR, "debug", fn)
+        if os.path.isfile(dbg_path):
+            return dbg_path
+
         # 5. Check uploads by basename
         bname = os.path.basename(fn)
         up_bname = os.path.join(UPLOADS_DIR, bname)
@@ -588,11 +611,12 @@ def stream_media_endpoint(path: str, request: Request):
 def get_media_thumbnail_endpoint(
     filename: Optional[str] = None,
     path: Optional[str] = None,
-    time_offset: Optional[float] = 1.0
+    time_offset: Optional[float] = 0.0
 ):
     """
     Extracts, caches, and streams a real video snapshot thumbnail from a video file.
     Supports linked direct disk files, uploaded files, and demo files.
+    Defaults to extracting the exact first frame (time_offset = 0.0s).
     """
     raw_path = urllib.parse.unquote(path) if path else None
     raw_filename = urllib.parse.unquote(filename) if filename else None
@@ -604,7 +628,7 @@ def get_media_thumbnail_endpoint(
     try:
         mtime = os.path.getmtime(source_path)
         size = os.path.getsize(source_path)
-        offset = max(0.0, float(time_offset) if time_offset is not None else 1.0)
+        offset = max(0.0, float(time_offset) if time_offset is not None else 0.0)
         cache_key = hashlib.md5(f"{source_path}_{mtime}_{size}_{offset:.2f}".encode("utf-8")).hexdigest()
         thumb_path = os.path.join(THUMBNAILS_DIR, f"{cache_key}.jpg")
 
@@ -613,7 +637,7 @@ def get_media_thumbnail_endpoint(
 
         ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
 
-        # Try extracting frame at specified offset (default 1.0s)
+        # Extract first frame at specified offset (default 0.0s)
         cmd = [
             ffmpeg_exe, "-y",
             "-ss", f"{offset:.2f}",
@@ -625,11 +649,10 @@ def get_media_thumbnail_endpoint(
         ]
         subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=12)
 
-        # Fallback to 0.0s if first attempt failed (e.g. video shorter than offset)
+        # Fallback to direct first frame extraction if first attempt failed
         if not os.path.isfile(thumb_path) or os.path.getsize(thumb_path) == 0:
             cmd_fallback = [
                 ffmpeg_exe, "-y",
-                "-ss", "0.0",
                 "-i", source_path,
                 "-vframes", "1",
                 "-vf", "scale=480:-2",
@@ -726,7 +749,7 @@ def list_projects_endpoint():
                         projects.append(data)
                 except Exception:
                     pass
-    projects.sort(key=lambda p: p.get("updated_at", ""), reverse=True)
+    projects.sort(key=lambda p: p.get("updated_at") or p.get("updatedAt") or p.get("created_at") or p.get("createdAt") or "", reverse=True)
     return {"projects": projects}
 
 @app.post("/api/projects")
@@ -832,31 +855,126 @@ async def transcribe_endpoint(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/upload-video")
+async def upload_video_endpoint(file: UploadFile = File(...)):
+    file_id = uuid.uuid4().hex[:12]
+    ext = os.path.splitext(file.filename)[1] or ".mp4"
+    saved_filename = f"{file_id}{ext}"
+    saved_path = os.path.join(UPLOADS_DIR, saved_filename)
+    
+    with open(saved_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+        
+    probe = get_upscaler_video_info(saved_path)
+    log_msg("UPLOAD", f"Uploaded video file '{file.filename}' -> {saved_filename} ({probe.get('width')}x{probe.get('height')})")
+    
+    return {
+        "video_filename": saved_filename,
+        "video_url": f"/static/uploads/{saved_filename}",
+        "width": probe.get("width", 1080),
+        "height": probe.get("height", 1920),
+        "fps": probe.get("fps", 30),
+        "duration": probe.get("duration", 0)
+    }
+
 def _do_render_task(job_id: str, req: RenderRequest, source_path: str, output_path: str, export_filename: str):
     engine_name = "Ultra-Fidelity Chrome DOM" if req.engine_type == "dom" else "Fast ASS Subtitles"
     mode_label = "CPU Ultra-Fast" if req.encoder_mode == "cpu" else "NVIDIA GPU NVENC"
+    has_upscaled = False
+    clean_filename = None
     
     def on_proc(proc):
         ACTIVE_RENDER_PROCESSES[job_id] = proc
 
     def on_progress(pct_val):
         try:
-            val = int(pct_val)
-            if val >= 100:
+            if isinstance(pct_val, dict):
+                val = int(pct_val.get("percent", 0))
+                cur_f = int(pct_val.get("current_frame", 0))
+                tot_f = int(pct_val.get("total_frames", 0))
+                fps_v = float(pct_val.get("fps", 0))
+                spd_v = str(pct_val.get("speed", "1x"))
+                msg_v = str(pct_val.get("message", ""))
+                
+                RENDER_JOBS[job_id]["render_details"] = {
+                    "current_frame": cur_f,
+                    "total_frames": tot_f,
+                    "fps": fps_v,
+                    "speed": spd_v
+                }
+            else:
+                val = int(pct_val)
+                msg_v = f"{val}%"
+
+            if has_upscaled:
+                overall = 70 + int(val * 0.29)
+                RENDER_JOBS[job_id]["message"] = f"Phase 2/2 (Burning Captions): {msg_v or f'{val}%'}"
+            else:
+                overall = val
+                RENDER_JOBS[job_id]["message"] = msg_v or f"Rendering Captions: {val}%"
+                
+            if overall >= 100:
                 RENDER_JOBS[job_id]["percent"] = 100
             else:
-                RENDER_JOBS[job_id]["percent"] = max(RENDER_JOBS[job_id]["percent"], min(99, val))
+                RENDER_JOBS[job_id]["percent"] = max(RENDER_JOBS[job_id]["percent"], min(99, overall))
         except Exception:
             pass
             
+    actual_source_path = source_path
     try:
         RENDER_JOBS[job_id]["percent"] = 5
         RENDER_JOBS[job_id]["status"] = "rendering"
+        RENDER_JOBS[job_id]["stage"] = "starting"
+        RENDER_JOBS[job_id]["message"] = "Initializing render pipeline..."
         log_msg("RENDER", f"[{engine_name} | {mode_label}] Starting video export for '{req.video_filename}' ({req.width}x{req.height})")
+
+        # Optional AI Super-Resolution Pre-pass (Real-ESRGAN Vulkan)
+        if getattr(req, "ai_upscale", False) and is_upscaler_installed():
+            src_info = get_upscaler_video_info(source_path)
+            target_w = req.width or 1080
+            target_h = req.height or 1920
+            model_to_use = getattr(req, "ai_model", "realesr-animevideov3") or "realesr-animevideov3"
+            log_msg("RENDER", f"AI Super-Resolution requested: upscaling source {src_info['width']}x{src_info['height']} -> {target_w}x{target_h} via Real-ESRGAN Vulkan ({model_to_use})...")
+            RENDER_JOBS[job_id]["stage"] = "upscaling"
+            RENDER_JOBS[job_id]["percent"] = 6
+            RENDER_JOBS[job_id]["message"] = "Phase 1/2: Initializing Real-ESRGAN Vulkan super-resolution..."
+            clean_filename = f"clean_upscaled_{job_id}.mp4"
+            clean_path = os.path.join(EXPORTS_DIR, clean_filename)
+            
+            def on_up_prog(p_data: dict):
+                pct = 6 + int(p_data.get("percent", 0) * 0.62)
+                RENDER_JOBS[job_id]["percent"] = min(68, pct)
+                RENDER_JOBS[job_id]["stage"] = "upscaling"
+                RENDER_JOBS[job_id]["message"] = f"Phase 1/2 [AI Super-Resolution]: {p_data.get('message', '')}"
+                RENDER_JOBS[job_id]["upscale_details"] = p_data
+            
+            try:
+                upscale_scale = 2 if target_w <= src_info["width"] * 2.2 else 4
+                upscale_video(
+                    source_video_path=source_path,
+                    output_video_path=clean_path,
+                    scale=upscale_scale,
+                    model_name=model_to_use,
+                    target_width=target_w,
+                    target_height=target_h,
+                    encoder_mode=req.encoder_mode or "gpu_nvenc",
+                    progress_callback=on_up_prog,
+                    on_proc_ready=on_proc
+                )
+                if os.path.isfile(clean_path) and os.path.getsize(clean_path) > 1000:
+                    actual_source_path = clean_path
+                    has_upscaled = True
+                    RENDER_JOBS[job_id]["clean_download_url"] = f"/static/exports/{clean_filename}"
+                    RENDER_JOBS[job_id]["percent"] = 70
+                    RENDER_JOBS[job_id]["stage"] = "rendering"
+                    RENDER_JOBS[job_id]["message"] = "Phase 2/2: Burning in styled captions onto upscaled master..."
+                    log_msg("RENDER", f"AI Super-Resolution pre-pass complete! Now rendering captions onto {clean_filename}.")
+            except Exception as up_err:
+                log_msg("WARN", f"AI Super-Resolution pre-pass encountered issue ({up_err}), falling back to native source scaling.")
         
         if req.engine_type == "dom":
             render_captioned_video_dom(
-                source_video_path=source_path,
+                source_video_path=actual_source_path,
                 output_video_path=output_path,
                 segments=req.segments,
                 style=req.style,
@@ -869,7 +987,7 @@ def _do_render_task(job_id: str, req: RenderRequest, source_path: str, output_pa
             )
         else:
             render_captioned_video(
-                source_video_path=source_path,
+                source_video_path=actual_source_path,
                 output_video_path=output_path,
                 segments=req.segments,
                 style=req.style,
@@ -885,11 +1003,16 @@ def _do_render_task(job_id: str, req: RenderRequest, source_path: str, output_pa
         if RENDER_JOBS[job_id].get("status") != "cancelled":
             RENDER_JOBS[job_id]["percent"] = 100
             RENDER_JOBS[job_id]["status"] = "done"
+            RENDER_JOBS[job_id]["stage"] = "completed"
+            RENDER_JOBS[job_id]["message"] = "Export successfully completed!"
             RENDER_JOBS[job_id]["download_url"] = f"/static/exports/{export_filename}"
+            if clean_filename and os.path.isfile(os.path.join(EXPORTS_DIR, clean_filename)):
+                RENDER_JOBS[job_id]["clean_download_url"] = f"/static/exports/{clean_filename}"
             log_msg("SUCCESS", f"[{engine_name} | {mode_label}] Export complete: {export_filename}")
     except Exception as e:
         if RENDER_JOBS[job_id].get("status") != "cancelled":
             RENDER_JOBS[job_id]["status"] = "error"
+            RENDER_JOBS[job_id]["stage"] = "error"
             RENDER_JOBS[job_id]["error"] = str(e)
             log_msg("ERROR", f"Render job {job_id} failed: {e}")
     finally:
@@ -977,6 +1100,182 @@ def get_render_progress(job_id: str):
     if job_id not in RENDER_JOBS:
         raise HTTPException(status_code=404, detail="Job not found")
     return RENDER_JOBS[job_id]
+
+@app.get("/api/download/{filename}")
+def download_file_endpoint(filename: str):
+    """
+    Forces browser to download the file directly as an attachment without navigating or streaming in the active tab.
+    """
+    clean_name = os.path.basename(urllib.parse.unquote(filename))
+    fpath = os.path.join(EXPORTS_DIR, clean_name)
+    if not os.path.isfile(fpath):
+        up_path = os.path.join(UPLOADS_DIR, clean_name)
+        if os.path.isfile(up_path):
+            fpath = up_path
+        else:
+            raise HTTPException(status_code=404, detail="File not found on disk")
+
+    return FileResponse(
+        fpath,
+        media_type="application/octet-stream",
+        filename=clean_name,
+        headers={
+            "Content-Disposition": f'attachment; filename="{clean_name}"'
+        }
+    )
+
+# ---------------------------------------------------------------------------
+# AI Super-Resolution Video Upscaler Endpoints (Real-ESRGAN Vulkan)
+# ---------------------------------------------------------------------------
+
+def _do_upscale_task(job_id: str, req: UpscaleRequest, source_path: str, output_path: str, output_filename: str):
+    def on_proc(proc):
+        ACTIVE_UPSCALE_PROCESSES[job_id] = proc
+
+    def on_progress(p_data: dict):
+        if job_id in UPSCALE_JOBS:
+            UPSCALE_JOBS[job_id].update(p_data)
+
+    try:
+        UPSCALE_JOBS[job_id]["status"] = "processing"
+        UPSCALE_JOBS[job_id]["stage"] = "preparing"
+        UPSCALE_JOBS[job_id]["percent"] = 5
+        UPSCALE_JOBS[job_id]["message"] = "Initializing Real-ESRGAN Vulkan engine..."
+
+        res = upscale_video(
+            source_video_path=source_path,
+            output_video_path=output_path,
+            scale=req.scale or 2,
+            model_name=req.model_name or "realesr-animevideov3",
+            target_width=req.target_width,
+            target_height=req.target_height,
+            encoder_mode=req.encoder_mode or "gpu_nvenc",
+            progress_callback=on_progress,
+            on_proc_ready=on_proc
+        )
+
+        if UPSCALE_JOBS[job_id].get("status") != "cancelled":
+            UPSCALE_JOBS[job_id]["status"] = "done"
+            UPSCALE_JOBS[job_id]["percent"] = 100
+            UPSCALE_JOBS[job_id]["stage"] = "completed"
+            UPSCALE_JOBS[job_id]["message"] = f"Super-resolution complete ({res['width']}x{res['height']})"
+            UPSCALE_JOBS[job_id]["download_url"] = f"/static/exports/{urllib.parse.quote(output_filename)}"
+            UPSCALE_JOBS[job_id]["output_path"] = output_path
+            UPSCALE_JOBS[job_id]["output_filename"] = output_filename
+            UPSCALE_JOBS[job_id]["width"] = res["width"]
+            UPSCALE_JOBS[job_id]["height"] = res["height"]
+            UPSCALE_JOBS[job_id]["fps"] = res["fps"]
+            UPSCALE_JOBS[job_id]["duration"] = res["duration"]
+            log_msg("SUCCESS", f"AI Video Upscale {job_id} complete: {output_filename}")
+    except Exception as e:
+        if UPSCALE_JOBS[job_id].get("status") != "cancelled":
+            UPSCALE_JOBS[job_id]["status"] = "error"
+            UPSCALE_JOBS[job_id]["error"] = str(e)
+            UPSCALE_JOBS[job_id]["stage"] = "failed"
+            UPSCALE_JOBS[job_id]["message"] = f"Upscale error: {str(e)}"
+            log_msg("ERROR", f"AI Video Upscale {job_id} failed: {e}")
+    finally:
+        if job_id in ACTIVE_UPSCALE_PROCESSES:
+            del ACTIVE_UPSCALE_PROCESSES[job_id]
+
+@app.post("/api/upscale")
+async def upscale_endpoint(req: UpscaleRequest, background_tasks: BackgroundTasks):
+    source_path = resolve_media_path(req.video_filename, req.linked_path)
+    if not source_path:
+        log_msg("UPSCALER", f"Source file not found: video_filename='{req.video_filename}', linked_path='{req.linked_path}'")
+        raise HTTPException(status_code=404, detail="Source video file not found")
+
+    _prune_old_jobs()
+    job_id = f"up_{uuid.uuid4().hex[:10]}"
+
+    if req.output_filename and isinstance(req.output_filename, str) and req.output_filename.strip():
+        safe_name = re.sub(r'[/\\?%*:|"<>]+', '', req.output_filename).strip()
+        if safe_name.lower().endswith('.mp4'):
+            safe_name = safe_name[:-4]
+        output_filename = f"{safe_name}.mp4" if safe_name else f"upscaled_{job_id}.mp4"
+    else:
+        src_stem = os.path.splitext(os.path.basename(source_path))[0]
+        output_filename = f"{src_stem}_upscaled_{req.scale}x_{job_id[:4]}.mp4"
+
+    output_path = os.path.join(EXPORTS_DIR, output_filename)
+    src_info = get_upscaler_video_info(source_path)
+
+    UPSCALE_JOBS[job_id] = {
+        "job_id": job_id,
+        "status": "queued",
+        "stage": "queued",
+        "percent": 0,
+        "current_frame": 0,
+        "total_frames": max(1, int(round(src_info["duration"] * src_info["fps"]))),
+        "fps": 0,
+        "eta_seconds": 0,
+        "message": "Queued in AI upscaling pipeline...",
+        "model_name": req.model_name or "realesr-animevideov3",
+        "scale": req.scale or 2,
+        "source_width": src_info["width"],
+        "source_height": src_info["height"],
+        "download_url": f"/static/exports/{urllib.parse.quote(output_filename)}",
+        "error": None
+    }
+
+    background_tasks.add_task(_do_upscale_task, job_id, req, source_path, output_path, output_filename)
+
+    return {
+        "status": "queued",
+        "job_id": job_id,
+        "download_url": f"/static/exports/{urllib.parse.quote(output_filename)}",
+        "source_info": src_info
+    }
+
+@app.get("/api/upscale-progress/{job_id}")
+def get_upscale_progress_endpoint(job_id: str):
+    if job_id not in UPSCALE_JOBS:
+        raise HTTPException(status_code=404, detail="Upscale job not found")
+    return UPSCALE_JOBS[job_id]
+
+@app.post("/api/upscale-cancel/{job_id}")
+def cancel_upscale_endpoint(job_id: str):
+    if job_id in UPSCALE_JOBS:
+        UPSCALE_JOBS[job_id]["status"] = "cancelled"
+        UPSCALE_JOBS[job_id]["stage"] = "cancelled"
+        UPSCALE_JOBS[job_id]["error"] = "Cancelled by user"
+        log_msg("UPSCALER", f"Upscale job {job_id} cancelled by user")
+
+    proc = ACTIVE_UPSCALE_PROCESSES.get(job_id)
+    if proc:
+        try:
+            parent = psutil.Process(proc.pid)
+            for child in parent.children(recursive=True):
+                try:
+                    child.kill()
+                except Exception:
+                    pass
+            parent.kill()
+            proc.wait(timeout=1.0)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        if job_id in ACTIVE_UPSCALE_PROCESSES:
+            del ACTIVE_UPSCALE_PROCESSES[job_id]
+
+    return {"status": "cancelled", "job_id": job_id}
+
+@app.get("/api/upscale-models")
+def get_upscale_models_endpoint():
+    return {
+        "installed": is_upscaler_installed(),
+        "models": AVAILABLE_MODELS
+    }
+
+@app.post("/api/upscale-install")
+def install_upscaler_endpoint():
+    success = ensure_upscaler_ready()
+    return {
+        "installed": success,
+        "status": "ready" if success else "failed"
+    }
 
 def _do_separation_task(job_id: str, input_file_path: str, engine: str):
     def on_progress(pct, msg=""):
@@ -1068,4 +1367,4 @@ def cancel_separation_endpoint(job_id: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=False)

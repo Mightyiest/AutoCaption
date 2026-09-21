@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { 
   X, 
   Plus, 
@@ -66,8 +66,19 @@ export const KeywordLibraryModal = () => {
     return r.keyword.toLowerCase().includes(q) || (r.emoji && r.emoji.includes(q));
   });
 
+  const backdropMouseDownRef = useRef(null);
+
   return (
-    <div className="modal-backdrop" onClick={() => setKeywordLibraryModalOpen(false)}>
+    <div 
+      className="modal-backdrop" 
+      onMouseDown={(e) => { backdropMouseDownRef.current = e.target; }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && backdropMouseDownRef.current === e.currentTarget) {
+          setKeywordLibraryModalOpen(false);
+        }
+        backdropMouseDownRef.current = null;
+      }}
+    >
       <div 
         className="studio-panel apple-modal-content"
         onClick={(e) => e.stopPropagation()}

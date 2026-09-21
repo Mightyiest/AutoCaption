@@ -47,6 +47,7 @@ export const VideoPlayer = () => {
     segments,
     style,
     setDuration,
+    setVideoDimensions,
     setCurrentTime,
     setIsPlaying,
     setVolume,
@@ -329,11 +330,14 @@ export const VideoPlayer = () => {
 
     // Auto-detect aspect ratio for fresh projects when video is clearly landscape
     if (video.videoWidth > 0 && video.videoHeight > 0) {
+      setVideoDimensions(video.videoWidth, video.videoHeight);
       const vidRatio = video.videoWidth / video.videoHeight;
       if (vidRatio >= 1.35 && aspectRatio === '9:16' && (!segments || segments.length === 0)) {
         setAspectRatio('16:9');
       } else if (vidRatio >= 0.95 && vidRatio <= 1.05 && aspectRatio === '9:16' && (!segments || segments.length === 0)) {
         setAspectRatio('1:1');
+      } else if (vidRatio >= 1.25 && vidRatio < 1.35 && aspectRatio === '9:16' && (!segments || segments.length === 0)) {
+        setAspectRatio('4:3');
       }
     }
   };

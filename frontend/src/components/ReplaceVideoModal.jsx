@@ -39,8 +39,19 @@ export const ReplaceVideoModal = () => {
     setPendingImportFile(null);
   };
 
+  const backdropMouseDownRef = React.useRef(null);
+
   return (
-    <div className="modal-backdrop" onClick={handleCancel}>
+    <div 
+      className="modal-backdrop" 
+      onMouseDown={(e) => { backdropMouseDownRef.current = e.target; }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && backdropMouseDownRef.current === e.currentTarget) {
+          handleCancel();
+        }
+        backdropMouseDownRef.current = null;
+      }}
+    >
       <div 
         className="studio-panel apple-modal-content"
         onClick={(e) => e.stopPropagation()}

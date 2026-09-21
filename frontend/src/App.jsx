@@ -14,6 +14,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { HelpModal } from './components/HelpModal';
 import { KeywordLibraryModal } from './components/KeywordLibraryModal';
 import { VocalExtractorModal } from './components/VocalExtractorModal';
+import { VideoUpscaleModal } from './components/VideoUpscaleModal';
 import { useEditorStore } from './store/useEditorStore';
 import { useGlobalShortcuts } from './engine/useGlobalShortcuts';
 import './App.css';
@@ -45,10 +46,10 @@ export function App() {
 
     const handleHash = () => {
       const hash = window.location.hash.toLowerCase();
-      if (hash === '#projects' || hash === '#hub') {
-        setCurrentView('hub');
-      } else if (hash === '#editor') {
+      if (hash === '#editor') {
         setCurrentView('editor');
+      } else {
+        setCurrentView('hub');
       }
     };
 
@@ -226,6 +227,7 @@ export function App() {
       <HelpModal />
       <KeywordLibraryModal />
       <VocalExtractorModal />
+      <VideoUpscaleModal />
 
       {/* Apple Studio Global Toast Notification */}
       {studioToast && (

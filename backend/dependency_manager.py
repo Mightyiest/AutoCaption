@@ -119,6 +119,15 @@ TRACKED_PACKAGES = [
         "required": True,
         "description": "Hardware-accelerated media multiplexer and libass video renderer.",
         "cuda_relevant": True
+    },
+    {
+        "id": "realesrgan",
+        "name": "Real-ESRGAN Vulkan Super-Resolution",
+        "pypi_name": "realesrgan_vulkan",
+        "category": "ai_compute",
+        "required": False,
+        "description": "Standalone NCNN Vulkan AI engine for 2x/4x HD & 4K video upscaling.",
+        "cuda_relevant": True
     }
 ]
 
@@ -369,6 +378,10 @@ def inspect_all_dependencies(check_pypi: bool = False) -> Dict[str, Any]:
         elif pkg_id == "ffmpeg":
             is_installed = ffmpeg_details["installed"]
             installed_ver = ffmpeg_details["version"]
+        elif pkg_id == "realesrgan":
+            from upscaler import is_upscaler_installed
+            is_installed = is_upscaler_installed()
+            installed_ver = "v0.2.5.0 Vulkan NCNN" if is_installed else None
         elif pkg_id == "nvidia_cuda_libs":
             cublas_v = get_installed_version("nvidia-cublas-cu12")
             cudnn_v = get_installed_version("nvidia-cudnn-cu12")

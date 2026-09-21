@@ -1,16 +1,20 @@
-import { Input, ALL_FORMATS, BlobSource, CanvasSink } from 'mediabunny';
+import { Input, ALL_FORMATS, BlobSource, UrlSource, CanvasSink } from 'mediabunny';
 
 /**
- * Detects the native framerate (FPS) of a video file using Mediabunny track packet stats.
+ * Detects the native framerate (FPS) of a video file or stream URL using Mediabunny track packet stats.
  *
- * @param {File|Blob} file
+ * @param {File|Blob|string} fileOrUrl
  * @returns {Promise<number>} Detected FPS (default 30)
  */
-export async function detectNativeVideoFps(file) {
-  if (!file) return 30;
+export async function detectNativeVideoFps(fileOrUrl) {
+  if (!fileOrUrl) return 30;
   try {
+    const source = typeof fileOrUrl === 'string'
+      ? new UrlSource(fileOrUrl)
+      : new BlobSource(fileOrUrl);
+
     const input = new Input({
-      source: new BlobSource(file),
+      source,
       formats: ALL_FORMATS
     });
 
@@ -39,17 +43,32 @@ class VideoSourceCache {
   }
 
   /**
-   * Initializes or gets the Mediabunny CanvasSink for a given video file/blob.
+   * Initializes or gets the Mediabunny CanvasSink for a given video file/blob/url.
    */
-  async ensureSink(file) {
-    const key = file.name || 'default-video';
+  async ensureSink(fileOrUrl) {
+    if (!fileOrUrl) return null;
+    const key = typeof fileOrUrl === 'string' ? fileOrUrl : (fileOrUrl.name || 'blob-video');
     if (this.sinks.has(key)) {
       return this.sinks.get(key);
     }
 
     try {
+      let source = null;
+      if (typeof fileOrUrl === 'string') {
+        let cleanUrl = fileOrUrl.trim();
+        if (cleanUrl.startsWith('/') && typeof window !== 'undefined') {
+          cleanUrl = window.location.origin + cleanUrl;
+        }
+        try {
+          cleanUrl = encodeURI(cleanUrl);
+        } catch (_) {}
+        source = new UrlSource(cleanUrl);
+      } else {
+        source = new BlobSource(fileOrUrl);
+      }
+
       const input = new Input({
-        source: new BlobSource(file),
+        source,
         formats: ALL_FORMATS
       });
 
@@ -96,18 +115,18 @@ class VideoSourceCache {
    * Extracts frame bitmap/canvas at target timestamp in seconds.
    *
    * @param {Object} params
-   * @param {File|Blob} params.file
+   * @param {File|Blob} [params.file]
    * @param {string} [params.url]
    * @param {number} params.time - Timestamp in seconds
    * @returns {Promise<CanvasImageSource|null>}
    */
   async getFrameAt({ file, url, time }) {
-    // 1. Try Mediabunny CanvasSink if file is present
-    if (file) {
-      const sinkData = await this.ensureSink(file);
+    const source = file || url;
+    if (source) {
+      const sinkData = await this.ensureSink(source);
       if (sinkData && sinkData.sink) {
         try {
-          if (!sinkData.iterator || Math.abs(time - sinkData.lastTime) > 2.0) {
+          if (!sinkData.iterator || Math.abs(time - sinkData.lastTime) > 1.5) {
             if (sinkData.iterator && sinkData.iterator.return) {
               await sinkData.iterator.return();
             }
@@ -119,13 +138,26 @@ class VideoSourceCache {
             sinkData.lastTime = wrappedCanvas.timestamp;
             return wrappedCanvas.canvas;
           }
+
+          // Fallback: If iterator ended or returned done, attempt exact getCanvas(time)
+          const fallbackCanvas = await sinkData.sink.getCanvas(time).catch(() => null);
+          if (fallbackCanvas && fallbackCanvas.canvas) {
+            sinkData.lastTime = fallbackCanvas.timestamp;
+            return fallbackCanvas.canvas;
+          }
         } catch (sinkErr) {
-          console.warn('CanvasSink frame extraction failed, falling back to video element:', sinkErr);
+          console.warn('CanvasSink frame extraction failed, trying getCanvas fallback:', sinkErr);
+          try {
+            const fallbackCanvas = await sinkData.sink.getCanvas(time).catch(() => null);
+            if (fallbackCanvas && fallbackCanvas.canvas) {
+              return fallbackCanvas.canvas;
+            }
+          } catch (_) {}
         }
       }
     }
 
-    // 2. Fallback: Frame stepping via HTML5 Video element
+    // 2. Fallback: Frame stepping via HTML5 Video element with precision seek
     return this.seekVideoElementFrame({ file, url, time });
   }
 
@@ -151,14 +183,22 @@ class VideoSourceCache {
       this.videoElements.set(videoUrl, video);
     }
 
-    if (Math.abs(video.currentTime - time) > 0.03) {
+    const targetTime = Math.max(0, Math.min(video.duration || 9999, time));
+    if (Math.abs(video.currentTime - targetTime) > 0.0001) {
       await new Promise(resolve => {
-        const onSeeked = () => {
-          video.removeEventListener('seeked', onSeeked);
-          resolve();
+        let isDone = false;
+        let timer = null;
+        const done = () => {
+          if (!isDone) {
+            isDone = true;
+            if (timer) clearTimeout(timer);
+            video.removeEventListener('seeked', done);
+            resolve();
+          }
         };
-        video.addEventListener('seeked', onSeeked);
-        video.currentTime = Math.max(0, Math.min(video.duration || 9999, time));
+        video.addEventListener('seeked', done, { once: true });
+        timer = setTimeout(done, 2500); // 2500ms fail-safe timeout
+        video.currentTime = targetTime;
       });
     }
 

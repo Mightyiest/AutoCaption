@@ -1,5 +1,7 @@
 import os
 import sys
+import re
+import uuid
 import subprocess
 import tempfile
 import time
@@ -18,6 +20,30 @@ FONT_NAME_MAP = {
     "Plus Jakarta Sans": "Plus Jakarta Sans Bold",
     "Inter": "Montserrat Black"
 }
+
+def get_video_stream_info(path: str):
+    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    dur = 10.0
+    fps = 30.0
+    try:
+        proc = subprocess.run(
+            [ffmpeg_exe, "-i", path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10
+        )
+        out = proc.stderr or ""
+        dur_m = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)", out)
+        if dur_m:
+            h, m, s = dur_m.groups()
+            dur = int(h) * 3600 + int(m) * 60 + float(s)
+        fps_m = re.search(r"(\d+(?:\.\d+)?)\s*fps", out)
+        if fps_m:
+            fps = float(fps_m.group(1))
+    except Exception:
+        pass
+    return dur, fps
 
 def escape_ass_text(text: str) -> str:
     if not text:
@@ -49,64 +75,53 @@ def hex_to_ass_color(hex_str: str, alpha_hex: str = "00") -> str:
     if len(val) != 6:
         return f"&H{alpha_hex}FFFFFF&"
         
-    r = val[0:2].upper()
-    g = val[2:4].upper()
-    b = val[4:6].upper()
-    return f"&H{alpha_hex}{b}{g}{r}&"
+    r, g, b = val[0:2], val[2:4], val[4:6]
+    return f"&H{alpha_hex}{b.upper()}{g.upper()}{r.upper()}&"
 
 def format_ass_timestamp(seconds: float) -> str:
-    seconds = max(0.0, float(seconds))
-    hrs = int(seconds // 3600)
-    mins = int((seconds % 3600) // 60)
-    secs = int(seconds % 60)
-    centis = int(round((seconds - int(seconds)) * 100))
-    if centis >= 100:
-        centis = 99
-    return f"{hrs}:{mins:02d}:{secs:02d}.{centis:02d}"
+    total_ms = int(round(seconds * 100))
+    cs = total_ms % 100
+    total_s = total_ms // 100
+    s = total_s % 60
+    total_m = total_s // 60
+    m = total_m % 60
+    h = total_m // 60
+    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
 def get_word_display_intervals(segment: dict) -> list:
     words = segment.get("words", [])
     if not words:
         return []
         
-    seg_start = float(segment.get("start", 0.0))
-    seg_end = float(segment.get("end", seg_start))
-    
     intervals = []
-    for i, word in enumerate(words):
-        w_start = max(seg_start, float(word.get("start", seg_start)))
-        if i + 1 < len(words):
-            next_start = float(words[i + 1].get("start", w_start))
-            w_end = min(seg_end, next_start)
-        else:
-            w_end = seg_end
-            
+    for i, w in enumerate(words):
+        w_start = float(w.get("start", segment["start"]))
+        w_end = float(w.get("end", segment["end"]))
+        
+        # Guard against zero-duration or inverted word intervals
         if w_end <= w_start:
-            fallback_dur = max(0.2, float(word.get("end", w_start + 0.25)) - w_start)
-            w_end = w_start + fallback_dur
-            
-        w_end = min(seg_end, w_end)
-        if w_end <= w_start:
-            w_end = w_start + 0.2
+            w_end = w_start + 0.15
             
         intervals.append({
             "active_index": i,
             "start": w_start,
             "end": w_end
         })
-        
     return intervals
 
 def build_animation_tags(anim_type: str, duration_ms: int, org_x: int, org_y: int) -> str:
-    duration_ms = max(80, int(duration_ms))
+    anim_type = (anim_type or "pop").lower()
     
+    if anim_type == "none":
+        return ""
+        
     if anim_type == "pop":
-        t1 = min(60, int(duration_ms * 0.4))
-        t2 = min(130, duration_ms)
-        return f"\\fscx96\\fscy96\\t(0,{t1},\\fscx112\\fscy112)\\t({t1},{t2},\\fscx104\\fscy104)"
+        t1 = min(60, duration_ms)
+        t2 = min(110, duration_ms)
+        return f"\\org({org_x},{org_y})\\fscx95\\fscy95\\t(0,{t1},\\fscx112\\fscy112)\\t({t1},{t2},\\fscx100\\fscy100)"
         
     if anim_type == "bounce":
-        t1 = min(60, int(duration_ms * 0.4))
+        t1 = min(70, duration_ms)
         t2 = min(130, duration_ms)
         return f"\\org({org_x},{org_y})\\fscx96\\fscy96\\frz-1.5\\t(0,{t1},\\fscx110\\fscy110\\frz1.5)\\t({t1},{t2},\\fscx104\\fscy104\\frz0)"
         
@@ -123,16 +138,23 @@ def generate_ass_subtitle(
     style: dict,
     video_width: int = 1080,
     video_height: int = 1920,
-    preview_base_width: float = 310.0,
+    preview_base_width: float = 1080.0,
     preview_metrics: dict = None
 ) -> str:
     metrics = preview_metrics or {}
-    base_w = float(metrics.get("container_width", preview_base_width) or 310.0)
-    base_h = float(metrics.get("container_height", 550.0) or 550.0)
+    ref_w = 1080.0 if video_height >= video_width else 1920.0
+    ref_h = 1920.0 if video_height >= video_width else 1080.0
+    
+    # If container_width is provided and >= 720, use it; otherwise normalize to canonical reference dimensions
+    passed_w = float(metrics.get("container_width", 0) or 0)
+    passed_h = float(metrics.get("container_height", 0) or 0)
+    
+    base_w = passed_w if passed_w >= 720.0 else ref_w
+    base_h = passed_h if passed_h >= 720.0 else ref_h
     
     scale_x = video_width / base_w
     scale_y = video_height / base_h
-    uniform_scale = min(scale_x, scale_y)
+    uniform_scale = scale_y
     
     raw_font_family = str(style.get("fontFamily", "Montserrat")).strip()
     font_family = FONT_NAME_MAP.get(raw_font_family, raw_font_family)
@@ -309,7 +331,8 @@ def render_captioned_video(
     
     temp_dir = os.path.dirname(os.path.abspath(output_video_path))
     os.makedirs(temp_dir, exist_ok=True)
-    temp_ass_path = os.path.join(temp_dir, f"sub_{os.path.basename(output_video_path)}.ass")
+    temp_ass_filename = f"sub_{uuid.uuid4().hex[:12]}.ass"
+    temp_ass_path = os.path.join(temp_dir, temp_ass_filename)
     
     # Save debug snapshot
     debug_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "storage", "debug")
@@ -320,7 +343,7 @@ def render_captioned_video(
         style=style,
         video_width=video_width,
         video_height=video_height,
-        preview_base_width=360.0,
+        preview_base_width=1080.0,
         preview_metrics=preview_metrics
     )
     
@@ -332,51 +355,53 @@ def render_captioned_video(
         f.write(ass_text)
         
     try:
-        escaped_ass_path = temp_ass_path.replace("\\", "/").replace(":", "\\\\:")
-        escaped_fonts_dir = FONTS_DIR.replace("\\", "/").replace(":", "\\\\:")
+        escaped_ass_path = temp_ass_path.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+        escaped_fonts_dir = FONTS_DIR.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
         
         audio_exts = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".wma"}
         _, src_ext = os.path.splitext(source_video_path.lower())
         is_audio_only = src_ext in audio_exts
-        
-        duration = float(video_duration) if video_duration and float(video_duration) > 0 else 10.0
 
-        if encoder_mode == "gpu_nvenc":
-            v_codec = ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "19"]
-        else:
-            v_codec = ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "18"]
+        probed_dur, native_fps = get_video_stream_info(source_video_path)
+        duration = float(video_duration) if video_duration and float(video_duration) > 0.5 else probed_dur
+        total_frames = int(round(duration * (native_fps if native_fps > 0 else 30.0)))
 
-        if is_audio_only:
-            # Generate clean solid white background for audio-only voiceovers/demos
-            vf_filter = f"ass={escaped_ass_path}:fontsdir={escaped_fonts_dir}"
-            cmd = [
-                ffmpeg_exe,
-                "-y",
-                "-f", "lavfi",
-                "-i", f"color=c=white:s={video_width}x{video_height}:r=30:d={duration}",
-                "-i", source_video_path,
-                "-vf", vf_filter,
-                *v_codec,
-                "-c:a", "aac",
-                "-b:a", "192k",
-                "-shortest",
-                "-progress", "pipe:1",
-                output_video_path
-            ]
-        else:
-            # Enforce exact cover-crop scaling followed by libass subtitle burn-in
-            vf_filter = f"scale={video_width}:{video_height}:force_original_aspect_ratio=increase,crop={video_width}:{video_height},ass={escaped_ass_path}:fontsdir={escaped_fonts_dir}"
-            cmd = [
-                ffmpeg_exe,
-                "-y",
-                "-i", source_video_path,
-                "-vf", vf_filter,
-                *v_codec,
-                "-c:a", "aac",
-                "-b:a", "192k",
-                "-progress", "pipe:1",
-                output_video_path
-            ]
+        def build_cmd(use_nvenc: bool):
+            if use_nvenc:
+                c_codec = ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "19", "-pix_fmt", "yuv420p"]
+            else:
+                c_codec = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p"]
+
+            if is_audio_only:
+                vf = f"ass=filename='{escaped_ass_path}':fontsdir='{escaped_fonts_dir}'"
+                return [
+                    ffmpeg_exe, "-y",
+                    "-f", "lavfi",
+                    "-i", f"color=c=white:s={video_width}x{video_height}:r=30:d={duration}",
+                    "-i", source_video_path,
+                    "-vf", vf,
+                    *c_codec,
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    "-shortest",
+                    "-progress", "pipe:1",
+                    output_video_path
+                ]
+            else:
+                vf = f"scale={video_width}:{video_height}:force_original_aspect_ratio=increase,crop={video_width}:{video_height},ass=filename='{escaped_ass_path}':fontsdir='{escaped_fonts_dir}'"
+                return [
+                    ffmpeg_exe, "-y",
+                    "-i", source_video_path,
+                    "-vf", vf,
+                    *c_codec,
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    "-progress", "pipe:1",
+                    output_video_path
+                ]
+
+        use_gpu = (encoder_mode == "gpu_nvenc")
+        cmd = build_cmd(use_gpu)
         
         proc = subprocess.Popen(
             cmd,
@@ -393,11 +418,10 @@ def render_captioned_video(
             except Exception:
                 pass
 
-        # Asynchronously drain stderr in a background thread to prevent OS pipe deadlock
         stderr_lines = []
-        def _drain_stderr():
+        def _drain_stderr(p):
             try:
-                for err_line in iter(proc.stderr.readline, ''):
+                for err_line in iter(p.stderr.readline, ''):
                     if not err_line:
                         break
                     line_clean = err_line.strip()
@@ -409,15 +433,17 @@ def render_captioned_video(
                 pass
             finally:
                 try:
-                    proc.stderr.close()
+                    p.stderr.close()
                 except Exception:
                     pass
 
-        t_err = threading.Thread(target=_drain_stderr, daemon=True)
+        t_err = threading.Thread(target=_drain_stderr, args=(proc,), daemon=True)
         t_err.start()
         
-        duration = float(video_duration) if video_duration and float(video_duration) > 0 else 0.0
         last_pct = 5
+        cur_frame = 0
+        cur_fps = 0.0
+        cur_speed = "1x"
         
         while True:
             line = proc.stdout.readline()
@@ -427,20 +453,43 @@ def render_captioned_video(
                 continue
                 
             line = line.strip()
-            if line.startswith("out_time_ms="):
+            if line.startswith("frame="):
                 try:
-                    out_ms = int(line.split("=")[1])
+                    cur_frame = int(line.split("=")[1].strip())
+                except Exception:
+                    pass
+            elif line.startswith("fps="):
+                try:
+                    cur_fps = float(line.split("=")[1].strip())
+                except Exception:
+                    pass
+            elif line.startswith("speed="):
+                try:
+                    cur_speed = line.split("=")[1].strip()
+                except Exception:
+                    pass
+            elif line.startswith("out_time_ms="):
+                try:
+                    out_ms = int(line.split("=")[1].strip())
                     if progress_callback and duration > 0:
                         pct = min(99, int((out_ms / 1000000.0) / duration * 100))
                         last_pct = max(last_pct, pct)
-                        progress_callback(last_pct)
+                        progress_callback({
+                            "percent": last_pct,
+                            "current_frame": cur_frame,
+                            "total_frames": total_frames,
+                            "fps": cur_fps,
+                            "speed": cur_speed,
+                            "message": f"Frame {cur_frame}/{total_frames} ({cur_fps} FPS)" if total_frames > 0 else f"Burning captions: {last_pct}%"
+                        })
                 except Exception:
                     pass
             elif line.startswith("duration="):
                 try:
-                    dur_val = float(line.split("=")[1])
+                    dur_val = float(line.split("=")[1].strip())
                     if dur_val > 0:
                         duration = dur_val
+                        total_frames = int(round(duration * (native_fps if native_fps > 0 else 30.0)))
                 except Exception:
                     pass
                     
@@ -450,12 +499,80 @@ def render_captioned_video(
         except Exception:
             pass
 
+        # If GPU NVENC failed, fallback gracefully to CPU libx264
+        if proc.returncode != 0 and use_gpu:
+            cmd_fallback = build_cmd(use_nvenc=False)
+            proc_fb = subprocess.Popen(
+                cmd_fallback,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                universal_newlines=True
+            )
+            if on_proc_ready:
+                try:
+                    on_proc_ready(proc_fb)
+                except Exception:
+                    pass
+
+            stderr_lines = []
+            t_err2 = threading.Thread(target=_drain_stderr, args=(proc_fb,), daemon=True)
+            t_err2.start()
+
+            while True:
+                line = proc_fb.stdout.readline()
+                if not line and proc_fb.poll() is not None:
+                    break
+                if not line:
+                    continue
+                line = line.strip()
+                if line.startswith("frame="):
+                    try:
+                        cur_frame = int(line.split("=")[1].strip())
+                    except Exception:
+                        pass
+                elif line.startswith("fps="):
+                    try:
+                        cur_fps = float(line.split("=")[1].strip())
+                    except Exception:
+                        pass
+                elif line.startswith("out_time_ms="):
+                    try:
+                        out_ms = int(line.split("=")[1].strip())
+                        if progress_callback and duration > 0:
+                            pct = min(99, int((out_ms / 1000000.0) / duration * 100))
+                            last_pct = max(last_pct, pct)
+                            progress_callback({
+                                "percent": last_pct,
+                                "current_frame": cur_frame,
+                                "total_frames": total_frames,
+                                "fps": cur_fps,
+                                "speed": cur_speed,
+                                "message": f"Frame {cur_frame}/{total_frames} ({cur_fps} FPS)" if total_frames > 0 else f"Burning captions: {last_pct}%"
+                            })
+                    except Exception:
+                        pass
+            proc_fb.wait()
+            try:
+                t_err2.join(timeout=1.0)
+            except Exception:
+                pass
+            proc = proc_fb
+
         if proc.returncode != 0:
             err_summary = "\n".join(stderr_lines[-10:]) if stderr_lines else "No stderr logged"
             raise RuntimeError(f"FFmpeg process failed with exit code {proc.returncode}:\n{err_summary}")
             
         if progress_callback and proc.returncode == 0:
-            progress_callback(100)
+            progress_callback({
+                "percent": 100,
+                "current_frame": total_frames,
+                "total_frames": total_frames,
+                "fps": cur_fps,
+                "speed": cur_speed,
+                "message": "Caption burn-in complete!"
+            })
             
     finally:
         if os.path.exists(temp_ass_path):

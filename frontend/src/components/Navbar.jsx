@@ -51,6 +51,7 @@ export const Navbar = () => {
     triggerVideoPicker,
     setTranscribeModalOpen,
     setExportModalOpen,
+    setUpscaleModalOpen,
     setSettingsModalOpen,
     setHelpModalOpen,
     setVocalExtractorOpen,
@@ -589,6 +590,22 @@ export const Navbar = () => {
         >
           <Mic size={12} color="#E11D48" />
           <span>Vocal Extractor</span>
+        </button>
+
+        <button
+          onClick={() => setUpscaleModalOpen(true)}
+          className="btn-secondary"
+          title="AI Super-Resolution Video Upscaler (Real-ESRGAN Vulkan 720p -> 1080p / 4K)"
+          style={{
+            padding: '5px 10px',
+            fontSize: '11px',
+            borderColor: 'rgba(56, 189, 248, 0.4)',
+            backgroundColor: 'rgba(56, 189, 248, 0.08)',
+            color: 'var(--accent-bright-blue)'
+          }}
+        >
+          <Sparkles size={12} color="var(--accent-bright-blue)" />
+          <span style={{ fontWeight: '600' }}>AI Upscale</span>
         </button>
 
         <button

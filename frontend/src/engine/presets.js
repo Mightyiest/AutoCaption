@@ -213,7 +213,7 @@ export const PRESETS = [
     })
   },
   {
-    id: 'beast',
+    id: 'mrbeast',
     name: 'MrBeast Explosive',
     description: 'Vibrant neon green bounce with heavy contrast',
     badge: 'POPULAR',
@@ -378,3 +378,10 @@ export const PRESETS = [
     })
   }
 ];
+
+export function getPresetById(id) {
+  if (!id) return PRESETS[0];
+  const normalized = String(id).toLowerCase();
+  if (normalized === 'beast') return PRESETS.find(p => p.id === 'mrbeast') || PRESETS[0];
+  return PRESETS.find(p => p.id === id) || PRESETS[0];
+}

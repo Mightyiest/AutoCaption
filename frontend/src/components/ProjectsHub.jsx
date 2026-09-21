@@ -66,6 +66,18 @@ export const ProjectsHub = () => {
   const titleInputRef = useRef(null);
   const renameInputRef = useRef(null);
   const modalFileInputRef = useRef(null);
+  const backdropMouseDownRef = useRef(null);
+
+  const handleBackdropMouseDown = (e) => {
+    backdropMouseDownRef.current = e.target;
+  };
+
+  const handleBackdropClick = (e, callback) => {
+    if (e.target === e.currentTarget && backdropMouseDownRef.current === e.currentTarget) {
+      callback();
+    }
+    backdropMouseDownRef.current = null;
+  };
 
   useEffect(() => {
     fetchProjectsList();
@@ -483,21 +495,13 @@ export const ProjectsHub = () => {
               const linesText = p.linesCount || p.lines || (p.segments ? p.segments.length : 0);
               const presetText = p.activePresetName || p.preset || p.activePresetId || 'MrBeast Pop';
 
-              // Resolve authentic video snapshot thumbnail
+              // Resolve authentic video snapshot thumbnail (first frame)
               const rawThumb = p.thumbnailUrl || p.thumb;
               const isPlaceholder = !rawThumb || rawThumb.includes('unsplash.com');
               const videoSnapshotUrl = (p.linkedSourcePath || p.videoFilename)
-                ? `${BACKEND_URL}/api/media/thumbnail?filename=${encodeURIComponent(p.videoFilename || '')}&path=${encodeURIComponent(p.linkedSourcePath || '')}`
+                ? `${BACKEND_URL}/api/media/thumbnail?filename=${encodeURIComponent(p.videoFilename || '')}&path=${encodeURIComponent(p.linkedSourcePath || '')}&time_offset=0`
                 : null;
               const thumbUrl = !isPlaceholder ? rawThumb : videoSnapshotUrl;
-
-              // Only show snippet text if it's a real user caption and not a dummy template string
-              const isDummySnippet = !p.captionSnippet || 
-                p.captionSnippet === 'SAMPLE CAPTION 🚀' || 
-                p.captionSnippet === 'Studio Caption' || 
-                p.captionSnippet === 'NEW PROJECT 🔥';
-              const captionText = !isDummySnippet ? p.captionSnippet : null;
-              const captionClass = p.captionStyleClass || p.captionClass || 'cap-style-mrbeast';
 
               return (
                 <div
@@ -554,12 +558,6 @@ export const ProjectsHub = () => {
                       <Film size={26} style={{ opacity: 0.35 }} />
                       <span style={{ fontSize: '11px', fontWeight: 600, opacity: 0.5, letterSpacing: '0.04em' }}>VIDEO SNAPSHOT</span>
                     </div>
-
-                    {captionText && (
-                      <div className="stage-caption">
-                        <div className={captionClass}>{captionText}</div>
-                      </div>
-                    )}
 
                     <div className="card-stage-scrim">
                       <button
@@ -666,10 +664,14 @@ export const ProjectsHub = () => {
           APPLE-STYLE NEW PROJECT MODAL DIALOG
           ======================================================================== */}
       {isNewModalOpen && (
-        <div className="apple-modal-backdrop" onClick={() => {
-          setIsNewModalOpen(false);
-          setIsLinking(false);
-        }}>
+        <div 
+          className="apple-modal-backdrop" 
+          onMouseDown={handleBackdropMouseDown}
+          onClick={(e) => handleBackdropClick(e, () => {
+            setIsNewModalOpen(false);
+            setIsLinking(false);
+          })}
+        >
           <div className="apple-modal-window" onClick={(e) => e.stopPropagation()}>
             {/* Header */}
             <div className="apple-modal-header">
@@ -872,7 +874,11 @@ export const ProjectsHub = () => {
           APPLE-STYLE RENAME PROJECT MODAL DIALOG
           ======================================================================== */}
       {renameModal.isOpen && (
-        <div className="apple-modal-backdrop" onClick={() => setRenameModal({ isOpen: false, project: null, title: '' })}>
+        <div 
+          className="apple-modal-backdrop" 
+          onMouseDown={handleBackdropMouseDown}
+          onClick={(e) => handleBackdropClick(e, () => setRenameModal({ isOpen: false, project: null, title: '' }))}
+        >
           <div className="apple-modal-window" style={{ maxWidth: '440px' }} onClick={(e) => e.stopPropagation()}>
             <div className="apple-modal-header">
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -944,7 +950,11 @@ export const ProjectsHub = () => {
           APPLE-STYLE DELETE CONFIRMATION DIALOG
           ======================================================================== */}
       {deleteModal.isOpen && (
-        <div className="apple-modal-backdrop" onClick={() => setDeleteModal({ isOpen: false, project: null })}>
+        <div 
+          className="apple-modal-backdrop" 
+          onMouseDown={handleBackdropMouseDown}
+          onClick={(e) => handleBackdropClick(e, () => setDeleteModal({ isOpen: false, project: null }))}
+        >
           <div className="apple-modal-window" style={{ maxWidth: '420px' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: '14px' }}>
               <div style={{

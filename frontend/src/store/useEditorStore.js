@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { PRESETS, sanitizeStyle } from '../engine/presets';
+import { PRESETS, sanitizeStyle, getPresetById } from '../engine/presets';
 import { extractAudioPeaks } from '../engine/audioWaveformExtractor';
 import { extractAllWords, chunkWordsIntoSegments, stripPunctuationFromSegments } from '../engine/wordChunker';
 import { autoAssignEmojis, detectEmojiForWord } from '../engine/emojiEngine';
@@ -69,6 +69,85 @@ export function captureVideoSnapshot(mediaEl, maxWidth = 480) {
   } catch (err) {
     return null;
   }
+}
+
+export function extractFirstFrameFromVideo(fileOrUrl, maxWidth = 480) {
+  return new Promise((resolve) => {
+    try {
+      if (!fileOrUrl || typeof window === 'undefined') return resolve(null);
+      const isFile = (typeof File !== 'undefined' && fileOrUrl instanceof File) || (typeof Blob !== 'undefined' && fileOrUrl instanceof Blob);
+      const url = isFile ? URL.createObjectURL(fileOrUrl) : fileOrUrl;
+      const video = document.createElement('video');
+      video.muted = true;
+      video.crossOrigin = 'anonymous';
+      video.preload = 'auto';
+      video.src = url;
+
+      let resolved = false;
+      const cleanUp = () => {
+        if (isFile) {
+          try { URL.revokeObjectURL(url); } catch (_) {}
+        }
+      };
+
+      const capture = () => {
+        if (resolved) return;
+        try {
+          if (video.videoWidth && video.videoHeight) {
+            const canvas = document.createElement('canvas');
+            const aspect = video.videoHeight / video.videoWidth;
+            const w = Math.min(maxWidth, video.videoWidth);
+            const h = Math.round(w * aspect);
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(video, 0, 0, w, h);
+              const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+              resolved = true;
+              cleanUp();
+              return resolve(dataUrl);
+            }
+          }
+        } catch (e) {
+          // Ignore
+        }
+        resolved = true;
+        cleanUp();
+        resolve(null);
+      };
+
+      video.onloadeddata = () => {
+        try { video.currentTime = 0; } catch (_) {}
+      };
+      video.onseeked = () => {
+        capture();
+      };
+      video.oncanplay = () => {
+        if (video.currentTime === 0) {
+          capture();
+        }
+      };
+      video.onerror = () => {
+        if (!resolved) {
+          resolved = true;
+          cleanUp();
+          resolve(null);
+        }
+      };
+
+      // 3.5s safety timeout
+      setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          cleanUp();
+          resolve(null);
+        }
+      }, 3500);
+    } catch (e) {
+      resolve(null);
+    }
+  });
 }
 
 export const DEMO_SEGMENTS = [
@@ -219,6 +298,9 @@ export const useEditorStore = create((set, get) => ({
   videoUrl: '',
   videoFilename: null,
   videoFps: 30,
+  videoWidth: 0,
+  videoHeight: 0,
+  setVideoDimensions: (width, height) => set({ videoWidth: width, videoHeight: height }),
   duration: 0.0,
   currentTime: 0.0,
   seekRequestTime: null,
@@ -282,6 +364,8 @@ export const useEditorStore = create((set, get) => ({
   isUploadModalOpen: false,
   isTranscribeModalOpen: false,
   isExportModalOpen: false,
+  isUpscaleModalOpen: false,
+  setUpscaleModalOpen: (isUpscaleModalOpen) => set({ isUpscaleModalOpen }),
   isSettingsModalOpen: false,
   isHelpModalOpen: false,
   isVocalExtractorOpen: false,
@@ -289,6 +373,23 @@ export const useEditorStore = create((set, get) => ({
   videoPickerTrigger: null,
   theme: initialTheme,
   removePunctuation: false,
+
+  replaceProjectVideo: async ({ videoFile, videoFilename, videoUrl, linkedSourcePath, width, height, fps }) => {
+    const { activeProjectId } = get();
+    const update = {
+      videoFile: videoFile !== undefined ? videoFile : (videoUrl ? null : get().videoFile),
+      videoFilename: videoFilename || get().videoFilename,
+      videoUrl: videoUrl || get().videoUrl,
+      linkedSourcePath: linkedSourcePath !== undefined ? linkedSourcePath : get().linkedSourcePath,
+      videoWidth: width || get().videoWidth,
+      videoHeight: height || get().videoHeight,
+      videoFps: fps || get().videoFps
+    };
+    set(update);
+    if (activeProjectId) {
+      get().triggerAutoSave();
+    }
+  },
 
   setCurrentView: (currentView) => {
     set({ currentView });
@@ -301,6 +402,14 @@ export const useEditorStore = create((set, get) => ({
     try {
       const list = await getAllProjects();
       set({ projectsList: list });
+      // Only auto-restore project into editor if the user is explicitly on the #editor hash route
+      if (!get().activeProjectId && typeof window !== 'undefined') {
+        const hash = window.location.hash.toLowerCase();
+        const lastId = localStorage.getItem('autocaption_last_active_project_id');
+        if (hash === '#editor' && lastId && list.some(p => p.id === lastId)) {
+          get().loadProject(lastId);
+        }
+      }
     } catch (e) {
       console.warn('Failed to fetch projects list:', e);
     }
@@ -311,7 +420,7 @@ export const useEditorStore = create((set, get) => ({
       const proj = await getProjectById(projectId);
       if (!proj) return;
       
-      const preset = PRESETS.find(p => p.id === proj.activePresetId) || PRESETS[0];
+      const preset = getPresetById(proj.activePresetId);
       const projectStyle = proj.style ? sanitizeStyle(proj.style) : { ...preset.style };
 
       let streamUrl = proj.videoUrl || '';
@@ -348,6 +457,7 @@ export const useEditorStore = create((set, get) => ({
       });
 
       if (typeof window !== 'undefined') {
+        localStorage.setItem('autocaption_last_active_project_id', proj.id);
         window.location.hash = 'editor';
       }
     } catch (err) {
@@ -371,7 +481,7 @@ export const useEditorStore = create((set, get) => ({
         calculatedThumb = videoSnapshotUrl;
       }
       if (!calculatedThumb && (linkedSourcePath || videoFilename)) {
-        calculatedThumb = `${BACKEND_URL}/api/media/thumbnail?path=${encodeURIComponent(linkedSourcePath || '')}&filename=${encodeURIComponent(videoFilename || '')}`;
+        calculatedThumb = `${BACKEND_URL}/api/media/thumbnail?path=${encodeURIComponent(linkedSourcePath || '')}&filename=${encodeURIComponent(videoFilename || '')}&time_offset=0`;
       }
 
       await saveProject({
@@ -437,10 +547,10 @@ export const useEditorStore = create((set, get) => ({
     const BACKEND_URL = 'http://127.0.0.1:8000';
     let newThumb = null;
     if (linkedPath || filename) {
-      newThumb = `${BACKEND_URL}/api/media/thumbnail?path=${encodeURIComponent(linkedPath || '')}&filename=${encodeURIComponent(filename || '')}`;
+      newThumb = `${BACKEND_URL}/api/media/thumbnail?path=${encodeURIComponent(linkedPath || '')}&filename=${encodeURIComponent(filename || '')}&time_offset=0`;
     }
 
-    const selectedPreset = PRESETS.find(p => p.id === presetId) || PRESETS[0];
+    const selectedPreset = getPresetById(presetId);
     const defaultStyle = { ...selectedPreset.style };
     const projectTitle = title || `New ${aspect} Project`;
     const newProj = {
@@ -523,7 +633,7 @@ export const useEditorStore = create((set, get) => ({
       proj.mediaOffline = false;
       proj.isMediaLinked = true;
       const BACKEND_URL = 'http://127.0.0.1:8000';
-      proj.thumbnailUrl = `${BACKEND_URL}/api/media/thumbnail?path=${encodeURIComponent(res.filePath)}&filename=${encodeURIComponent(res.filename)}`;
+      proj.thumbnailUrl = `${BACKEND_URL}/api/media/thumbnail?path=${encodeURIComponent(res.filePath)}&filename=${encodeURIComponent(res.filename)}&time_offset=0`;
       await saveProject(proj);
 
       if (get().activeProjectId === projectId) {

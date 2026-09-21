@@ -31,6 +31,31 @@ function openIndexedDB() {
 export async function getAllProjects() {
   const isDemoPlaceholder = (id) => typeof id === 'string' && /^proj-[1-8]$/.test(id);
 
+  // 1. Authoritative: Fetch all saved projects from backend storage/projects
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/projects`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && Array.isArray(data.projects) && data.projects.length > 0) {
+        const backendProjects = data.projects.filter(p => !isDemoPlaceholder(p.id));
+        
+        // Sync to IndexedDB for seamless offline caching
+        try {
+          const db = await openIndexedDB();
+          const writeTx = db.transaction(STORE_NAME, 'readwrite');
+          const writeStore = writeTx.objectStore(STORE_NAME);
+          backendProjects.forEach(p => writeStore.put(p));
+        } catch (_) {}
+
+        backendProjects.sort((a, b) => new Date(b.updated_at || b.updatedAt || 0) - new Date(a.updated_at || a.updatedAt || 0));
+        return backendProjects;
+      }
+    }
+  } catch (backendErr) {
+    console.warn('Backend projects fetch error, falling back to local storage:', backendErr);
+  }
+
+  // 2. Fallback: IndexedDB
   try {
     const db = await openIndexedDB();
     const projects = await new Promise((resolve, reject) => {
@@ -53,14 +78,14 @@ export async function getAllProjects() {
         } catch (_) {}
       }
 
-      realProjects.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+      realProjects.sort((a, b) => new Date(b.updated_at || b.updatedAt || 0) - new Date(a.updated_at || a.updatedAt || 0));
       return realProjects;
     }
   } catch (err) {
     console.warn('IndexedDB read failed, checking localStorage fallback:', err);
   }
 
-  // Fallback to localStorage
+  // 3. Fallback: localStorage
   try {
     const saved = localStorage.getItem(STORAGE_KEY_LOCAL);
     if (saved) {
@@ -68,7 +93,7 @@ export async function getAllProjects() {
       if (Array.isArray(parsed) && parsed.length > 0) {
         const realProjects = parsed.filter(p => !isDemoPlaceholder(p.id));
         localStorage.setItem(STORAGE_KEY_LOCAL, JSON.stringify(realProjects));
-        realProjects.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+        realProjects.sort((a, b) => new Date(b.updated_at || b.updatedAt || 0) - new Date(a.updated_at || a.updatedAt || 0));
         return realProjects;
       }
     }
@@ -81,6 +106,24 @@ export async function getAllProjects() {
 
 export async function getProjectById(id) {
   if (!id) return null;
+
+  // 1. Try backend
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/projects/${id}`);
+    if (res.ok) {
+      const proj = await res.json();
+      if (proj && proj.id) {
+        try {
+          const db = await openIndexedDB();
+          const tx = db.transaction(STORE_NAME, 'readwrite');
+          tx.objectStore(STORE_NAME).put(proj);
+        } catch (_) {}
+        return proj;
+      }
+    }
+  } catch (e) {}
+
+  // 2. Try IndexedDB
   try {
     const db = await openIndexedDB();
     const proj = await new Promise((resolve, reject) => {
