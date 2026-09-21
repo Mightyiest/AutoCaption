@@ -14,7 +14,8 @@ import {
   Cpu,
   Ban,
   Sparkles,
-  Film
+  Film,
+  RefreshCw
 } from 'lucide-react';
 import { useEditorStore } from '../store/useEditorStore';
 import { ClientSceneExporter } from '../engine/sceneExporter';
@@ -41,16 +42,13 @@ export const ExportModal = () => {
     aspectRatio,
     linkedSourcePath,
     isMediaLinked,
+    activeProjectId,
     activeProjectTitle,
     replaceProjectVideo,
-    setUpscaleModalOpen
+    setUpscaleModalOpen,
+    lastExportResult,
+    setLastExportResult
   } = useEditorStore();
-
-  const [selectedAspect, setSelectedAspect] = useState(aspectRatio || '9:16');
-  const [aiUpscale, setAiUpscale] = useState(true);
-  const [aiModel, setAiModel] = useState('realesr-animevideov3');
-  const [cleanResultUrl, setCleanResultUrl] = useState(null);
-  const [exportStageMessage, setExportStageMessage] = useState('');
 
   const getCleanProjectBase = () => {
     const raw = (activeProjectTitle || videoFilename || 'Untitled Project').trim();
@@ -60,11 +58,24 @@ export const ExportModal = () => {
       .trim() || 'Untitled Project';
   };
 
-  const [customFilename, setCustomFilename] = useState(getCleanProjectBase());
-  
   // Compute native video dimensions
   const nativeW = videoWidth > 0 ? videoWidth : (aspectRatio === '16:9' ? 1280 : aspectRatio === '1:1' ? 720 : aspectRatio === '4:3' ? 960 : 720);
   const nativeH = videoHeight > 0 ? videoHeight : (aspectRatio === '16:9' ? 720 : aspectRatio === '1:1' ? 720 : aspectRatio === '4:3' ? 720 : 1280);
+
+  // Automatically detect if current video is already high-resolution or upscaled
+  const isAlreadyUpscaled = Boolean(
+    (videoFilename && /_upscaled_/i.test(videoFilename)) ||
+    (videoUrl && /_upscaled_/i.test(videoUrl)) ||
+    (nativeW >= 1080 && nativeH >= 1080) ||
+    (nativeW >= 1920 || nativeH >= 1920)
+  );
+
+  const [selectedAspect, setSelectedAspect] = useState(aspectRatio || '9:16');
+  const [aiUpscale, setAiUpscale] = useState(!isAlreadyUpscaled);
+  const [aiModel, setAiModel] = useState('realesr-animevideov3');
+  const [cleanResultUrl, setCleanResultUrl] = useState(null);
+  const [exportStageMessage, setExportStageMessage] = useState('');
+  const [customFilename, setCustomFilename] = useState(getCleanProjectBase());
 
   const getResolutionTiers = (aspect, srcW, srcH) => {
     switch (aspect) {
@@ -191,13 +202,23 @@ export const ExportModal = () => {
       activeJobIdRef.current = null;
       setIsExporting(false);
       setExportStats({ percent: 0, currentFrame: 0, totalFrames: 0, fps: 0, etaSeconds: 0, stage: 'idle', message: '' });
-      setExportResultUrl(null);
-      setCleanResultUrl(null);
       setErrorMessage(null);
       setExportStageMessage('');
       setCustomFilename(getCleanProjectBase());
+
+      // If this project has an in-memory export result, restore it so user doesn't lose download links
+      if (lastExportResult && lastExportResult.projectId === activeProjectId && lastExportResult.exportResultUrl) {
+        setExportResultUrl(lastExportResult.exportResultUrl);
+        setCleanResultUrl(lastExportResult.cleanResultUrl || null);
+      } else {
+        setExportResultUrl(null);
+        setCleanResultUrl(null);
+      }
+
+      // If video is already upscaled, default aiUpscale to false to prevent redundant 2-minute re-runs
+      setAiUpscale(!isAlreadyUpscaled);
     }
-  }, [isExportModalOpen, activeProjectTitle, videoFilename]);
+  }, [isExportModalOpen, activeProjectId, activeProjectTitle, videoFilename, isAlreadyUpscaled]);
 
   if (!isExportModalOpen) return null;
 
@@ -265,6 +286,7 @@ export const ExportModal = () => {
 
     try {
       let upscaledData = null;
+      let upscaledCleanUrl = null;
 
       // ---------------------------------------------------------------------
       // PHASE 1: AI Super-Resolution (Real-ESRGAN Vulkan) if enabled
@@ -390,7 +412,7 @@ export const ExportModal = () => {
         const cleanDownloadPath = upscaledData.download_url?.startsWith('/')
           ? upscaledData.download_url
           : `/static/exports/${encodeURIComponent(upscaledData.output_filename)}`;
-        const upscaledCleanUrl = `${BACKEND_URL}${cleanDownloadPath}`;
+        upscaledCleanUrl = `${BACKEND_URL}${cleanDownloadPath}`;
 
         let upscaledBlob = null;
         try {
@@ -493,6 +515,16 @@ export const ExportModal = () => {
         message: 'Export Complete!'
       });
       setIsExporting(false);
+
+      if (typeof setLastExportResult === 'function') {
+        setLastExportResult({
+          projectId: activeProjectId,
+          exportResultUrl: blobUrl,
+          cleanResultUrl: upscaledCleanUrl || cleanResultUrl || null,
+          finalFilename,
+          timestamp: Date.now()
+        });
+      }
     } catch (err) {
       if (!err.message?.toLowerCase().includes('cancel')) {
         console.error('Export Error:', err);
@@ -509,9 +541,17 @@ export const ExportModal = () => {
   };
 
   return (
-    <div className="modal-backdrop">
+    <div 
+      className="modal-backdrop"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isExporting) {
+          handleClose();
+        }
+      }}
+    >
       <div 
         className="studio-panel apple-modal-content"
+        onClick={(e) => e.stopPropagation()}
         style={{
           width: '100%',
           maxWidth: '520px',
@@ -724,6 +764,20 @@ export const ExportModal = () => {
                     >
                       Vulkan GPU
                     </span>
+                    {isAlreadyUpscaled && (
+                      <span
+                        style={{
+                          fontSize: '9px',
+                          fontWeight: '700',
+                          background: 'rgba(52, 199, 89, 0.18)',
+                          color: 'var(--system-success)',
+                          padding: '1px 6px',
+                          borderRadius: '4px'
+                        }}
+                      >
+                        ✓ 1080p+ Master
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -771,6 +825,44 @@ export const ExportModal = () => {
                 ? 'Super-resolves 720p/HD source frames with local Real-ESRGAN Vulkan AI before burning in styled captions for pristine 1080p or 4K sharpness.' 
                 : 'Standard fast export: renders directly at the selected resolution without neural frame reconstruction.'}
             </div>
+
+            {isAlreadyUpscaled && !aiUpscale && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '8px 10px',
+                borderRadius: 'var(--radius-sm)',
+                background: 'rgba(52, 199, 89, 0.10)',
+                border: '1px solid rgba(52, 199, 89, 0.28)',
+                fontSize: '10.5px',
+                color: 'var(--system-success)'
+              }}>
+                <CheckCircle2 size={14} style={{ flexShrink: 0 }} />
+                <span>
+                  <strong>Video is already high-resolution ({nativeW} × {nativeH}).</strong> Neural upscaling is bypassed so your export burns in captions directly in seconds (~3–5s).
+                </span>
+              </div>
+            )}
+
+            {isAlreadyUpscaled && aiUpscale && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '8px 10px',
+                borderRadius: 'var(--radius-sm)',
+                background: 'rgba(255, 179, 0, 0.10)',
+                border: '1px solid rgba(255, 179, 0, 0.3)',
+                fontSize: '10.5px',
+                color: '#ffb300'
+              }}>
+                <AlertCircle size={14} style={{ flexShrink: 0 }} />
+                <span>
+                  Video is already {nativeW} × {nativeH}. Re-enabling this will re-run full Real-ESRGAN neural super-resolution (~1–2 mins).
+                </span>
+              </div>
+            )}
 
             {aiUpscale && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', paddingTop: '4px', borderTop: '1px solid rgba(255, 255, 255, 0.07)' }}>
@@ -1010,6 +1102,32 @@ export const ExportModal = () => {
                     <span>Download Clean Upscaled Master (Without Captions)</span>
                   </button>
                 )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExportResultUrl(null);
+                    if (typeof setLastExportResult === 'function') {
+                      setLastExportResult(null);
+                    }
+                  }}
+                  className="btn-secondary"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '11px',
+                    padding: '7px 10px',
+                    gap: '6px',
+                    cursor: 'pointer',
+                    marginTop: '2px',
+                    borderStyle: 'dashed'
+                  }}
+                  title="Configure export options and render a new version"
+                >
+                  <RefreshCw size={12} />
+                  <span>Export a New Version / Change Settings</span>
+                </button>
               </div>
             </div>
           )}

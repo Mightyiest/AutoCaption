@@ -373,6 +373,8 @@ export const useEditorStore = create((set, get) => ({
   videoPickerTrigger: null,
   theme: initialTheme,
   removePunctuation: false,
+  lastExportResult: null,
+  setLastExportResult: (lastExportResult) => set({ lastExportResult }),
 
   replaceProjectVideo: async ({ videoFile, videoFilename, videoUrl, linkedSourcePath, width, height, fps }) => {
     const { activeProjectId } = get();
