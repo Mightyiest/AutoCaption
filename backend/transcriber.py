@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 import time
 import tempfile
 import uuid
@@ -365,45 +366,120 @@ def setup_cuda_dlls():
         if added_paths:
             log_msg("SYSTEM", f"NVIDIA CUDA DLL search directories initialized ({len(added_paths)} dirs found).")
 
-# Initialize DLL paths on module import
-setup_cuda_dlls()
+_CUDA_VERIFIED = None
+_TRANSCRIBE_LOCK = threading.Lock()
+
+def check_cuda_supported() -> bool:
+    """
+    Performs a real lightweight runtime verification of NVIDIA CUDA and cuBLAS DLLs.
+    Returns True only if CUDA float16 can actually execute forward passes without error.
+    """
+    global _CUDA_VERIFIED
+    if _CUDA_VERIFIED is not None:
+        return _CUDA_VERIFIED
+
+    setup_cuda_dlls()
+    try:
+        import ctranslate2
+        import numpy as np
+        if ctranslate2.get_cuda_device_count() == 0:
+            _CUDA_VERIFIED = False
+            return False
+        
+        # Test if CUDA cuBLAS / cuDNN runtime DLLs actually load and execute
+        probe_model = WhisperModel("tiny", device="cuda", compute_type="float16")
+        dummy = np.zeros((1, 80, 3000), dtype=np.float32)
+        view = ctranslate2.StorageView.from_array(dummy)
+        probe_model.model.encode(view)
+        _CUDA_VERIFIED = True
+        log_msg("SYSTEM", "NVIDIA CUDA hardware acceleration verified and fully operational.")
+        return True
+    except Exception as e:
+        _CUDA_VERIFIED = False
+        log_msg("SYSTEM", f"CUDA acceleration unavailable ({e}). Using optimized CPU int8 execution.")
+        return False
 
 def get_ffmpeg_path() -> str:
     return imageio_ffmpeg.get_ffmpeg_exe()
 
 def get_whisper_model(model_size: str = "base", device: str = "auto", compute_type: str = "default") -> WhisperModel:
-    cache_key = f"{model_size}_{device}_{compute_type}"
+    cuda_ok = check_cuda_supported()
+    effective_device = "cuda" if (device in ("cuda", "auto") and cuda_ok) else "cpu"
+    effective_compute = "float16" if effective_device == "cuda" else "int8"
+    
+    cache_key = f"{model_size}_{effective_device}_{effective_compute}"
     if cache_key in _MODEL_CACHE:
         return _MODEL_CACHE[cache_key]
 
-    # Re-check CUDA DLLs before initializing
-    setup_cuda_dlls()
-
-    # Attempt CUDA first
-    if device in ("cuda", "auto"):
+    # Initialize verified device
+    if effective_device == "cuda":
         try:
-            log_msg("AI", f"Attempting to load Whisper '{model_size}' on NVIDIA GPU (CUDA float16)...")
+            log_msg("AI", f"Initializing Whisper '{model_size}' on NVIDIA GPU (CUDA float16)...")
             model = WhisperModel(model_size, device="cuda", compute_type="float16")
             _MODEL_CACHE[cache_key] = model
-            log_msg("AI", f"Initialized Whisper '{model_size}' on GPU.")
+            log_msg("AI", f"Whisper '{model_size}' initialized on GPU.")
             return model
         except Exception as cuda_err:
-            log_msg("WARN", f"CUDA init failed ({cuda_err}), falling back to CPU int8...")
+            log_msg("WARN", f"GPU initialization failed ({cuda_err}), switching to CPU (int8)...")
+            effective_device = "cpu"
+            effective_compute = "int8"
 
-    # CPU int8 fallback
+    # CPU int8 execution with optimal thread allocation
+    num_threads = min(4, os.cpu_count() or 4)
+    log_msg("AI", f"Loading Whisper '{model_size}' on CPU (int8 AVX with {num_threads} threads)...")
     try:
-        log_msg("AI", f"Loading Whisper '{model_size}' on CPU (int8 AVX)...")
-        model = WhisperModel(model_size, device="cpu", compute_type="int8")
-        _MODEL_CACHE[cache_key] = model
+        model = WhisperModel(model_size, device="cpu", compute_type="int8", cpu_threads=num_threads, num_workers=1)
+        _MODEL_CACHE[f"{model_size}_cpu_int8"] = model
         log_msg("AI", f"Whisper '{model_size}' initialized on CPU (int8).")
         return model
     except Exception as cpu_err:
         log_msg("ERROR", f"CPU int8 init failed ({cpu_err}), using default CPU...")
-        model = WhisperModel(model_size, device="cpu", compute_type="default")
-        _MODEL_CACHE[cache_key] = model
+        model = WhisperModel(model_size, device="cpu", compute_type="default", cpu_threads=num_threads, num_workers=1)
+        _MODEL_CACHE[f"{model_size}_cpu_default"] = model
         return model
 
-def extract_audio(video_path: str, output_wav_path: str) -> None:
+def probe_media_info(file_path: str):
+    """
+    Safely probes media file with ffmpeg to return (duration_seconds, has_audio_stream).
+    """
+    ffmpeg_exe = get_ffmpeg_path()
+    dur = 0.0
+    has_audio = False
+    try:
+        proc = subprocess.run(
+            [ffmpeg_exe, "-hide_banner", "-i", file_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10
+        )
+        out = proc.stderr or ""
+        dur_m = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)", out)
+        if dur_m:
+            h, m, s = dur_m.groups()
+            dur = int(h) * 3600 + int(m) * 60 + float(s)
+        
+        # Audio stream detection
+        if re.search(r"Stream\s+#\d+:\d+.*:\s*Audio:", out, re.IGNORECASE) or "Audio:" in out:
+            has_audio = True
+    except Exception as e:
+        log_msg("WARN", f"Failed to probe media file info for '{file_path}': {e}")
+    return dur, has_audio
+
+def has_audio_stream(file_path: str) -> bool:
+    _, has_audio = probe_media_info(file_path)
+    return has_audio
+
+def probe_video_duration(file_path: str) -> float:
+    dur, _ = probe_media_info(file_path)
+    return dur
+
+def extract_audio(video_path: str, output_wav_path: str) -> bool:
+    dur, has_audio = probe_media_info(video_path)
+    if not has_audio:
+        log_msg("WARN", f"'{os.path.basename(video_path)}' has no audio track (video-only / silent). Skipping audio extraction.")
+        return False
+
     ffmpeg_exe = get_ffmpeg_path()
     log_msg("FFMPEG", f"Extracting 16kHz mono audio from {os.path.basename(video_path)}...")
     cmd = [
@@ -418,9 +494,19 @@ def extract_audio(video_path: str, output_wav_path: str) -> None:
     ]
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if result.returncode != 0:
+        err_out = result.stderr or ""
+        if "Output file does not contain any stream" in err_out or "does not contain any stream" in err_out:
+            log_msg("WARN", f"No audio stream found in '{os.path.basename(video_path)}'.")
+            return False
         log_msg("ERROR", f"FFmpeg extraction error: {result.stderr}")
         raise RuntimeError(f"FFmpeg audio extraction failed: {result.stderr}")
+        
+    if not os.path.exists(output_wav_path) or os.path.getsize(output_wav_path) < 500:
+        log_msg("WARN", f"Extracted audio from '{os.path.basename(video_path)}' is empty or silent.")
+        return False
+        
     log_msg("FFMPEG", f"Audio extraction complete -> {os.path.basename(output_wav_path)}")
+    return True
 
 def strip_punctuation_token(text: str) -> str:
     if not text:
@@ -498,33 +584,50 @@ def transcribe_media(
         tmp_audio_path = tmp_audio.name
         
     try:
-        extract_audio(file_path, tmp_audio_path)
+        audio_extracted = extract_audio(file_path, tmp_audio_path)
+        
+        # Verify extracted audio is present and non-empty
+        if not audio_extracted or not os.path.exists(tmp_audio_path) or os.path.getsize(tmp_audio_path) < 500:
+            probed_dur = probe_video_duration(file_path)
+            t_elapsed = round(time.time() - t_start, 2)
+            log_msg("SUCCESS", f"Processed media without speech/audio track in {t_elapsed}s. (0 speech segments detected)")
+            return {
+                "language": "en",
+                "language_probability": 1.0,
+                "duration": round(probed_dur, 2),
+                "segments": [],
+                "total_words": 0,
+                "elapsed_seconds": t_elapsed
+            }
         
         transcribe_kwargs = {
             "vad_filter": True,
             "vad_parameters": dict(min_silence_duration_ms=300),
-            "word_timestamps": True
+            "word_timestamps": True,
+            "condition_on_previous_text": False,
+            "compression_ratio_threshold": 2.4,
+            "no_speech_threshold": 0.6
         }
         if language and language != "auto":
             transcribe_kwargs["language"] = language
             
         log_msg("TRANSCRIBE", "Running Whisper inference with word timestamp alignment...")
         
-        model = get_whisper_model(model_size=model_name, device="auto")
-        
-        try:
-            raw_segments, info = model.transcribe(tmp_audio_path, **transcribe_kwargs)
-            # Materialize generator to catch any CUDA / cuBLAS runtime loading failure early
-            segments_list = list(raw_segments)
-        except Exception as inf_err:
-            err_str = str(inf_err).lower()
-            if "cublas" in err_str or "cuda" in err_str or "cudnn" in err_str or "dll" in err_str or "not found" in err_str:
-                log_msg("WARN", f"CUDA execution failed ({inf_err}). Automatically falling back to CPU (int8)...")
+        with _TRANSCRIBE_LOCK:
+            model = get_whisper_model(model_size=model_name, device="auto")
+            
+            try:
+                raw_segments, info = model.transcribe(tmp_audio_path, **transcribe_kwargs)
+                # Materialize generator cleanly
+                segments_list = list(raw_segments)
+            except Exception as inf_err:
+                err_str = str(inf_err).lower()
+                log_msg("WARN", f"Primary inference encountered issue ({inf_err}). Retrying with CPU int8...")
+                # Invalidate any problematic model from cache
+                _MODEL_CACHE.clear()
                 cpu_model = get_whisper_model(model_size=model_name, device="cpu", compute_type="int8")
                 raw_segments, info = cpu_model.transcribe(tmp_audio_path, **transcribe_kwargs)
                 segments_list = list(raw_segments)
-            else:
-                raise
         
         all_words = []
         segment_count = 0

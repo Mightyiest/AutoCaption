@@ -36,6 +36,7 @@ export function useGlobalShortcuts() {
         if (store.pendingImportFile) store.setPendingImportFile(null);
         if (store.isUploadModalOpen) store.setUploadModalOpen(false);
         if (store.isExportModalOpen) store.setExportModalOpen(false);
+        if (store.isBatchModalOpen) store.setBatchModalOpen(false);
         if (store.isSettingsModalOpen) store.setSettingsModalOpen(false);
         if (store.isKeywordLibraryModalOpen) store.setKeywordLibraryModalOpen(false);
         store.setSelectedSegmentId(null);

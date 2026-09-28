@@ -363,7 +363,173 @@ export const useEditorStore = create((set, get) => ({
   backendAvailable: false,
   isUploadModalOpen: false,
   isTranscribeModalOpen: false,
-  isExportModalOpen: false,
+  // Batch Multi-Export Studio State
+  batchQueue: [],
+  setBatchQueue: (batchQueue) => set({ batchQueue }),
+  batchGlobalSettings: {
+    presetId: 'mrbeast',
+    whisperModel: 'base',
+    language: 'auto',
+    maxWordsPerLine: 3,
+    removePunctuation: false,
+    autoEmojiEnabled: true,
+    autoEmphasisEnabled: true,
+    resolution: 'original',
+    engineType: 'client_canvas',
+    encoderMode: 'gpu_nvenc',
+    fontSizeMultiplier: 1.0,
+    positionY: 74,
+    preserveProjectStyles: true
+  },
+  setBatchGlobalSettings: (patch) => set((prev) => ({
+    batchGlobalSettings: typeof patch === 'function' ? patch(prev.batchGlobalSettings) : { ...prev.batchGlobalSettings, ...patch }
+  })),
+
+  autoCreateProjectForBatchItem: async ({ file, linkedPath, filename, duration, width, height, presetId, thumbnail }) => {
+    try {
+      const cleanTitle = (filename || (file ? file.name : (linkedPath ? linkedPath.split(/[/\\]/).pop() : 'Untitled Video')))
+        .replace(/\.[^/.]+$/, '')
+        .replace(/[/\\?%*:|"<>_]/g, ' ')
+        .trim() || 'Untitled Video';
+
+      const aspect = (width && height)
+        ? (width > height ? '16:9' : (width === height ? '1:1' : '9:16'))
+        : '9:16';
+
+      const newId = 'proj-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+      let streamUrl = linkedPath ? getStreamUrl(linkedPath) : (file ? URL.createObjectURL(file) : '');
+      const selectedPreset = getPresetById(presetId || 'mrbeast') || PRESETS[0];
+
+      const BACKEND_URL = 'http://127.0.0.1:8000';
+      let thumbUrl = thumbnail || null;
+      if (!thumbUrl && (linkedPath || filename)) {
+        thumbUrl = `${BACKEND_URL}/api/media/thumbnail?path=${encodeURIComponent(linkedPath || '')}&filename=${encodeURIComponent(filename || '')}&time_offset=0`;
+      }
+
+      const newProj = {
+        id: newId,
+        title: cleanTitle,
+        aspectRatio: aspect,
+        duration: duration || 0,
+        linesCount: 0,
+        wordsCount: 0,
+        segments: [],
+        style: { ...selectedPreset.style },
+        activePresetId: selectedPreset.id,
+        videoFilename: filename || (file ? file.name : null),
+        videoUrl: streamUrl,
+        linkedSourcePath: linkedPath || null,
+        isMediaLinked: Boolean(linkedPath),
+        captionSnippet: '',
+        thumbnailUrl: thumbUrl,
+        isActive: false
+      };
+
+      await saveProject(newProj);
+      get().fetchProjectsList();
+      return newProj;
+    } catch (e) {
+      console.warn('Auto project creation for batch item failed:', e);
+      return null;
+    }
+  },
+
+  syncBatchItemToProject: async (projectId, { segments, style, duration, thumbnailUrl, captionSnippet }) => {
+    if (!projectId) return;
+    try {
+      const proj = await getProjectById(projectId);
+      if (!proj) return;
+
+      if (segments && Array.isArray(segments)) {
+        proj.segments = segments;
+        proj.linesCount = segments.length;
+        proj.wordsCount = segments.reduce((sum, s) => sum + (s.words?.length || 0), 0);
+        if (segments[0]?.text) {
+          proj.captionSnippet = segments[0].text;
+        }
+      }
+      if (style) {
+        proj.style = sanitizeStyle(style);
+      }
+      if (duration && duration > 0) {
+        proj.duration = duration;
+      }
+      if (thumbnailUrl) {
+        proj.thumbnailUrl = thumbnailUrl;
+      }
+      if (captionSnippet) {
+        proj.captionSnippet = captionSnippet;
+      }
+      proj.updated_at = new Date().toISOString();
+
+      await saveProject(proj);
+      get().fetchProjectsList();
+    } catch (e) {
+      console.warn('Failed to sync batch item to project:', e);
+    }
+  },
+
+  addProjectsToBatchQueue: async (projectsToAdd) => {
+    if (!projectsToAdd || projectsToAdd.length === 0) return;
+    const BACKEND_URL = 'http://127.0.0.1:8000';
+    const currentQueue = get().batchQueue || [];
+    const newItems = [];
+
+    for (const proj of projectsToAdd) {
+      if (!proj) continue;
+      if (currentQueue.some(i => i.projectId === proj.id)) continue;
+
+      let streamUrl = proj.videoUrl || '';
+      if (proj.isMediaLinked && proj.linkedSourcePath) {
+        streamUrl = getStreamUrl(proj.linkedSourcePath);
+      }
+      if (!streamUrl && proj.videoFilename) {
+        streamUrl = `${BACKEND_URL}/static/uploads/${encodeURIComponent(proj.videoFilename)}`;
+      }
+
+      let thumb = proj.thumbnailUrl || null;
+      if (!thumb && (proj.linkedSourcePath || proj.videoFilename)) {
+        thumb = `${BACKEND_URL}/api/media/thumbnail?path=${encodeURIComponent(proj.linkedSourcePath || '')}&filename=${encodeURIComponent(proj.videoFilename || '')}&time_offset=0`;
+      }
+
+      const hasCaptions = proj.segments && Array.isArray(proj.segments) && proj.segments.length > 0;
+      const projPresetId = proj.activePresetId || proj.presetId || proj.preset || (proj.style?.presetId) || 'mrbeast';
+      const presetDef = getPresetById(projPresetId) || PRESETS[0];
+      const resolvedStyle = proj.style ? sanitizeStyle(proj.style) : sanitizeStyle({ ...presetDef.style });
+      const hasCustomStyle = Boolean(proj.style || proj.activePresetId || proj.presetId || proj.preset);
+
+      newItems.push({
+        id: `batch-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        projectId: proj.id,
+        projectTitle: proj.title || 'Untitled Project',
+        file: null,
+        linkedPath: proj.linkedSourcePath || null,
+        videoUrl: streamUrl,
+        name: proj.videoFilename || `${proj.title || 'video'}.mp4`,
+        size: 0,
+        duration: proj.duration || 10,
+        width: proj.width || 1080,
+        height: proj.height || 1920,
+        fps: proj.fps || 30,
+        thumbnail: thumb,
+        status: 'pending',
+        progress: 0,
+        stageText: hasCaptions ? `Project captions ready (${proj.segments.length} blocks)` : 'Queued (Ready to process)',
+        segments: hasCaptions ? proj.segments : null,
+        style: resolvedStyle,
+        presetId: projPresetId,
+        hasCustomStyle: hasCustomStyle,
+        isFromExistingProject: true
+      });
+    }
+
+    if (newItems.length > 0) {
+      set({ batchQueue: [...currentQueue, ...newItems], isBatchModalOpen: true });
+    }
+  },
+
+  isBatchModalOpen: false,
+  setBatchModalOpen: (isBatchModalOpen) => set({ isBatchModalOpen }),
   isUpscaleModalOpen: false,
   setUpscaleModalOpen: (isUpscaleModalOpen) => set({ isUpscaleModalOpen }),
   isSettingsModalOpen: false,

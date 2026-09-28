@@ -8,6 +8,7 @@ import tempfile
 import urllib.request
 import zipfile
 import threading
+import io
 from typing import Optional, Callable, Dict, Any
 
 import imageio_ffmpeg
@@ -100,6 +101,9 @@ def ensure_upscaler_ready(progress_callback: Optional[Callable[[int, str], None]
                 shutil.move(os.path.join(sub, item), os.path.join(REALESRGAN_DIR, item))
             os.rmdir(sub)
 
+        # Also ensure optional extra models like realesrnet-x4plus are fetched
+        ensure_model_available("realesrnet-x4plus")
+
         installed = is_upscaler_installed()
         log_msg("UPSCALER", f"Real-ESRGAN engine installation status: {installed}")
         if progress_callback:
@@ -114,6 +118,37 @@ def ensure_upscaler_ready(progress_callback: Optional[Callable[[int, str], None]
         except Exception:
             pass
         return False
+
+def ensure_model_available(model_name: str) -> bool:
+    """Ensures specific model weights and param files exist in MODELS_DIR."""
+    param_file = os.path.join(MODELS_DIR, f"{model_name}.param")
+    bin_file = os.path.join(MODELS_DIR, f"{model_name}.bin")
+    if os.path.isfile(param_file) and os.path.isfile(bin_file):
+        return True
+
+    # Real-ESRNet is hosted in the official v0.1.1 package
+    if "realesrnet" in model_name:
+        extra_url = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.1/RealESRGAN-ncnn-vulkan-20210725-windows.zip"
+        try:
+            log_msg("UPSCALER", f"Downloading missing weights for model: {model_name}...")
+            headers = {"User-Agent": "Mozilla/5.0 AutoCaption Studio"}
+            req = urllib.request.Request(extra_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = resp.read()
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                for item in zf.namelist():
+                    if "realesrnet" in item:
+                        fname = os.path.basename(item)
+                        if fname:
+                            out_p = os.path.join(MODELS_DIR, fname)
+                            with zf.open(item) as src, open(out_p, "wb") as dst:
+                                dst.write(src.read())
+            return os.path.isfile(param_file) and os.path.isfile(bin_file)
+        except Exception as e:
+            log_msg("ERROR", f"Failed to download extra model {model_name}: {e}")
+            return False
+
+    return False
 
 def get_video_stream_info(video_path: str) -> Dict[str, Any]:
     """Inspects video file to get exact (duration, fps, width, height)."""
@@ -168,6 +203,12 @@ def upscale_video(
         success = ensure_upscaler_ready()
         if not success:
             raise RuntimeError("Real-ESRGAN engine is not installed and could not be downloaded.")
+
+    # Ensure the requested model weights (.param and .bin) exist
+    if not ensure_model_available(model_name):
+        model_param = os.path.join(MODELS_DIR, f"{model_name}.param")
+        if not os.path.isfile(model_param):
+            raise RuntimeError(f"Real-ESRGAN model '{model_name}' could not be located in {MODELS_DIR}")
 
     ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
     info = get_video_stream_info(source_video_path)
@@ -241,19 +282,27 @@ def upscale_video(
             total_frames = actual_total_frames
 
         # Step 3: Run Real-ESRGAN Vulkan GPU Upscaling
+        # Note: Real-ESRGAN binary internally prepends its own directory to the -m argument.
+        # Passing relative path "models" and setting cwd=REALESRGAN_DIR prevents malformed concatenated paths.
         log_msg("UPSCALER", f"Running Real-ESRGAN Vulkan ({model_name}, scale {scale}x)...")
         cmd_upscale = [
             REALESRGAN_EXE,
             "-i", in_frames_dir,
             "-o", out_frames_dir,
-            "-m", MODELS_DIR,
+            "-m", "models",
             "-n", model_name,
             "-s", str(scale),
             "-f", "jpg"
         ]
 
         start_time = time.time()
-        p_up = subprocess.Popen(cmd_upscale, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        p_up = subprocess.Popen(
+            cmd_upscale,
+            cwd=REALESRGAN_DIR,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
         if on_proc_ready:
             on_proc_ready(p_up)
 

@@ -13,6 +13,7 @@ import json
 import datetime
 import time
 import hashlib
+import zipfile
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse, FileResponse
@@ -143,6 +144,10 @@ class DependencyActionRequest(BaseModel):
 
 class VocalModelActionRequest(BaseModel):
     model_id: str
+
+class BatchZipRequest(BaseModel):
+    filenames: List[str]
+    zip_name: Optional[str] = "AutoCaption_Batch_Export.zip"
 
 def get_system_hardware_stats() -> dict:
     cpu_percent = psutil.cpu_percent(interval=None)
@@ -789,7 +794,7 @@ def delete_project_endpoint(project_id: str):
     raise HTTPException(status_code=404, detail="Project not found")
 
 @app.post("/api/transcribe-saved")
-async def transcribe_saved_endpoint(req: TranscribeSavedRequest):
+def transcribe_saved_endpoint(req: TranscribeSavedRequest):
     source_path = resolve_media_path(req.video_filename, req.linked_path)
     if not source_path:
         log_msg("TRANSCRIBE", f"File not found: video_filename='{req.video_filename}', linked_path='{req.linked_path}'")
@@ -817,7 +822,7 @@ async def transcribe_saved_endpoint(req: TranscribeSavedRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/transcribe")
-async def transcribe_endpoint(
+def transcribe_endpoint(
     file: UploadFile = File(...),
     model_name: str = Form("base"),
     language: Optional[str] = Form(None),
@@ -1123,6 +1128,52 @@ def download_file_endpoint(filename: str):
             "Content-Disposition": f'attachment; filename="{clean_name}"'
         }
     )
+
+@app.post("/api/batch/zip-exports")
+def create_batch_zip_endpoint(req: BatchZipRequest):
+    """
+    Creates a single ZIP archive containing all specified exported video filenames
+    and returns direct download metadata.
+    """
+    if not req.filenames:
+        raise HTTPException(status_code=400, detail="No filenames provided for batch ZIP archive")
+
+    clean_zip_name = re.sub(r'[/\\?%*:|"<>]+', '', req.zip_name or "AutoCaption_Batch_Export.zip").strip()
+    if not clean_zip_name.lower().endswith(".zip"):
+        clean_zip_name += ".zip"
+
+    zip_id = uuid.uuid4().hex[:8]
+    zip_output_filename = f"batch_{zip_id}_{clean_zip_name}"
+    zip_path = os.path.join(EXPORTS_DIR, zip_output_filename)
+
+    added_count = 0
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname in req.filenames:
+            clean_fname = os.path.basename(urllib.parse.unquote(fname))
+            fpath = os.path.join(EXPORTS_DIR, clean_fname)
+            if not os.path.isfile(fpath):
+                up_path = os.path.join(UPLOADS_DIR, clean_fname)
+                if os.path.isfile(up_path):
+                    fpath = up_path
+            if os.path.isfile(fpath):
+                zf.write(fpath, arcname=clean_fname)
+                added_count += 1
+
+    if added_count == 0:
+        if os.path.exists(zip_path):
+            try:
+                os.remove(zip_path)
+            except Exception:
+                pass
+        raise HTTPException(status_code=404, detail="None of the specified export files were found on disk")
+
+    log_msg("EXPORT", f"Created batch ZIP archive '{zip_output_filename}' containing {added_count} files")
+    return {
+        "status": "ready",
+        "zip_filename": zip_output_filename,
+        "download_url": f"/static/exports/{zip_output_filename}",
+        "file_count": added_count
+    }
 
 # ---------------------------------------------------------------------------
 # AI Super-Resolution Video Upscaler Endpoints (Real-ESRGAN Vulkan)

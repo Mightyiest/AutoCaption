@@ -25,9 +25,10 @@ def get_video_stream_info(path: str):
     ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
     dur = 10.0
     fps = 30.0
+    has_audio = False
     try:
         proc = subprocess.run(
-            [ffmpeg_exe, "-i", path],
+            [ffmpeg_exe, "-hide_banner", "-i", path],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -41,9 +42,11 @@ def get_video_stream_info(path: str):
         fps_m = re.search(r"(\d+(?:\.\d+)?)\s*fps", out)
         if fps_m:
             fps = float(fps_m.group(1))
+        if re.search(r"Stream\s+#\d+:\d+.*:\s*Audio:", out, re.IGNORECASE) or "Audio:" in out:
+            has_audio = True
     except Exception:
         pass
-    return dur, fps
+    return dur, fps, has_audio
 
 def escape_ass_text(text: str) -> str:
     if not text:
@@ -362,7 +365,7 @@ def render_captioned_video(
         _, src_ext = os.path.splitext(source_video_path.lower())
         is_audio_only = src_ext in audio_exts
 
-        probed_dur, native_fps = get_video_stream_info(source_video_path)
+        probed_dur, native_fps, has_audio = get_video_stream_info(source_video_path)
         duration = float(video_duration) if video_duration and float(video_duration) > 0.5 else probed_dur
         total_frames = int(round(duration * (native_fps if native_fps > 0 else 30.0)))
 
@@ -389,13 +392,13 @@ def render_captioned_video(
                 ]
             else:
                 vf = f"scale={video_width}:{video_height}:force_original_aspect_ratio=increase,crop={video_width}:{video_height},ass=filename='{escaped_ass_path}':fontsdir='{escaped_fonts_dir}'"
+                audio_args = ["-c:a", "aac", "-b:a", "192k"] if has_audio else ["-an"]
                 return [
                     ffmpeg_exe, "-y",
                     "-i", source_video_path,
                     "-vf", vf,
                     *c_codec,
-                    "-c:a", "aac",
-                    "-b:a", "192k",
+                    *audio_args,
                     "-progress", "pipe:1",
                     output_video_path
                 ]

@@ -21,7 +21,10 @@ import {
   Sparkles,
   AlertCircle,
   FileVideo,
-  Upload
+  Upload,
+  Layers,
+  CheckSquare,
+  Zap
 } from 'lucide-react';
 import { useEditorStore } from '../store/useEditorStore';
 import { browseLocalFile } from '../engine/mediaLinker';
@@ -41,7 +44,9 @@ export const ProjectsHub = () => {
     setCurrentView,
     activeProjectId,
     theme,
-    toggleTheme
+    toggleTheme,
+    setBatchModalOpen,
+    addProjectsToBatchQueue
   } = useEditorStore();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -49,6 +54,7 @@ export const ProjectsHub = () => {
   const [menuOpenId, setMenuOpenId] = useState(null);
   const [toastMessage, setToastMessage] = useState('');
   const [showToast, setShowToast] = useState(false);
+  const [selectedProjectIds, setSelectedProjectIds] = useState(new Set());
 
   // Apple Modal States
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
@@ -280,6 +286,48 @@ export const ProjectsHub = () => {
     }
   };
 
+  const toggleSelectProject = (e, id) => {
+    e.stopPropagation();
+    setSelectedProjectIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const selectAllFiltered = () => {
+    setSelectedProjectIds(new Set(filteredProjects.map((p) => p.id)));
+  };
+
+  const clearSelection = () => {
+    setSelectedProjectIds(new Set());
+  };
+
+  const handleBatchExportSelected = () => {
+    const selected = projectsList.filter((p) => selectedProjectIds.has(p.id));
+    if (selected.length > 0) {
+      addProjectsToBatchQueue(selected);
+      clearSelection();
+      triggerToast(`Loaded ${selected.length} project(s) into Batch Studio`);
+    }
+  };
+
+  const handleDeleteSelected = async () => {
+    if (selectedProjectIds.size === 0) return;
+    if (confirm(`Are you sure you want to delete ${selectedProjectIds.size} selected projects?`)) {
+      for (const id of selectedProjectIds) {
+        await deleteCurrentProject(id);
+      }
+      clearSelection();
+      fetchProjectsList();
+      triggerToast('Deleted selected projects');
+    }
+  };
+
   const handleOpenProject = (id, title) => {
     triggerToast(`Opening "${title}"...`);
     loadProject(id);
@@ -327,6 +375,38 @@ export const ProjectsHub = () => {
             )}
           </button>
 
+          {/* Batch Mode Top Button */}
+          <button
+            onClick={() => setBatchModalOpen(true)}
+            className="filter-pill"
+            style={{
+              height: '38px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '0 14px',
+              borderColor: 'rgba(168, 85, 247, 0.5)',
+              backgroundColor: 'rgba(168, 85, 247, 0.12)',
+              color: '#A855F7',
+              fontWeight: '700',
+              cursor: 'pointer'
+            }}
+            title="Batch Mode: Upload videos from multiple folders, apply global subtitle settings, and export all at once"
+          >
+            <Layers size={16} color="#A855F7" />
+            <span>Batch Mode</span>
+            <span style={{
+              fontSize: '9px',
+              backgroundColor: '#A855F7',
+              color: '#FFFFFF',
+              padding: '1px 5px',
+              borderRadius: '4px',
+              fontWeight: '700',
+              letterSpacing: '0.4px',
+              marginLeft: '2px'
+            }}>MULTI</span>
+          </button>
+
           {/* Import Video Secondary Button */}
           <button
             onClick={linkLocalVideoFile}
@@ -357,7 +437,34 @@ export const ProjectsHub = () => {
             <span className="section-title">⚡ Quick Start Canvas</span>
           </div>
 
-          <div className="quick-shelf-grid">
+          <div className="quick-shelf-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+            <div
+              className="shelf-card"
+              style={{
+                border: '1.5px solid rgba(168, 85, 247, 0.35)',
+                background: 'rgba(168, 85, 247, 0.05)',
+                cursor: 'pointer'
+              }}
+              onClick={() => setBatchModalOpen(true)}
+            >
+              <div
+                className="shelf-icon-wrap"
+                style={{
+                  background: 'linear-gradient(135deg, #A855F7 0%, #6366F1 100%)',
+                  color: '#FFFFFF',
+                  boxShadow: '0 4px 12px rgba(168, 85, 247, 0.3)'
+                }}
+              >
+                <Layers size={20} strokeWidth={2.2} />
+              </div>
+              <div className="shelf-info">
+                <span className="shelf-title" style={{ color: '#A855F7', fontWeight: '700' }}>
+                  Batch Mode
+                </span>
+                <span className="shelf-desc">Multi-video auto caption & export</span>
+              </div>
+            </div>
+
             <div className="shelf-card" onClick={() => openNewProjectModal('9:16')}>
               <div className="shelf-icon-wrap" style={{ background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
                 <Smartphone size={22} strokeWidth={2.2} />
@@ -503,15 +610,47 @@ export const ProjectsHub = () => {
                 : null;
               const thumbUrl = !isPlaceholder ? rawThumb : videoSnapshotUrl;
 
+              const isSelected = selectedProjectIds.has(p.id);
+
               return (
                 <div
                   key={p.id}
                   className={`project-card ${menuOpenId === p.id ? 'menu-active' : ''}`}
-                  style={{ zIndex: menuOpenId === p.id ? 60 : 1 }}
+                  style={{
+                    zIndex: menuOpenId === p.id ? 60 : 1,
+                    border: isSelected ? '2px solid #A855F7' : undefined,
+                    boxShadow: isSelected ? '0 0 16px rgba(168, 85, 247, 0.25)' : undefined
+                  }}
                   onClick={() => handleOpenProject(p.id, p.title)}
                 >
                   <div className="card-stage">
-                    <span className="stage-badge-top-left">{aspect}</span>
+                    {/* Project Selection Checkbox */}
+                    <button
+                      type="button"
+                      onClick={(e) => toggleSelectProject(e, p.id)}
+                      style={{
+                        position: 'absolute',
+                        top: '10px',
+                        left: '10px',
+                        width: '24px',
+                        height: '24px',
+                        borderRadius: '6px',
+                        backgroundColor: isSelected ? '#A855F7' : 'rgba(0, 0, 0, 0.65)',
+                        border: isSelected ? '1.5px solid #FFFFFF' : '1px solid rgba(255, 255, 255, 0.35)',
+                        color: '#FFFFFF',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        zIndex: 10,
+                        transition: 'all 120ms ease'
+                      }}
+                      title={isSelected ? 'Deselect project' : 'Select project for batch actions'}
+                    >
+                      {isSelected ? <Check size={14} strokeWidth={3} /> : <Square size={12} style={{ opacity: 0.6 }} />}
+                    </button>
+
+                    <span className="stage-badge-top-left" style={{ left: '40px' }}>{aspect}</span>
                     <span className="stage-badge-top-right">{formattedDuration}</span>
 
                     {isCurrent && (
@@ -1016,7 +1155,7 @@ export const ProjectsHub = () => {
       {/* Toast Notification */}
       <div className={`toast ${showToast ? 'show' : ''}`} style={{
         position: 'fixed',
-        bottom: '24px',
+        bottom: selectedProjectIds.size > 0 ? '80px' : '24px',
         left: '50%',
         transform: showToast ? 'translateX(-50%) translateY(0)' : 'translateX(-50%) translateY(80px)',
         background: 'var(--btn-primary-bg)',
@@ -1036,6 +1175,80 @@ export const ProjectsHub = () => {
       }}>
         {toastMessage}
       </div>
+
+      {/* Floating Multi-Select Batch Actions Bar */}
+      {selectedProjectIds.size > 0 && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: '24px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            backgroundColor: 'rgba(15, 17, 23, 0.95)',
+            backdropFilter: 'blur(16px)',
+            border: '1px solid rgba(168, 85, 247, 0.4)',
+            boxShadow: '0 12px 36px rgba(0, 0, 0, 0.6), 0 0 20px rgba(168, 85, 247, 0.2)',
+            borderRadius: 'var(--radius-pill)',
+            padding: '8px 16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            zIndex: 200,
+            animation: 'fadeIn 180ms ease'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '700', color: '#FFFFFF', paddingRight: '8px', borderRight: '1px solid rgba(255, 255, 255, 0.15)' }}>
+            <CheckSquare size={15} color="#A855F7" />
+            <span>{selectedProjectIds.size} Selected</span>
+          </div>
+
+          <button
+            onClick={handleBatchExportSelected}
+            className="btn-primary"
+            style={{
+              padding: '6px 16px',
+              fontSize: '12px',
+              fontWeight: '700',
+              borderRadius: 'var(--radius-pill)',
+              background: 'linear-gradient(135deg, #A855F7 0%, #6366F1 100%)',
+              border: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              boxShadow: '0 4px 12px rgba(168, 85, 247, 0.35)',
+              cursor: 'pointer'
+            }}
+          >
+            <Zap size={13} />
+            <span>Batch Export Selected ({selectedProjectIds.size})</span>
+          </button>
+
+          <button
+            onClick={selectAllFiltered}
+            className="btn-ghost"
+            style={{ fontSize: '11px', color: 'rgba(255, 255, 255, 0.8)', padding: '4px 8px' }}
+          >
+            Select All ({filteredProjects.length})
+          </button>
+
+          <button
+            onClick={clearSelection}
+            className="btn-ghost"
+            style={{ fontSize: '11px', color: 'rgba(255, 255, 255, 0.5)', padding: '4px 8px' }}
+          >
+            Clear
+          </button>
+
+          <button
+            onClick={handleDeleteSelected}
+            className="btn-ghost"
+            style={{ fontSize: '11px', color: '#EF4444', padding: '4px 8px' }}
+            title="Delete selected projects"
+          >
+            <Trash2 size={12} />
+          </button>
+        </div>
+      )}
     </div>
   );
 };

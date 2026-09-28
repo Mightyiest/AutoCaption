@@ -82,8 +82,24 @@ def main():
     print(f" {colorize('•', YELLOW)} Press {colorize('Ctrl+C', BOLD)} in this terminal to stop both servers.")
     print()
 
-    # Prepare execution environment
+    # Prepare execution environment and resolve PATH
+    candidate_dirs = [
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\nodejs"),
+        os.path.expandvars(r"%ProgramFiles%\nodejs"),
+        os.path.expandvars(r"%ProgramFiles(x86)%\nodejs"),
+        os.path.expandvars(r"%APPDATA%\npm"),
+        r"C:\Python314",
+        r"C:\Python314\Scripts",
+    ]
+    curr_paths = os.environ.get("PATH", "").split(os.pathsep)
+    for c in candidate_dirs:
+        if os.path.exists(c) and c not in curr_paths:
+            curr_paths.insert(0, c)
+    augmented_path = os.pathsep.join(curr_paths)
+    os.environ["PATH"] = augmented_path
+
     env = os.environ.copy()
+    env["PATH"] = augmented_path
     env["PYTHONUNBUFFERED"] = "1"
     env["FORCE_COLOR"] = "1"
 
@@ -104,7 +120,17 @@ def main():
         sys.exit(1)
 
     # Start Vite Frontend
-    npm_executable = "npm.cmd" if sys.platform == "win32" else "npm"
+    import shutil
+    npm_executable = None
+    if sys.platform == "win32":
+        for name in ["npm.cmd", "npm.exe", "npm.bat", "npm"]:
+            found = shutil.which(name, path=augmented_path)
+            if found:
+                npm_executable = found
+                break
+    if not npm_executable:
+        npm_executable = shutil.which("npm", path=augmented_path) or ("npm.cmd" if sys.platform == "win32" else "npm")
+
     frontend_cmd = [npm_executable, "run", "dev"]
     try:
         frontend_proc = subprocess.Popen(
@@ -114,7 +140,8 @@ def main():
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
-            env=env
+            env=env,
+            shell=(sys.platform == "win32")
         )
     except Exception as e:
         print(f"{colorize('[ERROR]', RED)} Failed to start frontend: {e}")

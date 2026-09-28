@@ -10,6 +10,7 @@ import { ProjectsHub } from './components/ProjectsHub';
 import { ReplaceVideoModal } from './components/ReplaceVideoModal';
 import { TranscribeModal } from './components/TranscribeModal';
 import { ExportModal } from './components/ExportModal';
+import { BatchExportModal } from './components/BatchExportModal';
 import { SettingsModal } from './components/SettingsModal';
 import { HelpModal } from './components/HelpModal';
 import { KeywordLibraryModal } from './components/KeywordLibraryModal';
@@ -113,6 +114,7 @@ export function App() {
     return (
       <div className="app-container" style={{ overflow: 'hidden', height: '100vh', display: 'flex', flexDirection: 'column' }}>
         <ProjectsHub />
+        <BatchExportModal />
         <SettingsModal />
         <HelpModal />
       </div>
@@ -223,6 +225,7 @@ export function App() {
       <ReplaceVideoModal />
       <TranscribeModal />
       <ExportModal />
+      <BatchExportModal />
       <SettingsModal />
       <HelpModal />
       <KeywordLibraryModal />

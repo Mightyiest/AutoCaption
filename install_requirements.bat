@@ -3,11 +3,19 @@ setlocal enabledelayedexpansion
 
 title AutoCaption Studio - Setup & Requirements Installer
 
+:: Auto-detect and prepend standard Node & Python paths if present
+if exist "%LOCALAPPDATA%\Programs\nodejs" set "PATH=%LOCALAPPDATA%\Programs\nodejs;!PATH!"
+if exist "%ProgramFiles%\nodejs" set "PATH=%ProgramFiles%\nodejs;!PATH!"
+if exist "%ProgramFiles(x86)%\nodejs" set "PATH=%ProgramFiles(x86)%\nodejs;!PATH!"
+if exist "%APPDATA%\npm" set "PATH=%APPDATA%\npm;!PATH!"
+if exist "C:\Python314" set "PATH=C:\Python314;C:\Python314\Scripts;!PATH!"
+
 echo ===================================================
 echo     AutoCaption Studio - Setup & Requirements
 echo ===================================================
 echo.
 echo [1/5] Checking System Prerequisites...
+
 
 :: 1. Check Python
 where python >nul 2>&1

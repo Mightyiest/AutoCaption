@@ -24,7 +24,8 @@ import {
   Moon,
   Folder,
   Link2,
-  FolderOpen
+  FolderOpen,
+  Layers
 } from 'lucide-react';
 import { useEditorStore } from '../store/useEditorStore';
 
@@ -51,6 +52,7 @@ export const Navbar = () => {
     triggerVideoPicker,
     setTranscribeModalOpen,
     setExportModalOpen,
+    setBatchModalOpen,
     setUpscaleModalOpen,
     setSettingsModalOpen,
     setHelpModalOpen,
@@ -616,6 +618,35 @@ export const Navbar = () => {
         >
           <Upload size={12} />
           <span>Upload</span>
+        </button>
+
+        <button
+          onClick={() => setBatchModalOpen(true)}
+          className="btn-secondary"
+          title="Batch Mode: Upload videos from multiple folders, apply global subtitle settings, and export all at once"
+          style={{
+            padding: '5px 12px',
+            fontSize: '11px',
+            borderColor: 'rgba(168, 85, 247, 0.5)',
+            backgroundColor: 'rgba(168, 85, 247, 0.14)',
+            color: '#C084FC',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            boxShadow: '0 2px 8px rgba(168, 85, 247, 0.15)'
+          }}
+        >
+          <Layers size={13} color="#C084FC" />
+          <span style={{ fontWeight: '700' }}>Batch Mode</span>
+          <span style={{
+            fontSize: '9px',
+            backgroundColor: '#A855F7',
+            color: '#FFFFFF',
+            padding: '1px 5px',
+            borderRadius: '4px',
+            fontWeight: '700',
+            letterSpacing: '0.4px'
+          }}>MULTI</span>
         </button>
 
         <button
