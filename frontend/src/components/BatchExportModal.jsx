@@ -536,20 +536,24 @@ export const BatchExportModal = () => {
         thumbnail: meta.thumbnail
       });
 
+      const uploadedFilename = (newProj && newProj.videoFilename) || file.name;
+      const uploadedUrl = (newProj && newProj.videoUrl) || meta.blobUrl;
+      const resolvedThumb = (newProj && newProj.thumbnailUrl) || meta.thumbnail;
+
       newItems.push({
         id: `batch-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         projectId: newProj ? newProj.id : null,
         projectTitle: newProj ? newProj.title : file.name.replace(/\.[^/.]+$/, ''),
         file: file,
         linkedPath: null,
-        videoUrl: meta.blobUrl,
-        name: file.name,
+        videoUrl: uploadedUrl,
+        name: uploadedFilename,
         size: file.size,
         duration: meta.duration,
         width: meta.width,
         height: meta.height,
         fps: meta.fps,
-        thumbnail: meta.thumbnail,
+        thumbnail: resolvedThumb,
         status: 'pending',
         progress: 0,
         stageText: 'Project created (Queued)',
@@ -1171,6 +1175,20 @@ export const BatchExportModal = () => {
           videoUrl: item.exportUrl || item.videoUrl || null,
           presetId: globalSettings.presetId
         });
+      }
+
+      // Preserve active in-memory File or stream URL in Zustand store
+      if (item.file) {
+        useEditorStore.setState({ videoFile: item.file });
+      }
+      if (item.videoUrl && !useEditorStore.getState().videoUrl) {
+        useEditorStore.setState({ videoUrl: item.videoUrl });
+      }
+      if (item.linkedPath && !useEditorStore.getState().linkedSourcePath) {
+        useEditorStore.setState({ linkedSourcePath: item.linkedPath, isMediaLinked: true });
+      }
+      if (item.name && !useEditorStore.getState().videoFilename) {
+        useEditorStore.setState({ videoFilename: item.name });
       }
 
       if (item.segments && item.segments.length > 0) {

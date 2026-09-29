@@ -413,12 +413,35 @@ export const useEditorStore = create((set, get) => ({
 
       const newId = 'proj-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
       let streamUrl = linkedPath ? getStreamUrl(linkedPath) : (file ? URL.createObjectURL(file) : '');
+      let resolvedFilename = filename || (file ? file.name : null);
       const selectedPreset = getPresetById(presetId || 'mrbeast') || PRESETS[0];
 
       const BACKEND_URL = 'http://127.0.0.1:8000';
+
+      // If a browser File is passed without a linked path, upload to backend storage uploads cache
+      if (file && !linkedPath && get().backendAvailable) {
+        try {
+          const formData = new FormData();
+          formData.append('file', file);
+          const upRes = await fetch(`${BACKEND_URL}/api/upload-video`, {
+            method: 'POST',
+            body: formData
+          });
+          if (upRes.ok) {
+            const upData = await upRes.json();
+            if (upData.video_filename) {
+              resolvedFilename = upData.video_filename;
+              streamUrl = `${BACKEND_URL}/static/uploads/${encodeURIComponent(upData.video_filename)}`;
+            }
+          }
+        } catch (upErr) {
+          console.warn('Auto upload to backend storage failed:', upErr);
+        }
+      }
+
       let thumbUrl = thumbnail || null;
-      if (!thumbUrl && (linkedPath || filename)) {
-        thumbUrl = `${BACKEND_URL}/api/media/thumbnail?path=${encodeURIComponent(linkedPath || '')}&filename=${encodeURIComponent(filename || '')}&time_offset=0`;
+      if (!thumbUrl && (linkedPath || resolvedFilename)) {
+        thumbUrl = `${BACKEND_URL}/api/media/thumbnail?path=${encodeURIComponent(linkedPath || '')}&filename=${encodeURIComponent(resolvedFilename || '')}&time_offset=0`;
       }
 
       const newProj = {
@@ -431,7 +454,7 @@ export const useEditorStore = create((set, get) => ({
         segments: [],
         style: { ...selectedPreset.style },
         activePresetId: selectedPreset.id,
-        videoFilename: filename || (file ? file.name : null),
+        videoFilename: resolvedFilename,
         videoUrl: streamUrl,
         linkedSourcePath: linkedPath || null,
         isMediaLinked: Boolean(linkedPath),

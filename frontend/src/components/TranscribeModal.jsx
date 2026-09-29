@@ -33,6 +33,7 @@ export const TranscribeModal = () => {
     setSettingsModalOpen,
     videoFile,
     videoFilename,
+    videoUrl,
     duration,
     selectedModel,
     setSelectedModel,
@@ -72,7 +73,7 @@ export const TranscribeModal = () => {
 
   const handleStartTranscription = async () => {
     if (isTranscribing) return;
-    if (!videoFile && !videoFilename) {
+    if (!videoFile && !videoFilename && !videoUrl && !linkedSourcePath) {
       setErrorMsg('No media file loaded. Please import a video or audio file first.');
       return;
     }
@@ -95,9 +96,23 @@ export const TranscribeModal = () => {
 
       // 2. Perform transcription request to backend
       let resultData;
-      if (backendAvailable && videoFile) {
+      let fileToUpload = videoFile;
+
+      // If videoFile is missing from store but videoUrl is a local blob URL, recover the File from blob
+      if (!fileToUpload && videoUrl && videoUrl.startsWith('blob:')) {
+        try {
+          const blobRes = await fetch(videoUrl);
+          if (blobRes.ok) {
+            const b = await blobRes.blob();
+            fileToUpload = new File([b], videoFilename || 'video.mp4', { type: b.type || 'video/mp4' });
+            useEditorStore.setState({ videoFile: fileToUpload });
+          }
+        } catch (_) {}
+      }
+
+      if (backendAvailable && fileToUpload) {
         const formData = new FormData();
-        formData.append('file', videoFile);
+        formData.append('file', fileToUpload);
         formData.append('model_name', selectedModel);
         if (language !== 'auto') formData.append('language', language);
         formData.append('max_words_per_segment', wordsPerChunk);

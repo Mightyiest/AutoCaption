@@ -412,46 +412,50 @@ def resolve_media_path(filename: Optional[str] = None, linked_path: Optional[str
     4. Storage demo directory (DEMO_DIR)
     5. Storage exports directory (EXPORTS_DIR)
     6. Relative or normalized path on disk
-    7. Storage uploads directory using base filename
+    7. Storage uploads directory using base filename or unquoted filename
     8. Saved projects directory (PROJECTS_DIR) matching filename, title, or project ID
+    9. Fuzzy match in uploads directory
     """
     if linked_path and isinstance(linked_path, str) and linked_path.strip():
-        norm_l = os.path.normpath(linked_path.strip())
+        unquoted_l = urllib.parse.unquote(linked_path.strip())
+        norm_l = os.path.normpath(unquoted_l)
         if os.path.isfile(norm_l):
             return norm_l
+        norm_raw = os.path.normpath(linked_path.strip())
+        if os.path.isfile(norm_raw):
+            return norm_raw
 
     if filename and isinstance(filename, str) and filename.strip():
-        fn = filename.strip()
-        # 1. Direct path check
-        norm_fn = os.path.normpath(fn)
-        if os.path.isfile(norm_fn):
-            return norm_fn
+        fn_raw = filename.strip()
+        fn_unquoted = urllib.parse.unquote(fn_raw)
 
-        # 2. Check uploads directory
-        up_path = os.path.join(UPLOADS_DIR, fn)
-        if os.path.isfile(up_path):
-            return up_path
+        candidate_names = list(dict.fromkeys([fn_raw, fn_unquoted, os.path.basename(fn_raw), os.path.basename(fn_unquoted)]))
 
-        # 3. Check demo directory
-        dm_path = os.path.join(DEMO_DIR, fn)
-        if os.path.isfile(dm_path):
-            return dm_path
+        for fn in candidate_names:
+            # 1. Direct path check
+            norm_fn = os.path.normpath(fn)
+            if os.path.isfile(norm_fn):
+                return norm_fn
 
-        # 4. Check exports directory
-        exp_path = os.path.join(EXPORTS_DIR, fn)
-        if os.path.isfile(exp_path):
-            return exp_path
+            # 2. Check uploads directory
+            up_path = os.path.join(UPLOADS_DIR, fn)
+            if os.path.isfile(up_path):
+                return up_path
 
-        # 4b. Check debug directory
-        dbg_path = os.path.join(STORAGE_DIR, "debug", fn)
-        if os.path.isfile(dbg_path):
-            return dbg_path
+            # 3. Check demo directory
+            dm_path = os.path.join(DEMO_DIR, fn)
+            if os.path.isfile(dm_path):
+                return dm_path
 
-        # 5. Check uploads by basename
-        bname = os.path.basename(fn)
-        up_bname = os.path.join(UPLOADS_DIR, bname)
-        if os.path.isfile(up_bname):
-            return up_bname
+            # 4. Check exports directory
+            exp_path = os.path.join(EXPORTS_DIR, fn)
+            if os.path.isfile(exp_path):
+                return exp_path
+
+            # 4b. Check debug directory
+            dbg_path = os.path.join(STORAGE_DIR, "debug", fn)
+            if os.path.isfile(dbg_path):
+                return dbg_path
 
         # 6. Check saved projects in PROJECTS_DIR
         if os.path.isdir(PROJECTS_DIR):
@@ -462,24 +466,38 @@ def resolve_media_path(filename: Optional[str] = None, linked_path: Optional[str
                             with open(os.path.join(PROJECTS_DIR, pf), "r", encoding="utf-8") as f:
                                 pdata = json.load(f)
                                 matches = (
-                                    pdata.get("videoFilename") == fn or
-                                    pdata.get("videoFilename") == bname or
-                                    pdata.get("title") == fn or
-                                    pdata.get("id") == fn
+                                    pdata.get("videoFilename") in candidate_names or
+                                    pdata.get("title") in candidate_names or
+                                    pdata.get("id") in candidate_names or
+                                    (os.path.basename(pdata.get("videoFilename") or "") in candidate_names)
                                 )
                                 if matches:
                                     # Check linkedSourcePath
                                     lsp = pdata.get("linkedSourcePath")
-                                    if lsp and os.path.isfile(os.path.normpath(lsp)):
-                                        return os.path.normpath(lsp)
+                                    if lsp:
+                                        lsp_norm = os.path.normpath(urllib.parse.unquote(lsp))
+                                        if os.path.isfile(lsp_norm):
+                                            return lsp_norm
                                     # Check videoFilename in uploads
                                     pvf = pdata.get("videoFilename")
-                                    if pvf and os.path.isfile(os.path.join(UPLOADS_DIR, pvf)):
-                                        return os.path.join(UPLOADS_DIR, pvf)
+                                    if pvf:
+                                        for cand_pvf in [pvf, urllib.parse.unquote(pvf), os.path.basename(pvf)]:
+                                            cand_path = os.path.join(UPLOADS_DIR, cand_pvf)
+                                            if os.path.isfile(cand_path):
+                                                return cand_path
                         except Exception:
                             continue
             except Exception:
                 pass
+
+        # 7. Fuzzy match in uploads directory if filename contains words
+        if os.path.isdir(UPLOADS_DIR):
+            clean_needle = re.sub(r'[^a-zA-Z0-9]', '', fn_unquoted.lower())
+            if len(clean_needle) > 3:
+                for uf in os.listdir(UPLOADS_DIR):
+                    clean_uf = re.sub(r'[^a-zA-Z0-9]', '', uf.lower())
+                    if (clean_needle in clean_uf or clean_uf in clean_needle) and os.path.isfile(os.path.join(UPLOADS_DIR, uf)):
+                        return os.path.join(UPLOADS_DIR, uf)
 
     return None
 
