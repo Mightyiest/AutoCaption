@@ -241,44 +241,123 @@ export const BatchExportModal = () => {
     }
   }, [isBatchModalOpen]);
 
-  // Auto-sync batch queue items with any edits made in the main editor or projects database
+  // Auto-sync batch queue items and global preset with any edits made in the main editor or projects database
   useEffect(() => {
-    if (!isBatchModalOpen || queue.length === 0) return;
+    if (!isBatchModalOpen) return;
 
-    const { activeProjectId, segments: currentEditorSegments, style: currentEditorStyle } = useEditorStore.getState();
+    const { 
+      activeProjectId, 
+      activeProjectTitle,
+      segments: currentEditorSegments, 
+      style: currentEditorStyle,
+      activePresetId,
+      videoUrl: currentEditorVideoUrl,
+      videoFilename: currentEditorVideoFilename,
+      videoFile: currentEditorVideoFile,
+      linkedSourcePath: currentEditorLinkedPath,
+      duration: currentEditorDuration,
+      videoWidth: currentEditorWidth,
+      videoHeight: currentEditorHeight,
+      videoFps: currentEditorFps,
+      videoSnapshotUrl
+    } = useEditorStore.getState();
 
+    // 1. Sync global default preset to current editor's activePresetId if set
+    if (activePresetId && globalSettings.presetId !== activePresetId) {
+      setGlobalSettings((prev) => ({ ...prev, presetId: activePresetId }));
+    }
+
+    const currentQueue = useEditorStore.getState().batchQueue || [];
+    let updatedQueue = [...currentQueue];
     let hasChanges = false;
-    const updatedQueue = queue.map((item) => {
-      // 1. If item corresponds to currently active editor project, sync live store state
-      if (item.projectId && item.projectId === activeProjectId && currentEditorSegments && currentEditorSegments.length > 0) {
-        if (item.segments !== currentEditorSegments || item.style !== currentEditorStyle) {
-          hasChanges = true;
-          return {
-            ...item,
-            segments: currentEditorSegments,
-            style: currentEditorStyle ? sanitizeStyle(currentEditorStyle) : item.style,
-            stageText: `Project captions updated (${currentEditorSegments.length} blocks)`
-          };
-        }
+
+    // 2. Check if current editor has an active project or loaded media
+    const hasActiveEditorMedia = Boolean(currentEditorVideoUrl || currentEditorVideoFile || currentEditorVideoFilename || activeProjectId);
+
+    if (hasActiveEditorMedia) {
+      const resolvedPresetId = activePresetId || currentEditorStyle?.presetId || 'mrbeast';
+      const resolvedStyle = currentEditorStyle ? sanitizeStyle(currentEditorStyle) : (getPresetById(resolvedPresetId)?.style || PRESETS[0].style);
+      const cleanName = currentEditorVideoFilename || (currentEditorLinkedPath ? currentEditorLinkedPath.split(/[/\\]/).pop() : (currentEditorVideoFile ? currentEditorVideoFile.name : 'Active Video.mp4'));
+
+      const matchIndex = updatedQueue.findIndex((it) => 
+        (activeProjectId && it.projectId === activeProjectId) ||
+        (cleanName && it.name === cleanName) ||
+        (currentEditorLinkedPath && it.linkedPath === currentEditorLinkedPath)
+      );
+
+      if (matchIndex >= 0) {
+        // Update existing item with latest live single editor state
+        const item = updatedQueue[matchIndex];
+        updatedQueue[matchIndex] = {
+          ...item,
+          projectTitle: activeProjectTitle || item.projectTitle,
+          segments: (currentEditorSegments && currentEditorSegments.length > 0) ? currentEditorSegments : item.segments,
+          style: resolvedStyle,
+          presetId: resolvedPresetId,
+          hasCustomStyle: true,
+          file: currentEditorVideoFile || item.file,
+          videoUrl: currentEditorVideoUrl || item.videoUrl,
+          duration: currentEditorDuration || item.duration,
+          thumbnail: videoSnapshotUrl || item.thumbnail,
+          stageText: (currentEditorSegments && currentEditorSegments.length > 0) ? `Project captions ready (${currentEditorSegments.length} blocks)` : item.stageText
+        };
+        hasChanges = true;
+        if (!selectedQueueId) setSelectedQueueId(updatedQueue[matchIndex].id);
+      } else {
+        // Auto-insert current editor video into batch queue as first selected item
+        const newActiveItem = {
+          id: `batch-active-${Date.now()}`,
+          projectId: activeProjectId || null,
+          projectTitle: activeProjectTitle || cleanName.replace(/\.[^/.]+$/, ''),
+          file: currentEditorVideoFile || null,
+          linkedPath: currentEditorLinkedPath || null,
+          videoUrl: currentEditorVideoUrl || '',
+          name: cleanName,
+          size: currentEditorVideoFile ? currentEditorVideoFile.size : 0,
+          duration: currentEditorDuration || 10,
+          width: currentEditorWidth || 1080,
+          height: currentEditorHeight || 1920,
+          fps: currentEditorFps || 30,
+          thumbnail: videoSnapshotUrl || null,
+          status: 'pending',
+          progress: 0,
+          stageText: (currentEditorSegments && currentEditorSegments.length > 0) ? `Project captions ready (${currentEditorSegments.length} blocks)` : 'Queued from Editor',
+          error: null,
+          segments: (currentEditorSegments && currentEditorSegments.length > 0) ? currentEditorSegments : [],
+          style: resolvedStyle,
+          presetId: resolvedPresetId,
+          hasCustomStyle: true,
+          isFromExistingProject: Boolean(activeProjectId)
+        };
+        updatedQueue = [newActiveItem, ...updatedQueue];
+        hasChanges = true;
+        setSelectedQueueId(newActiveItem.id);
       }
-      // 2. Or sync with updated projectsList from database
-      if (item.projectId && projectsList && projectsList.length > 0) {
-        const p = projectsList.find((proj) => proj.id === item.projectId);
-        if (p && p.segments && p.segments.length > 0 && p.segments !== item.segments) {
-          hasChanges = true;
-          return {
-            ...item,
-            projectTitle: p.title || item.projectTitle,
-            segments: p.segments,
-            style: p.style ? sanitizeStyle(p.style) : item.style,
-            duration: p.duration || item.duration,
-            thumbnail: p.thumbnailUrl || item.thumbnail,
-            stageText: `Project captions updated (${p.segments.length} blocks)`
-          };
+    }
+
+    // 3. Sync with updated projectsList from database for any other items
+    if (projectsList && projectsList.length > 0) {
+      updatedQueue = updatedQueue.map((item) => {
+        if (item.projectId && item.projectId !== activeProjectId) {
+          const p = projectsList.find((proj) => proj.id === item.projectId);
+          if (p && p.segments && p.segments.length > 0 && p.segments !== item.segments) {
+            hasChanges = true;
+            return {
+              ...item,
+              projectTitle: p.title || item.projectTitle,
+              segments: p.segments,
+              style: p.style ? sanitizeStyle(p.style) : item.style,
+              presetId: p.activePresetId || item.presetId,
+              hasCustomStyle: Boolean(p.style || p.activePresetId),
+              duration: p.duration || item.duration,
+              thumbnail: p.thumbnailUrl || item.thumbnail,
+              stageText: `Project captions updated (${p.segments.length} blocks)`
+            };
+          }
         }
-      }
-      return item;
-    });
+        return item;
+      });
+    }
 
     if (hasChanges) {
       setBatchQueue(updatedQueue);
@@ -1212,11 +1291,11 @@ export const BatchExportModal = () => {
   const activePreset = getPresetById(globalSettings.presetId) || PRESETS[0];
 
   const isSelectedProjectCustom = Boolean(
-    selectedItem?.hasCustomStyle && 
-    selectedItem?.style && 
+    selectedItem && 
+    (selectedItem.style || selectedItem.hasCustomStyle || selectedItem.projectId) && 
     globalSettings.preserveProjectStyles !== false
   );
-  const selectedItemPresetId = selectedItem?.presetId || globalSettings.presetId;
+  const selectedItemPresetId = selectedItem?.presetId || selectedItem?.style?.presetId || globalSettings.presetId;
   const effectiveSelectedPreset = getPresetById(selectedItemPresetId) || PRESETS[0];
   const effectiveSelectedStyle = getEffectiveStyleForItem(selectedItem, globalSettings);
 
@@ -2350,7 +2429,7 @@ export const BatchExportModal = () => {
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
                       {PRESETS.map((p) => {
                         const isGlobalDefault = globalSettings.presetId === p.id;
-                        const isThisItemPreset = selectedItem?.presetId === p.id;
+                        const isThisItemPreset = (selectedItem?.presetId || selectedItem?.style?.presetId) === p.id;
                         const isSelected = isSelectedProjectCustom ? isThisItemPreset : isGlobalDefault;
 
                         return (
