@@ -373,13 +373,27 @@ export const useEditorStore = create((set, get) => ({
     maxWordsPerLine: 3,
     removePunctuation: false,
     autoEmojiEnabled: true,
+    autoEmojiStyle: 'apple', // 'apple' | 'native'
     autoEmphasisEnabled: true,
     resolution: 'original',
     engineType: 'client_canvas',
     encoderMode: 'gpu_nvenc',
+    videoQuality: 'crf18',
+    targetFps: 'source',
+    filenamePattern: '{name}_captioned',
     fontSizeMultiplier: 1.0,
     positionY: 74,
-    preserveProjectStyles: true
+    preserveProjectStyles: true,
+    fontFamily: null,
+    fontWeight: null,
+    textTransform: null,
+    textAlign: 'center',
+    primaryColor: null,
+    activeColor: null,
+    strokeColor: null,
+    strokeWidth: null,
+    backgroundColor: null,
+    animationType: null
   },
   setBatchGlobalSettings: (patch) => set((prev) => ({
     batchGlobalSettings: typeof patch === 'function' ? patch(prev.batchGlobalSettings) : { ...prev.batchGlobalSettings, ...patch }

@@ -37,7 +37,16 @@ import {
   Search,
   CheckSquare,
   Square,
-  Edit3
+  Edit3,
+  Type,
+  Palette,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  Smile,
+  Shield,
+  Flame,
+  ChevronDown
 } from 'lucide-react';
 import { useEditorStore } from '../store/useEditorStore';
 import { PRESETS, getPresetById, sanitizeStyle } from '../engine/presets';
@@ -82,6 +91,71 @@ const LANGUAGE_OPTIONS = [
   { code: 'hi', label: 'Hindi' },
   { code: 'ar', label: 'Arabic' },
   { code: 'ru', label: 'Russian' }
+];
+
+const FONTS = [
+  { id: 'default', name: 'Default (From Preset)', value: null },
+  { id: 'Montserrat', name: 'Montserrat (Viral Sans)', value: 'Montserrat' },
+  { id: 'Russo One', name: 'Russo One (Heavy Punch)', value: 'Russo One' },
+  { id: 'Bebas Neue', name: 'Bebas Neue (Condensed)', value: 'Bebas Neue' },
+  { id: 'Outfit', name: 'Outfit (Tech Rounded)', value: 'Outfit' },
+  { id: 'Bangers', name: 'Bangers (Comic Pop)', value: 'Bangers' },
+  { id: 'Plus Jakarta Sans', name: 'Plus Jakarta Sans (Pro)', value: 'Plus Jakarta Sans' },
+  { id: 'Inter', name: 'Inter (Clean Neutral)', value: 'Inter' }
+];
+
+const FONT_WEIGHTS = [
+  { label: 'Default', value: null },
+  { label: 'Regular 400', value: '400' },
+  { label: 'Bold 700', value: '700' },
+  { label: 'Extra 800', value: '800' },
+  { label: 'Black 900', value: '900' }
+];
+
+const TEXT_TRANSFORMS = [
+  { label: 'Default', value: null },
+  { label: 'UPPERCASE', value: 'uppercase' },
+  { label: 'Title Case', value: 'capitalize' },
+  { label: 'lowercase', value: 'lowercase' },
+  { label: 'As Spoken', value: 'none' }
+];
+
+const ANIMATION_TYPES = [
+  { id: 'default', label: 'Default (Preset)', value: null },
+  { id: 'pop', label: 'Pop Scale', value: 'pop' },
+  { id: 'bounce', label: 'Bounce', value: 'bounce' },
+  { id: 'karaoke', label: 'Karaoke', value: 'karaoke' },
+  { id: 'fade', label: 'Soft Fade', value: 'fade' },
+  { id: 'none', label: 'Static', value: 'none' }
+];
+
+const VIDEO_QUALITY_OPTIONS = [
+  { id: 'crf18', label: 'Studio Master (Ultra Quality)', sub: 'CRF 18 • High bitrate (~20 Mbps)' },
+  { id: 'crf22', label: 'Social High (Recommended)', sub: 'CRF 22 • Balanced size & quality (~12 Mbps)' },
+  { id: 'crf26', label: 'Compact Fast (Small File)', sub: 'CRF 26 • Lower bandwidth (~6 Mbps)' }
+];
+
+const FPS_OPTIONS = [
+  { id: 'source', label: 'Match Source (Native)' },
+  { id: '30', label: '30 FPS (Standard Social)' },
+  { id: '60', label: '60 FPS (Ultra Smooth 60Hz)' }
+];
+
+const FILENAME_PATTERNS = [
+  { id: '{name}_captioned', label: '[Filename]_captioned.mp4' },
+  { id: '{name}_{preset}', label: '[Filename]_[Preset].mp4' },
+  { id: 'subtitled_{name}', label: 'subtitled_[Filename].mp4' }
+];
+
+const QUICK_COLORS = [
+  '#FFFFFF', '#FFE600', '#00FF66', '#00FFCC', '#FF0055', '#38BDF8', '#A855F7', '#FF8800'
+];
+
+const BACKGROUND_BOX_PRESETS = [
+  { label: 'None', value: 'transparent' },
+  { label: 'Dark 60%', value: 'rgba(0,0,0,0.6)' },
+  { label: 'Solid Black', value: '#000000' },
+  { label: 'Neon Glow', value: 'rgba(0,255,200,0.18)' }
 ];
 
 const PREVIEW_SAMPLE_PHRASES = [
@@ -223,15 +297,41 @@ export const BatchExportModal = () => {
 
   // Resolve effective subtitle style for an item (prefers custom project style if preserveProjectStyles is true)
   const getEffectiveStyleForItem = useCallback((item, settings = globalSettings) => {
+    const buildStyleFromSettings = (baseStyle) => {
+      const merged = {
+        ...baseStyle,
+        positionY: settings.positionY,
+        fontSize: Math.round(baseStyle.fontSize * (settings.fontSizeMultiplier || 1.0)),
+        autoEmojiEnabled: settings.autoEmojiEnabled,
+        autoEmojiStyle: settings.autoEmojiStyle || 'apple',
+        autoEmphasisEnabled: settings.autoEmphasisEnabled
+      };
+      if (settings.fontFamily) merged.fontFamily = settings.fontFamily;
+      if (settings.fontWeight) merged.fontWeight = settings.fontWeight;
+      if (settings.textTransform) merged.textTransform = settings.textTransform;
+      if (settings.textAlign) merged.textAlign = settings.textAlign;
+      if (settings.animationType) merged.animationType = settings.animationType;
+      if (settings.primaryColor) merged.primaryColor = settings.primaryColor;
+      if (settings.activeColor) merged.activeColor = settings.activeColor;
+      if (settings.strokeColor) merged.strokeColor = settings.strokeColor;
+      if (settings.strokeWidth !== null && settings.strokeWidth !== undefined) {
+        merged.strokeWidth = settings.strokeWidth;
+        merged.strokeEnabled = settings.strokeWidth > 0;
+      }
+      if (settings.backgroundColor) {
+        merged.backgroundColor = settings.backgroundColor;
+        merged.backgroundEnabled = settings.backgroundColor !== 'transparent';
+        if (settings.backgroundColor !== 'transparent') {
+          merged.backgroundPadding = merged.backgroundPadding || 12;
+          merged.borderRadius = merged.borderRadius || 8;
+        }
+      }
+      return sanitizeStyle(merged);
+    };
+
     if (!item) {
       const preset = getPresetById(settings.presetId) || PRESETS[0];
-      return sanitizeStyle({
-        ...preset.style,
-        positionY: settings.positionY,
-        fontSize: Math.round(preset.style.fontSize * (settings.fontSizeMultiplier || 1.0)),
-        autoEmojiEnabled: settings.autoEmojiEnabled,
-        autoEmphasisEnabled: settings.autoEmphasisEnabled
-      });
+      return buildStyleFromSettings(preset.style);
     }
 
     const shouldPreserve = settings.preserveProjectStyles !== false;
@@ -243,13 +343,7 @@ export const BatchExportModal = () => {
     // Otherwise compile from the item's preset or the global settings preset
     const presetId = (!shouldPreserve ? settings.presetId : (item.presetId || settings.presetId));
     const selectedPreset = getPresetById(presetId) || PRESETS[0];
-    return sanitizeStyle({
-      ...selectedPreset.style,
-      positionY: settings.positionY,
-      fontSize: Math.round(selectedPreset.style.fontSize * (settings.fontSizeMultiplier || 1.0)),
-      autoEmojiEnabled: settings.autoEmojiEnabled,
-      autoEmphasisEnabled: settings.autoEmphasisEnabled
-    });
+    return buildStyleFromSettings(selectedPreset.style);
   }, [globalSettings]);
 
   // Live Subtitle Overlay Render Loop on Preview Canvas
@@ -783,7 +877,22 @@ export const BatchExportModal = () => {
         }
 
         const cleanBase = item.name.replace(/\.[^/.]+$/, '').replace(/[/\\?%*:|"<>]/g, '').trim() || 'video';
-        const finalOutputFilename = `${cleanBase}_captioned.mp4`;
+        const presetClean = (item.presetId || globalSettings.presetId || 'mrbeast').toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+        const rawPattern = globalSettings.filenamePattern || '{name}_captioned';
+        const nameWithPattern = rawPattern.replace('{name}', cleanBase).replace('{preset}', presetClean);
+        const finalOutputFilename = `${nameWithPattern}.mp4`;
+
+        // Determine frame rate
+        let fpsToUse = 30;
+        if (globalSettings.targetFps === 'source') {
+          fpsToUse = item.fps || 30;
+        } else if (globalSettings.targetFps === '60') {
+          fpsToUse = 60;
+        } else if (globalSettings.targetFps === '30') {
+          fpsToUse = 30;
+        } else {
+          fpsToUse = Number(globalSettings.targetFps) || 30;
+        }
 
         // STEP 5: Render Video (Client Canvas DOM Ultra vs Backend)
         updateItemState({
@@ -796,14 +905,17 @@ export const BatchExportModal = () => {
         let exportDownloadUrl = null;
 
         if (globalSettings.engineType === 'client_canvas') {
-          const targetFps = item.fps || 30;
+          const clientQuality = globalSettings.videoQuality === 'crf18' 
+            ? 'very_high' 
+            : (globalSettings.videoQuality === 'crf26' ? 'medium' : 'high');
+
           const targetDuration = transDuration;
           const exporter = new ClientSceneExporter({
             width: exportW,
             height: exportH,
-            fps: targetFps,
+            fps: fpsToUse,
             format: 'mp4',
-            quality: 'high'
+            quality: clientQuality
           });
           clientExporterRef.current = exporter;
 
@@ -853,7 +965,9 @@ export const BatchExportModal = () => {
             encoder_mode: globalSettings.encoderMode || 'gpu_nvenc',
             engine_type: globalSettings.engineType === 'dom' ? 'dom' : 'ass',
             preview_metrics: measuredLines ? { measured_lines: measuredLines } : null,
-            output_filename: finalOutputFilename
+            output_filename: finalOutputFilename,
+            fps: fpsToUse,
+            video_quality: globalSettings.videoQuality || 'crf18'
           };
 
           const renderRes = await fetch(`${BACKEND_URL}/api/render`, {
@@ -2073,7 +2187,7 @@ export const BatchExportModal = () => {
             {/* TAB CONTENTS (SCROLLABLE) */}
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
               
-              {/* TAB 1: PRESET & LIVE PREVIEW STAGE */}
+              {/* TAB 1: PRESET & STYLING OVERRIDES */}
               {activeTab === 'preset' && (
                 <>
                   {/* STYLE BEHAVIOR & PRIORITY SELECTOR */}
@@ -2135,9 +2249,18 @@ export const BatchExportModal = () => {
                           ? `🎨 Project Style: ${effectiveSelectedPreset.name}`
                           : `⚡ Global Default Preset: ${activePreset.name}`}
                       </span>
-                      <span style={{ color: 'rgba(255, 255, 255, 0.6)' }}>
-                        Font: {effectiveSelectedStyle?.fontFamily || activePreset.style?.fontFamily}
-                      </span>
+                      <button
+                        onClick={() => {
+                          setSamplePhraseIdx((prev) => (prev + 1) % PREVIEW_SAMPLE_PHRASES.length);
+                          updatePreviewCanvas();
+                        }}
+                        className="btn-ghost"
+                        style={{ padding: '2px 6px', fontSize: '9px', color: '#A855F7', display: 'flex', alignItems: 'center', gap: '3px' }}
+                        title="Cycle through sample preview phrases"
+                      >
+                        <RefreshCw size={9} />
+                        <span>Switch Sample</span>
+                      </button>
                     </div>
 
                     {/* Styled Caption Preview Box */}
@@ -2152,15 +2275,15 @@ export const BatchExportModal = () => {
                         gap: '6px',
                         fontFamily: effectiveSelectedStyle?.fontFamily || 'Montserrat',
                         fontWeight: effectiveSelectedStyle?.fontWeight || '900',
-                        fontSize: '18px',
+                        fontSize: '17px',
                         textTransform: effectiveSelectedStyle?.textTransform || 'uppercase',
                         letterSpacing: `${effectiveSelectedStyle?.letterSpacing || 0}px`,
-                        textAlign: 'center',
+                        textAlign: effectiveSelectedStyle?.textAlign || 'center',
                         textShadow: effectiveSelectedStyle?.strokeColor ? `-1.5px -1.5px 0 ${effectiveSelectedStyle.strokeColor}, 1.5px 1.5px 0 ${effectiveSelectedStyle.strokeColor}` : 'none'
                       }}
                     >
                       <span style={{ color: effectiveSelectedStyle?.primaryColor || '#FFFFFF' }}>
-                        THIS IS
+                        {PREVIEW_SAMPLE_PHRASES[samplePhraseIdx].text.split(' ').slice(0, -1).join(' ') || 'THIS IS'}
                       </span>
                       <span
                         style={{
@@ -2169,9 +2292,9 @@ export const BatchExportModal = () => {
                           display: 'inline-block'
                         }}
                       >
-                        INSANE
+                        {PREVIEW_SAMPLE_PHRASES[samplePhraseIdx].text.split(' ').slice(-1)[0] || 'INSANE'}
                       </span>
-                      <span style={{ fontSize: '20px' }}>🚀</span>
+                      <span style={{ fontSize: '18px' }}>{PREVIEW_SAMPLE_PHRASES[samplePhraseIdx].emoji || '🚀'}</span>
                     </div>
 
                     <div style={{ fontSize: '10px', color: 'rgba(255, 255, 255, 0.6)', textAlign: 'center' }}>
@@ -2256,56 +2379,472 @@ export const BatchExportModal = () => {
                     </div>
                   </div>
 
-                  {/* Font Scaling Slider */}
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)' }}>
-                        Font Size Scale
+                  {/* TYPOGRAPHY & FONT OVERRIDES */}
+                  <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Type size={13} color="#A855F7" />
+                      <label style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-tertiary)' }}>
+                        Typography & Text Formatting
                       </label>
-                      <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                        {Math.round(globalSettings.fontSizeMultiplier * 100)}%
-                      </span>
                     </div>
-                    <input
-                      type="range"
-                      min="0.75"
-                      max="1.35"
-                      step="0.05"
-                      value={globalSettings.fontSizeMultiplier}
-                      onChange={(e) => {
-                        setGlobalSettings((prev) => ({ ...prev, fontSizeMultiplier: parseFloat(e.target.value) }));
-                        updatePreviewCanvas();
-                      }}
-                      style={{ width: '100%', accentColor: '#A855F7' }}
-                    />
+
+                    {/* Font Family Dropdown */}
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)' }}>
+                          Font Family Override
+                        </label>
+                        {globalSettings.fontFamily && (
+                          <button
+                            onClick={() => {
+                              setGlobalSettings((prev) => ({ ...prev, fontFamily: null }));
+                              updatePreviewCanvas();
+                            }}
+                            style={{ background: 'none', border: 'none', color: '#A855F7', fontSize: '9px', cursor: 'pointer', padding: 0 }}
+                          >
+                            Reset to Preset
+                          </button>
+                        )}
+                      </div>
+                      <select
+                        value={globalSettings.fontFamily || 'default'}
+                        onChange={(e) => {
+                          const val = e.target.value === 'default' ? null : e.target.value;
+                          setGlobalSettings((prev) => ({ ...prev, fontFamily: val }));
+                          updatePreviewCanvas();
+                        }}
+                        style={{
+                          width: '100%',
+                          padding: '6px 8px',
+                          borderRadius: 'var(--radius-sm)',
+                          backgroundColor: 'var(--bg-surface)',
+                          border: '1px solid var(--border-subtle)',
+                          color: 'var(--text-primary)',
+                          fontSize: '11px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {FONTS.map((f) => (
+                          <option key={f.id} value={f.id}>
+                            {f.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Font Weight Pills */}
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)', display: 'block', marginBottom: '4px' }}>
+                        Font Weight
+                      </label>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px' }}>
+                        {FONT_WEIGHTS.map((fw) => {
+                          const isSelected = globalSettings.fontWeight === fw.value;
+                          return (
+                            <button
+                              key={fw.label}
+                              type="button"
+                              onClick={() => {
+                                setGlobalSettings((prev) => ({ ...prev, fontWeight: fw.value }));
+                                updatePreviewCanvas();
+                              }}
+                              style={{
+                                padding: '5px 2px',
+                                borderRadius: '4px',
+                                fontSize: '9.5px',
+                                fontWeight: isSelected ? '700' : '500',
+                                backgroundColor: isSelected ? '#A855F7' : 'var(--bg-surface)',
+                                color: isSelected ? '#FFFFFF' : 'var(--text-secondary)',
+                                border: isSelected ? '1px solid #A855F7' : '1px solid var(--border-subtle)',
+                                cursor: 'pointer',
+                                textAlign: 'center'
+                              }}
+                            >
+                              {fw.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Text Transform (Case) Pills */}
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)', display: 'block', marginBottom: '4px' }}>
+                        Text Case / Transform
+                      </label>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px' }}>
+                        {TEXT_TRANSFORMS.map((tt) => {
+                          const isSelected = globalSettings.textTransform === tt.value;
+                          return (
+                            <button
+                              key={tt.label}
+                              type="button"
+                              onClick={() => {
+                                setGlobalSettings((prev) => ({ ...prev, textTransform: tt.value }));
+                                updatePreviewCanvas();
+                              }}
+                              style={{
+                                padding: '5px 2px',
+                                borderRadius: '4px',
+                                fontSize: '9px',
+                                fontWeight: isSelected ? '700' : '500',
+                                backgroundColor: isSelected ? '#A855F7' : 'var(--bg-surface)',
+                                color: isSelected ? '#FFFFFF' : 'var(--text-secondary)',
+                                border: isSelected ? '1px solid #A855F7' : '1px solid var(--border-subtle)',
+                                cursor: 'pointer',
+                                textAlign: 'center'
+                              }}
+                            >
+                              {tt.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Text Alignment Row */}
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)', display: 'block', marginBottom: '4px' }}>
+                        Text Alignment
+                      </label>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}>
+                        {[
+                          { id: 'left', label: 'Left', icon: AlignLeft },
+                          { id: 'center', label: 'Center', icon: AlignCenter },
+                          { id: 'right', label: 'Right', icon: AlignRight }
+                        ].map((align) => {
+                          const isSelected = (globalSettings.textAlign || 'center') === align.id;
+                          const Icon = align.icon;
+                          return (
+                            <button
+                              key={align.id}
+                              type="button"
+                              onClick={() => {
+                                setGlobalSettings((prev) => ({ ...prev, textAlign: align.id }));
+                                updatePreviewCanvas();
+                              }}
+                              style={{
+                                padding: '6px',
+                                borderRadius: 'var(--radius-sm)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '5px',
+                                fontSize: '10.5px',
+                                fontWeight: isSelected ? '700' : '500',
+                                backgroundColor: isSelected ? 'rgba(168, 85, 247, 0.15)' : 'var(--bg-surface)',
+                                color: isSelected ? '#A855F7' : 'var(--text-secondary)',
+                                border: isSelected ? '1px solid #A855F7' : '1px solid var(--border-subtle)',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              <Icon size={13} />
+                              <span>{align.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Position Y Slider */}
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)' }}>
-                        Vertical Placement (Y-Position)
+                  {/* SCALE & POSITION SLIDERS */}
+                  <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Sliders size={13} color="#A855F7" />
+                      <label style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-tertiary)' }}>
+                        Scale & Placement
                       </label>
-                      <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                        {globalSettings.positionY}%
-                      </span>
                     </div>
-                    <input
-                      type="range"
-                      min="30"
-                      max="90"
-                      step="1"
-                      value={globalSettings.positionY}
-                      onChange={(e) => {
-                        setGlobalSettings((prev) => ({ ...prev, positionY: parseInt(e.target.value, 10) }));
-                        updatePreviewCanvas();
-                      }}
-                      style={{ width: '100%', accentColor: '#A855F7' }}
-                    />
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: 'var(--text-tertiary)', marginTop: '2px' }}>
-                      <span>Top (30%)</span>
-                      <span>Center-Low (74%)</span>
-                      <span>Bottom (90%)</span>
+
+                    {/* Font Scaling Slider */}
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)' }}>
+                          Font Size Scale
+                        </label>
+                        <span style={{ fontSize: '11px', color: '#A855F7', fontWeight: '700' }}>
+                          {Math.round(globalSettings.fontSizeMultiplier * 100)}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.75"
+                        max="1.35"
+                        step="0.05"
+                        value={globalSettings.fontSizeMultiplier}
+                        onChange={(e) => {
+                          setGlobalSettings((prev) => ({ ...prev, fontSizeMultiplier: parseFloat(e.target.value) }));
+                          updatePreviewCanvas();
+                        }}
+                        style={{ width: '100%', accentColor: '#A855F7' }}
+                      />
+                    </div>
+
+                    {/* Position Y Slider */}
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)' }}>
+                          Vertical Placement (Y-Position)
+                        </label>
+                        <span style={{ fontSize: '11px', color: '#A855F7', fontWeight: '700' }}>
+                          {globalSettings.positionY}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="30"
+                        max="90"
+                        step="1"
+                        value={globalSettings.positionY}
+                        onChange={(e) => {
+                          setGlobalSettings((prev) => ({ ...prev, positionY: parseInt(e.target.value, 10) }));
+                          updatePreviewCanvas();
+                        }}
+                        style={{ width: '100%', accentColor: '#A855F7' }}
+                      />
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: 'var(--text-tertiary)', marginTop: '2px' }}>
+                        <span>Top (30%)</span>
+                        <span>Center-Low (74%)</span>
+                        <span>Bottom (90%)</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* COLORS, STROKES & BACKGROUNDS OVERRIDES */}
+                  <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Palette size={13} color="#A855F7" />
+                      <label style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-tertiary)' }}>
+                        Colors, Outline & Background
+                      </label>
+                    </div>
+
+                    {/* Primary Text Color */}
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)' }}>
+                          Primary Text Color
+                        </label>
+                        {globalSettings.primaryColor && (
+                          <button
+                            onClick={() => {
+                              setGlobalSettings((prev) => ({ ...prev, primaryColor: null }));
+                              updatePreviewCanvas();
+                            }}
+                            style={{ background: 'none', border: 'none', color: '#A855F7', fontSize: '9px', cursor: 'pointer', padding: 0 }}
+                          >
+                            Reset
+                          </button>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <input
+                          type="color"
+                          value={globalSettings.primaryColor || effectiveSelectedStyle?.primaryColor || '#FFFFFF'}
+                          onChange={(e) => {
+                            setGlobalSettings((prev) => ({ ...prev, primaryColor: e.target.value }));
+                            updatePreviewCanvas();
+                          }}
+                          style={{ width: '28px', height: '28px', border: 'none', borderRadius: '4px', cursor: 'pointer', background: 'none' }}
+                        />
+                        <div style={{ display: 'flex', gap: '3px', flexWrap: 'wrap', flex: 1 }}>
+                          {QUICK_COLORS.map((col) => (
+                            <div
+                              key={col}
+                              onClick={() => {
+                                setGlobalSettings((prev) => ({ ...prev, primaryColor: col }));
+                                updatePreviewCanvas();
+                              }}
+                              style={{
+                                width: '18px',
+                                height: '18px',
+                                borderRadius: '3px',
+                                backgroundColor: col,
+                                cursor: 'pointer',
+                                border: (globalSettings.primaryColor || effectiveSelectedStyle?.primaryColor) === col ? '2px solid #A855F7' : '1px solid rgba(255,255,255,0.2)'
+                              }}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Active Word Highlight Color */}
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)' }}>
+                          Active Word Highlight Color
+                        </label>
+                        {globalSettings.activeColor && (
+                          <button
+                            onClick={() => {
+                              setGlobalSettings((prev) => ({ ...prev, activeColor: null }));
+                              updatePreviewCanvas();
+                            }}
+                            style={{ background: 'none', border: 'none', color: '#A855F7', fontSize: '9px', cursor: 'pointer', padding: 0 }}
+                          >
+                            Reset
+                          </button>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <input
+                          type="color"
+                          value={globalSettings.activeColor || effectiveSelectedStyle?.activeColor || '#FFE600'}
+                          onChange={(e) => {
+                            setGlobalSettings((prev) => ({ ...prev, activeColor: e.target.value }));
+                            updatePreviewCanvas();
+                          }}
+                          style={{ width: '28px', height: '28px', border: 'none', borderRadius: '4px', cursor: 'pointer', background: 'none' }}
+                        />
+                        <div style={{ display: 'flex', gap: '3px', flexWrap: 'wrap', flex: 1 }}>
+                          {QUICK_COLORS.map((col) => (
+                            <div
+                              key={col}
+                              onClick={() => {
+                                setGlobalSettings((prev) => ({ ...prev, activeColor: col }));
+                                updatePreviewCanvas();
+                              }}
+                              style={{
+                                width: '18px',
+                                height: '18px',
+                                borderRadius: '3px',
+                                backgroundColor: col,
+                                cursor: 'pointer',
+                                border: (globalSettings.activeColor || effectiveSelectedStyle?.activeColor) === col ? '2px solid #A855F7' : '1px solid rgba(255,255,255,0.2)'
+                              }}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Stroke / Outline Width & Color */}
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)' }}>
+                          Outline / Stroke Width
+                        </label>
+                        <span style={{ fontSize: '11px', color: '#A855F7', fontWeight: '700' }}>
+                          {globalSettings.strokeWidth !== null ? `${globalSettings.strokeWidth}px` : `Default (${effectiveSelectedStyle?.strokeWidth || 6}px)`}
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="14"
+                        step="1"
+                        value={globalSettings.strokeWidth !== null ? globalSettings.strokeWidth : (effectiveSelectedStyle?.strokeWidth || 6)}
+                        onChange={(e) => {
+                          setGlobalSettings((prev) => ({ ...prev, strokeWidth: parseInt(e.target.value, 10) }));
+                          updatePreviewCanvas();
+                        }}
+                        style={{ width: '100%', accentColor: '#A855F7' }}
+                      />
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '6px' }}>
+                        <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>Stroke Color:</span>
+                        <input
+                          type="color"
+                          value={globalSettings.strokeColor || effectiveSelectedStyle?.strokeColor || '#000000'}
+                          onChange={(e) => {
+                            setGlobalSettings((prev) => ({ ...prev, strokeColor: e.target.value }));
+                            updatePreviewCanvas();
+                          }}
+                          style={{ width: '22px', height: '22px', border: 'none', borderRadius: '4px', cursor: 'pointer', background: 'none' }}
+                        />
+                        <div style={{ display: 'flex', gap: '3px', flexWrap: 'wrap', flex: 1 }}>
+                          {['#000000', '#111827', '#FFFFFF', '#FF0055', '#38BDF8'].map((col) => (
+                            <div
+                              key={col}
+                              onClick={() => {
+                                setGlobalSettings((prev) => ({ ...prev, strokeColor: col }));
+                                updatePreviewCanvas();
+                              }}
+                              style={{
+                                width: '16px',
+                                height: '16px',
+                                borderRadius: '3px',
+                                backgroundColor: col,
+                                cursor: 'pointer',
+                                border: (globalSettings.strokeColor || effectiveSelectedStyle?.strokeColor) === col ? '2px solid #A855F7' : '1px solid rgba(255,255,255,0.2)'
+                              }}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Background Box / Pill */}
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)', display: 'block', marginBottom: '4px' }}>
+                        Background Pill Box
+                      </label>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '4px' }}>
+                        {BACKGROUND_BOX_PRESETS.map((bg) => {
+                          const isSelected = globalSettings.backgroundColor === bg.value;
+                          return (
+                            <button
+                              key={bg.label}
+                              type="button"
+                              onClick={() => {
+                                setGlobalSettings((prev) => ({ ...prev, backgroundColor: bg.value }));
+                                updatePreviewCanvas();
+                              }}
+                              style={{
+                                padding: '5px 2px',
+                                borderRadius: '4px',
+                                fontSize: '9.5px',
+                                fontWeight: isSelected ? '700' : '500',
+                                backgroundColor: isSelected ? '#A855F7' : 'var(--bg-surface)',
+                                color: isSelected ? '#FFFFFF' : 'var(--text-secondary)',
+                                border: isSelected ? '1px solid #A855F7' : '1px solid var(--border-subtle)',
+                                cursor: 'pointer',
+                                textAlign: 'center'
+                              }}
+                            >
+                              {bg.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ANIMATION OVERRIDES */}
+                  <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Flame size={13} color="#A855F7" />
+                      <label style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-tertiary)' }}>
+                        Active Word Animation
+                      </label>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}>
+                      {ANIMATION_TYPES.map((anim) => {
+                        const isSelected = globalSettings.animationType === anim.value;
+                        return (
+                          <button
+                            key={anim.id}
+                            type="button"
+                            onClick={() => {
+                              setGlobalSettings((prev) => ({ ...prev, animationType: anim.value }));
+                              updatePreviewCanvas();
+                            }}
+                            style={{
+                              padding: '6px 4px',
+                              borderRadius: 'var(--radius-sm)',
+                              fontSize: '10px',
+                              fontWeight: isSelected ? '700' : '500',
+                              backgroundColor: isSelected ? 'rgba(168, 85, 247, 0.15)' : 'var(--bg-surface)',
+                              color: isSelected ? '#A855F7' : 'var(--text-secondary)',
+                              border: isSelected ? '1px solid #A855F7' : '1px solid var(--border-subtle)',
+                              cursor: 'pointer',
+                              textAlign: 'center'
+                            }}
+                          >
+                            {anim.label}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 </>
@@ -2399,20 +2938,68 @@ export const BatchExportModal = () => {
                     />
                   </div>
 
-                  {/* AI Toggles */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', paddingTop: '4px' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '11px', color: 'var(--text-primary)' }}>
-                      <input
-                        type="checkbox"
-                        checked={globalSettings.autoEmojiEnabled}
-                        onChange={(e) => {
-                          setGlobalSettings((prev) => ({ ...prev, autoEmojiEnabled: e.target.checked }));
-                          updatePreviewCanvas();
-                        }}
-                        style={{ accentColor: '#A855F7', width: '14px', height: '14px' }}
-                      />
-                      <span>Auto-Assign Animated Emojis (🔥, 💰, 🚀)</span>
-                    </label>
+                  {/* AI Smart Toggles */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingTop: '4px' }}>
+                    <div>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '11px', color: 'var(--text-primary)' }}>
+                        <input
+                          type="checkbox"
+                          checked={globalSettings.autoEmojiEnabled}
+                          onChange={(e) => {
+                            setGlobalSettings((prev) => ({ ...prev, autoEmojiEnabled: e.target.checked }));
+                            updatePreviewCanvas();
+                          }}
+                          style={{ accentColor: '#A855F7', width: '14px', height: '14px' }}
+                        />
+                        <span>Auto-Assign Animated Emojis (🔥, 💰, 🚀)</span>
+                      </label>
+
+                      {/* Emoji Style Selection */}
+                      {globalSettings.autoEmojiEnabled && (
+                        <div style={{ marginLeft: '22px', marginTop: '6px', display: 'flex', gap: '6px' }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setGlobalSettings((prev) => ({ ...prev, autoEmojiStyle: 'apple' }));
+                              updatePreviewCanvas();
+                            }}
+                            style={{
+                              flex: 1,
+                              padding: '4px 6px',
+                              borderRadius: '4px',
+                              fontSize: '9.5px',
+                              fontWeight: (globalSettings.autoEmojiStyle || 'apple') === 'apple' ? '700' : '500',
+                              backgroundColor: (globalSettings.autoEmojiStyle || 'apple') === 'apple' ? 'rgba(168, 85, 247, 0.15)' : 'var(--bg-surface)',
+                              color: (globalSettings.autoEmojiStyle || 'apple') === 'apple' ? '#A855F7' : 'var(--text-secondary)',
+                              border: (globalSettings.autoEmojiStyle || 'apple') === 'apple' ? '1px solid #A855F7' : '1px solid var(--border-subtle)',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            🍎 Apple 3D Emojis
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setGlobalSettings((prev) => ({ ...prev, autoEmojiStyle: 'native' }));
+                              updatePreviewCanvas();
+                            }}
+                            style={{
+                              flex: 1,
+                              padding: '4px 6px',
+                              borderRadius: '4px',
+                              fontSize: '9.5px',
+                              fontWeight: globalSettings.autoEmojiStyle === 'native' ? '700' : '500',
+                              backgroundColor: globalSettings.autoEmojiStyle === 'native' ? 'rgba(168, 85, 247, 0.15)' : 'var(--bg-surface)',
+                              color: globalSettings.autoEmojiStyle === 'native' ? '#A855F7' : 'var(--text-secondary)',
+                              border: globalSettings.autoEmojiStyle === 'native' ? '1px solid #A855F7' : '1px solid var(--border-subtle)',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            🔤 Native Emojis
+                          </button>
+                        </div>
+                      )}
+                    </div>
 
                     <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '11px', color: 'var(--text-primary)' }}>
                       <input
@@ -2440,7 +3027,7 @@ export const BatchExportModal = () => {
                 </>
               )}
 
-              {/* TAB 3: EXPORT FORMAT & ENGINE (DEFAULTING TO CLIENT CANVAS DOM ULTRA) */}
+              {/* TAB 3: EXPORT FORMAT, QUALITY & HARDWARE ENGINES */}
               {activeTab === 'export' && (
                 <>
                   {/* Render Engine Selector */}
@@ -2510,7 +3097,122 @@ export const BatchExportModal = () => {
                     </div>
                   </div>
 
-                  {/* Resolution Selector */}
+                  {/* Hardware Acceleration Mode (for Backend) */}
+                  {globalSettings.engineType !== 'client_canvas' && (
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-tertiary)', display: 'block', marginBottom: '6px' }}>
+                        Hardware Acceleration
+                      </label>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px' }}>
+                        <button
+                          type="button"
+                          onClick={() => setGlobalSettings((prev) => ({ ...prev, encoderMode: 'gpu_nvenc' }))}
+                          style={{
+                            padding: '6px 8px',
+                            borderRadius: 'var(--radius-sm)',
+                            fontSize: '10px',
+                            fontWeight: globalSettings.encoderMode === 'gpu_nvenc' ? '700' : '500',
+                            backgroundColor: globalSettings.encoderMode === 'gpu_nvenc' ? 'rgba(168, 85, 247, 0.15)' : 'var(--bg-surface)',
+                            color: globalSettings.encoderMode === 'gpu_nvenc' ? '#A855F7' : 'var(--text-secondary)',
+                            border: globalSettings.encoderMode === 'gpu_nvenc' ? '1px solid #A855F7' : '1px solid var(--border-subtle)',
+                            cursor: 'pointer',
+                            textAlign: 'center'
+                          }}
+                        >
+                          ⚡ GPU NVENC (Fast)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setGlobalSettings((prev) => ({ ...prev, encoderMode: 'cpu' }))}
+                          style={{
+                            padding: '6px 8px',
+                            borderRadius: 'var(--radius-sm)',
+                            fontSize: '10px',
+                            fontWeight: globalSettings.encoderMode === 'cpu' ? '700' : '500',
+                            backgroundColor: globalSettings.encoderMode === 'cpu' ? 'rgba(168, 85, 247, 0.15)' : 'var(--bg-surface)',
+                            color: globalSettings.encoderMode === 'cpu' ? '#A855F7' : 'var(--text-secondary)',
+                            border: globalSettings.encoderMode === 'cpu' ? '1px solid #A855F7' : '1px solid var(--border-subtle)',
+                            cursor: 'pointer',
+                            textAlign: 'center'
+                          }}
+                        >
+                          🖥️ CPU libx264 (Safe)
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Video Quality / Bitrate */}
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-tertiary)', display: 'block', marginBottom: '6px' }}>
+                      Video Quality & Encoding Bitrate
+                    </label>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                      {VIDEO_QUALITY_OPTIONS.map((q) => {
+                        const isSelected = (globalSettings.videoQuality || 'crf18') === q.id;
+                        return (
+                          <div
+                            key={q.id}
+                            onClick={() => setGlobalSettings((prev) => ({ ...prev, videoQuality: q.id }))}
+                            style={{
+                              padding: '6px 10px',
+                              borderRadius: 'var(--radius-sm)',
+                              border: isSelected ? '1px solid #A855F7' : '1px solid var(--border-subtle)',
+                              backgroundColor: isSelected ? 'rgba(168, 85, 247, 0.08)' : 'var(--bg-surface)',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between'
+                            }}
+                          >
+                            <div>
+                              <div style={{ fontSize: '11px', fontWeight: '600', color: isSelected ? '#A855F7' : 'var(--text-primary)' }}>
+                                {q.label}
+                              </div>
+                              <div style={{ fontSize: '9px', color: 'var(--text-tertiary)' }}>
+                                {q.sub}
+                              </div>
+                            </div>
+                            {isSelected && <Check size={12} color="#A855F7" />}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Target Frame Rate (FPS) */}
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-tertiary)', display: 'block', marginBottom: '6px' }}>
+                      Target Frame Rate (FPS)
+                    </label>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}>
+                      {FPS_OPTIONS.map((f) => {
+                        const isSelected = (globalSettings.targetFps || 'source') === f.id;
+                        return (
+                          <button
+                            key={f.id}
+                            type="button"
+                            onClick={() => setGlobalSettings((prev) => ({ ...prev, targetFps: f.id }))}
+                            style={{
+                              padding: '6px 4px',
+                              borderRadius: 'var(--radius-sm)',
+                              fontSize: '10px',
+                              fontWeight: isSelected ? '700' : '500',
+                              backgroundColor: isSelected ? 'rgba(168, 85, 247, 0.15)' : 'var(--bg-surface)',
+                              color: isSelected ? '#A855F7' : 'var(--text-secondary)',
+                              border: isSelected ? '1px solid #A855F7' : '1px solid var(--border-subtle)',
+                              cursor: 'pointer',
+                              textAlign: 'center'
+                            }}
+                          >
+                            {f.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Target Export Resolution */}
                   <div>
                     <label style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-tertiary)', display: 'block', marginBottom: '6px' }}>
                       Target Export Resolution
@@ -2540,6 +3242,39 @@ export const BatchExportModal = () => {
                               <div style={{ fontSize: '9px', color: 'var(--text-tertiary)' }}>
                                 {res.sub}
                               </div>
+                            </div>
+                            {isSelected && <Check size={12} color="#A855F7" />}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Output Filename Pattern */}
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-tertiary)', display: 'block', marginBottom: '6px' }}>
+                      Output Filename Pattern
+                    </label>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                      {FILENAME_PATTERNS.map((p) => {
+                        const isSelected = (globalSettings.filenamePattern || '{name}_captioned') === p.id;
+                        return (
+                          <div
+                            key={p.id}
+                            onClick={() => setGlobalSettings((prev) => ({ ...prev, filenamePattern: p.id }))}
+                            style={{
+                              padding: '6px 10px',
+                              borderRadius: 'var(--radius-sm)',
+                              border: isSelected ? '1px solid #A855F7' : '1px solid var(--border-subtle)',
+                              backgroundColor: isSelected ? 'rgba(168, 85, 247, 0.08)' : 'var(--bg-surface)',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between'
+                            }}
+                          >
+                            <div style={{ fontSize: '11px', fontWeight: isSelected ? '700' : '500', color: isSelected ? '#A855F7' : 'var(--text-primary)', fontFamily: 'monospace' }}>
+                              {p.label}
                             </div>
                             {isSelected && <Check size={12} color="#A855F7" />}
                           </div>
