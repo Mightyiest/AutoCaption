@@ -388,11 +388,14 @@ export function drawCaptionFrame({ ctx, scene, layout, currentTime, isPlaying = 
   // ----------------------------------------------------
   if (style.glowEnabled && style.scaledGlowBlur > 0) {
     ctx.save();
-    ctx.shadowColor = style.glowColor || style.activeColor;
+    const glowBaseColor = (style.glowColor && style.glowColor !== 'transparent')
+      ? style.glowColor
+      : (style.activeHighlightEnabled !== false ? (style.activeColor || '#FFE600') : (style.primaryColor || '#FFFFFF'));
+    ctx.shadowColor = glowBaseColor;
     ctx.shadowBlur = style.scaledGlowBlur;
     ctx.shadowOffsetX = 0;
     ctx.shadowOffsetY = 0;
-    ctx.fillStyle = style.glowColor || style.activeColor;
+    ctx.fillStyle = glowBaseColor;
 
     for (const item of drawOrderedWords) {
       const { rect, anim, text } = item;
@@ -462,12 +465,14 @@ export function drawCaptionFrame({ ctx, scene, layout, currentTime, isPlaying = 
     ctx.globalAlpha = anim.alpha;
 
     if (anim.isActive) {
-      if (anim.isEmphasized) {
+      if (anim.isEmphasized && style.autoEmphasisEnabled !== false) {
         ctx.fillStyle = style.emphasisColor || '#00FF66';
-      } else {
+      } else if (style.activeHighlightEnabled !== false) {
         ctx.fillStyle = style.activeColor || '#FFE600';
+      } else {
+        ctx.fillStyle = style.primaryColor || '#FFFFFF';
       }
-    } else if (anim.isEmphasized && (style.emphasisMode === 'always' || !isPlaying)) {
+    } else if (anim.isEmphasized && style.autoEmphasisEnabled !== false && (style.emphasisMode === 'always' || !isPlaying)) {
       ctx.fillStyle = style.emphasisColor || '#00FF66';
     } else {
       ctx.fillStyle = style.primaryColor || '#FFFFFF';

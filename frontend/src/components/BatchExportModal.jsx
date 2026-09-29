@@ -304,7 +304,8 @@ export const BatchExportModal = () => {
         fontSize: Math.round(baseStyle.fontSize * (settings.fontSizeMultiplier || 1.0)),
         autoEmojiEnabled: settings.autoEmojiEnabled,
         autoEmojiStyle: settings.autoEmojiStyle || 'apple',
-        autoEmphasisEnabled: settings.autoEmphasisEnabled
+        autoEmphasisEnabled: settings.autoEmphasisEnabled,
+        activeHighlightEnabled: settings.activeHighlightEnabled
       };
       if (settings.fontFamily) merged.fontFamily = settings.fontFamily;
       if (settings.fontWeight) merged.fontWeight = settings.fontWeight;
@@ -337,7 +338,13 @@ export const BatchExportModal = () => {
     const shouldPreserve = settings.preserveProjectStyles !== false;
     // If the item has its own project style and preserveProjectStyles is ON
     if (shouldPreserve && item.style) {
-      return sanitizeStyle(item.style);
+      return sanitizeStyle({
+        ...item.style,
+        autoEmojiEnabled: settings.autoEmojiEnabled !== undefined ? settings.autoEmojiEnabled : item.style.autoEmojiEnabled,
+        autoEmojiStyle: settings.autoEmojiStyle || item.style.emojiStyle || 'apple',
+        autoEmphasisEnabled: settings.autoEmphasisEnabled !== undefined ? settings.autoEmphasisEnabled : item.style.autoEmphasisEnabled,
+        activeHighlightEnabled: settings.activeHighlightEnabled !== undefined ? settings.activeHighlightEnabled : item.style.activeHighlightEnabled
+      });
     }
 
     // Otherwise compile from the item's preset or the global settings preset
@@ -373,15 +380,15 @@ export const BatchExportModal = () => {
         start: segStart,
         end: segStart + segDur,
         text: phrase.text,
-        emoji: phrase.emoji,
+        emoji: (finalStyle.autoEmojiEnabled !== false) ? phrase.emoji : null,
         words: wordsArr.map((w, wIdx) => ({
           id: `w-${wIdx}`,
           word: w,
           start: segStart + wIdx * wordDur,
           end: segStart + (wIdx + 1) * wordDur,
           confidence: 0.99,
-          emoji: wIdx === phrase.activeIdx ? phrase.emoji : null,
-          isEmphasized: wIdx === phrase.activeIdx
+          emoji: (finalStyle.autoEmojiEnabled !== false && wIdx === phrase.activeIdx) ? phrase.emoji : null,
+          isEmphasized: (finalStyle.autoEmphasisEnabled !== false) && (wIdx === phrase.activeIdx)
         }))
       }];
     }
@@ -400,7 +407,7 @@ export const BatchExportModal = () => {
       currentTime: curTime,
       isPlaying: isPreviewPlaying
     });
-  }, [selectedItem, previewTime, isPreviewPlaying, globalSettings, samplePhraseIdx]);
+  }, [selectedItem, previewTime, isPreviewPlaying, globalSettings, samplePhraseIdx, getEffectiveStyleForItem]);
 
   // Run preview animation frame loop
   useEffect(() => {
@@ -2287,14 +2294,20 @@ export const BatchExportModal = () => {
                       </span>
                       <span
                         style={{
-                          color: effectiveSelectedStyle?.activeColor || '#FFE600',
+                          color: (effectiveSelectedStyle?.autoEmphasisEnabled !== false)
+                            ? (effectiveSelectedStyle?.emphasisColor || '#00FF66')
+                            : (effectiveSelectedStyle?.activeHighlightEnabled !== false)
+                              ? (effectiveSelectedStyle?.activeColor || '#FFE600')
+                              : (effectiveSelectedStyle?.primaryColor || '#FFFFFF'),
                           transform: 'scale(1.12)',
                           display: 'inline-block'
                         }}
                       >
                         {PREVIEW_SAMPLE_PHRASES[samplePhraseIdx].text.split(' ').slice(-1)[0] || 'INSANE'}
                       </span>
-                      <span style={{ fontSize: '18px' }}>{PREVIEW_SAMPLE_PHRASES[samplePhraseIdx].emoji || '🚀'}</span>
+                      {effectiveSelectedStyle?.autoEmojiEnabled !== false && (
+                        <span style={{ fontSize: '18px' }}>{PREVIEW_SAMPLE_PHRASES[samplePhraseIdx].emoji || '🚀'}</span>
+                      )}
                     </div>
 
                     <div style={{ fontSize: '10px', color: 'rgba(255, 255, 255, 0.6)', textAlign: 'center' }}>
@@ -2672,9 +2685,21 @@ export const BatchExportModal = () => {
                     {/* Active Word Highlight Color */}
                     <div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                        <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)' }}>
-                          Active Word Highlight Color
-                        </label>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <input
+                            type="checkbox"
+                            checked={globalSettings.activeHighlightEnabled !== false}
+                            onChange={(e) => {
+                              setGlobalSettings((prev) => ({ ...prev, activeHighlightEnabled: e.target.checked }));
+                              updatePreviewCanvas();
+                            }}
+                            style={{ width: '13px', height: '13px', accentColor: '#A855F7', cursor: 'pointer' }}
+                            title="Enable or disable spoken word karaoke highlight"
+                          />
+                          <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)' }}>
+                            Active Spoken Word Highlight
+                          </label>
+                        </div>
                         {globalSettings.activeColor && (
                           <button
                             onClick={() => {
@@ -2687,21 +2712,23 @@ export const BatchExportModal = () => {
                           </button>
                         )}
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', opacity: globalSettings.activeHighlightEnabled !== false ? 1 : 0.5 }}>
                         <input
                           type="color"
+                          disabled={globalSettings.activeHighlightEnabled === false}
                           value={globalSettings.activeColor || effectiveSelectedStyle?.activeColor || '#FFE600'}
                           onChange={(e) => {
                             setGlobalSettings((prev) => ({ ...prev, activeColor: e.target.value }));
                             updatePreviewCanvas();
                           }}
-                          style={{ width: '28px', height: '28px', border: 'none', borderRadius: '4px', cursor: 'pointer', background: 'none' }}
+                          style={{ width: '28px', height: '28px', border: 'none', borderRadius: '4px', cursor: globalSettings.activeHighlightEnabled === false ? 'not-allowed' : 'pointer', background: 'none' }}
                         />
                         <div style={{ display: 'flex', gap: '3px', flexWrap: 'wrap', flex: 1 }}>
                           {QUICK_COLORS.map((col) => (
                             <div
                               key={col}
                               onClick={() => {
+                                if (globalSettings.activeHighlightEnabled === false) return;
                                 setGlobalSettings((prev) => ({ ...prev, activeColor: col }));
                                 updatePreviewCanvas();
                               }}
@@ -2710,7 +2737,7 @@ export const BatchExportModal = () => {
                                 height: '18px',
                                 borderRadius: '3px',
                                 backgroundColor: col,
-                                cursor: 'pointer',
+                                cursor: globalSettings.activeHighlightEnabled === false ? 'not-allowed' : 'pointer',
                                 border: (globalSettings.activeColor || effectiveSelectedStyle?.activeColor) === col ? '2px solid #A855F7' : '1px solid rgba(255,255,255,0.2)'
                               }}
                             />

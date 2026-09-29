@@ -53,6 +53,9 @@ export const DEFAULT_STYLE = {
   emojiPosition: 'above_word', // 'above_word' | 'inline' | 'top_center'
   emojiSize: 42,               // 20px to 80px
 
+  // Active Spoken Word Highlight
+  activeHighlightEnabled: true,
+
   // AI Smart Keyword Emphasis
   autoEmphasisEnabled: true,
   emphasisColor: '#00FF66',    // Neon punch accent color
@@ -82,6 +85,7 @@ export function sanitizeStyle(style = {}) {
     containerWidthPercent: Math.max(40, Math.min(100, Number(s.containerWidthPercent ?? DEFAULT_STYLE.containerWidthPercent))),
     primaryColor: s.primaryColor || DEFAULT_STYLE.primaryColor,
     activeColor: s.activeColor || (s.primaryColor || DEFAULT_STYLE.activeColor),
+    activeHighlightEnabled: s.activeHighlightEnabled !== undefined ? Boolean(s.activeHighlightEnabled) : DEFAULT_STYLE.activeHighlightEnabled,
 
     // Stroke
     strokeEnabled: s.strokeEnabled !== undefined ? Boolean(s.strokeEnabled) : (Number(s.strokeWidth ?? 6) > 0),

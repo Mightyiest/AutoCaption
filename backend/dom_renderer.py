@@ -79,7 +79,8 @@ def generate_state_html(style: dict, words_data: list, video_width: int, video_h
     
     # Colors & Stroke
     primary_color = style.get("primaryColor", "#FFFFFF")
-    active_color = style.get("activeColor", "#FFE600")
+    active_highlight_enabled = bool(style.get("activeHighlightEnabled", True))
+    active_color = style.get("activeColor", "#FFE600") if active_highlight_enabled else primary_color
     
     stroke_enabled = style.get("strokeEnabled", True)
     stroke_width = round((float(style.get("strokeWidth", 6)) / 2.0) * scale, 1) if stroke_enabled else 0

@@ -169,6 +169,7 @@ def generate_ass_subtitle(
     act_col = hex_to_ass_color(style.get("activeColor", "#FFE600"))
     emph_col = hex_to_ass_color(style.get("emphasisColor", "#00FF66"))
     auto_emphasis_enabled = bool(style.get("autoEmphasisEnabled", True))
+    active_highlight_enabled = bool(style.get("activeHighlightEnabled", True))
     emphasis_mode = str(style.get("emphasisMode", "active_only")).lower()
     
     # Stroke Outline
@@ -302,7 +303,12 @@ def generate_ass_subtitle(
 
                     if is_active:
                         anim_tag = build_animation_tags(anim_type, dur_ms, pos_x, line_y)
-                        target_col = emph_col if (is_emph and auto_emphasis_enabled) else act_col
+                        if is_emph and auto_emphasis_enabled:
+                            target_col = emph_col
+                        elif active_highlight_enabled:
+                            target_col = act_col
+                        else:
+                            target_col = pri_col
                         tok = f"{{\\c{target_col}{italic_tag}{anim_tag}}}{word_txt}{{\\rMainStyle}}"
                     elif is_emph and auto_emphasis_enabled and emphasis_mode == "always":
                         tok = f"{{\\c{emph_col}{italic_tag}}}{word_txt}{{\\rMainStyle}}"

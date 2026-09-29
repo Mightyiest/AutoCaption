@@ -375,6 +375,7 @@ export const useEditorStore = create((set, get) => ({
     autoEmojiEnabled: true,
     autoEmojiStyle: 'apple', // 'apple' | 'native'
     autoEmphasisEnabled: true,
+    activeHighlightEnabled: true,
     resolution: 'original',
     engineType: 'client_canvas',
     encoderMode: 'gpu_nvenc',

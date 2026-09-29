@@ -582,17 +582,30 @@ export const StyleInspector = () => {
                   border: '1px solid var(--border-subtle)',
                   display: 'flex',
                   alignItems: 'center',
-                  justifyContent: 'space-between'
+                  justifyContent: 'space-between',
+                  opacity: style.activeHighlightEnabled !== false ? 1 : 0.6
                 }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                    <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>Active Word</span>
-                    <span style={{ fontSize: '11px', fontFamily: 'SF Mono, monospace', color: 'var(--text-primary)' }}>{style.activeColor}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <input
+                        type="checkbox"
+                        checked={style.activeHighlightEnabled !== false}
+                        onChange={(e) => handleStyleChange('activeHighlightEnabled', e.target.checked)}
+                        style={{ width: '12px', height: '12px', cursor: 'pointer', accentColor: 'var(--accent-primary)' }}
+                        title="Toggle Spoken Word Karaoke Highlight"
+                      />
+                      <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>Active Word</span>
+                    </div>
+                    <span style={{ fontSize: '11px', fontFamily: 'SF Mono, monospace', color: 'var(--text-primary)' }}>
+                      {style.activeHighlightEnabled !== false ? style.activeColor : 'Off'}
+                    </span>
                   </div>
                   <input
                     type="color"
-                    value={style.activeColor}
+                    value={style.activeColor || '#FFE600'}
+                    disabled={style.activeHighlightEnabled === false}
                     onChange={(e) => handleStyleChange('activeColor', e.target.value)}
-                    style={{ width: '26px', height: '26px', border: 'none', borderRadius: '4px', cursor: 'pointer', background: 'none' }}
+                    style={{ width: '26px', height: '26px', border: 'none', borderRadius: '4px', cursor: style.activeHighlightEnabled === false ? 'not-allowed' : 'pointer', background: 'none' }}
                   />
                 </div>
               </div>
