@@ -268,6 +268,7 @@ def upscale_video(
 
         cmd_extract = [
             ffmpeg_exe, "-y", "-i", source_video_path,
+            "-vsync", "0",
             "-q:v", "2",
             os.path.join(in_frames_dir, "frame_%08d.jpg")
         ]

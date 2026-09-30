@@ -118,6 +118,7 @@ export const ExportModal = () => {
     aspectRatio === '9:16' ? '1080x1920' : aspectRatio === '1:1' ? '1080x1080' : aspectRatio === '4:3' ? '1440x1080' : '1920x1080'
   );
   const [quality, setQuality] = useState('high'); // 'high' | 'very_high' | 'medium'
+  const [targetFps, setTargetFps] = useState('source'); // 'source' | '30' | '60'
   const [encoderMode] = useState('gpu_nvenc'); // 'gpu_nvenc' | 'cpu'
 
   const [isExporting, setIsExporting] = useState(false);
@@ -466,13 +467,21 @@ export const ExportModal = () => {
           : 'Encoding video frames with styled captions...'
       });
 
-      const targetFps = (upscaledData && upscaledData.fps) ? upscaledData.fps : (videoFps || 30);
+      let calculatedFps = 30;
+      if (targetFps === '60') {
+        calculatedFps = 60;
+      } else if (targetFps === '30') {
+        calculatedFps = 30;
+      } else {
+        calculatedFps = (upscaledData && upscaledData.fps) ? upscaledData.fps : (videoFps || 30);
+      }
+
       const targetDuration = (upscaledData && upscaledData.duration) ? upscaledData.duration : (duration || 10);
 
       const exporter = new ClientSceneExporter({
         width: w,
         height: h,
-        fps: targetFps,
+        fps: calculatedFps,
         format: 'mp4',
         quality
       });
@@ -930,26 +939,33 @@ export const ExportModal = () => {
 
             <div>
               <label style={{ fontSize: '11px', fontWeight: '500', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-                Framerate
+                Framerate (FPS)
               </label>
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '6px 8px',
-                background: 'var(--bg-surface)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-md)',
-                color: 'var(--text-secondary)',
-                fontSize: '11px',
-                height: '31px',
-                boxSizing: 'border-box'
-              }}>
-                <Film size={13} color="var(--accent-bright-blue)" />
-                <span style={{ fontWeight: '500', color: 'var(--text-primary)' }}>
-                  {videoFps ? `${videoFps} FPS (Native)` : 'Native Source FPS'}
-                </span>
-              </div>
+              <select
+                value={targetFps}
+                onChange={(e) => setTargetFps(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '6px 8px',
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-primary)',
+                  fontSize: '11px',
+                  borderRadius: 'var(--radius-md)',
+                  cursor: 'pointer',
+                  outline: 'none'
+                }}
+              >
+                <option value="source" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>
+                  Match Source ({videoFps ? `${videoFps} FPS` : 'Native Auto'}) [Recommended]
+                </option>
+                <option value="30" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>
+                  30 FPS (Standard Social)
+                </option>
+                <option value="60" style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)' }}>
+                  60 FPS (Ultra Smooth 60Hz)
+                </option>
+              </select>
             </div>
           </div>
 

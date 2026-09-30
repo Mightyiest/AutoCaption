@@ -277,6 +277,7 @@ export class ClientSceneExporter {
     // Precise frame-time calculations (integer frame indices)
     const totalFrames = Math.max(1, Math.round(duration * this.fps));
     const frameInterval = 1 / this.fps;
+    const timestamps = Array.from({ length: totalFrames }, (_, i) => i * frameInterval);
 
     const startTime = performance.now();
 
@@ -294,48 +295,95 @@ export class ClientSceneExporter {
       }
     });
 
-    // Frame encoding loop
-    for (let i = 0; i < totalFrames; i++) {
-      if (this.isCancelled) {
-        await output.cancel();
-        videoSourceCache.clear();
-        throw new Error('Export cancelled by user');
-      }
-
-      const frameTime = i * frameInterval;
-
-      // Extract background video frame
-      let videoFrame = await videoSourceCache.getFrameAt({
+    // Initialize Monotonic Timestamp-Synchronized Video Frame Iterator
+    let frameIterator = null;
+    try {
+      frameIterator = await videoSourceCache.createFrameIterator({
         file: videoFile,
         url: videoUrl,
-        time: frameTime
+        timestamps
       });
+    } catch (iterErr) {
+      console.warn('Frame iterator initialization error:', iterErr);
+    }
 
-      // Composite video + styled captions onto canvas
-      await renderCompositeFrame({
-        canvas,
-        videoFrame,
-        scene,
-        currentTime: frameTime
-      });
+    let lastValidVideoFrame = null;
 
-      // Pipe rendered canvas frame to video encoder with exact timestamp & duration
-      await videoSource.add(frameTime, frameInterval);
+    try {
+      // Frame encoding loop
+      for (let i = 0; i < totalFrames; i++) {
+        if (this.isCancelled) {
+          if (frameIterator && frameIterator.return) {
+            try { await frameIterator.return(); } catch (_) {}
+          }
+          await output.cancel();
+          videoSourceCache.clear();
+          throw new Error('Export cancelled by user');
+        }
 
-      // Report progress
-      const progress = (i + 1) / totalFrames;
-      const elapsedMs = performance.now() - startTime;
-      const avgFrameMs = elapsedMs / (i + 1);
-      const remainingSec = Math.max(0, ((totalFrames - (i + 1)) * avgFrameMs) / 1000);
+        const frameTime = timestamps[i];
+        let videoFrame = null;
 
-      onProgress({
-        progress,
-        currentFrame: i + 1,
-        totalFrames,
-        percent: Math.round(progress * 100),
-        fps: this.fps,
-        etaSeconds: Math.round(remainingSec)
-      });
+        // Tier 1: High-Speed WebCodecs Monotonic Frame Extraction
+        if (frameIterator) {
+          try {
+            const iterResult = await frameIterator.next();
+            if (!iterResult.done && iterResult.value && iterResult.value.canvas) {
+              videoFrame = iterResult.value.canvas;
+              lastValidVideoFrame = videoFrame;
+            }
+          } catch (nextErr) {
+            console.warn('Frame iterator next error at frame', i, nextErr);
+          }
+        }
+
+        // Tier 2: Safety Freeze-Frame Fallback (if video ends slightly earlier than audio)
+        if (!videoFrame && lastValidVideoFrame) {
+          videoFrame = lastValidVideoFrame;
+        }
+
+        // Tier 3: Direct Single-Frame Seeker Fallback
+        if (!videoFrame) {
+          videoFrame = await videoSourceCache.getFrameAt({
+            file: videoFile,
+            url: videoUrl,
+            time: frameTime
+          });
+          if (videoFrame) {
+            lastValidVideoFrame = videoFrame;
+          }
+        }
+
+        // Composite video + styled captions onto canvas
+        await renderCompositeFrame({
+          canvas,
+          videoFrame,
+          scene,
+          currentTime: frameTime
+        });
+
+        // Pipe rendered canvas frame to video encoder with exact timestamp & duration
+        await videoSource.add(frameTime, frameInterval);
+
+        // Report progress
+        const progress = (i + 1) / totalFrames;
+        const elapsedMs = performance.now() - startTime;
+        const avgFrameMs = elapsedMs / (i + 1);
+        const remainingSec = Math.max(0, ((totalFrames - (i + 1)) * avgFrameMs) / 1000);
+
+        onProgress({
+          progress,
+          currentFrame: i + 1,
+          totalFrames,
+          percent: Math.round(progress * 100),
+          fps: this.fps,
+          etaSeconds: Math.round(remainingSec)
+        });
+      }
+    } finally {
+      if (frameIterator && frameIterator.return) {
+        try { await frameIterator.return(); } catch (_) {}
+      }
     }
 
     if (this.isCancelled) {

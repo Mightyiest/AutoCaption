@@ -112,7 +112,32 @@ class VideoSourceCache {
   }
 
   /**
+   * Creates a high-speed timestamp-synchronized frame iterator using Mediabunny's
+   * WebCodecs CanvasSink.canvasesAtTimestamps engine.
+   *
+   * @param {Object} params
+   * @param {File|Blob} [params.file]
+   * @param {string} [params.url]
+   * @param {number[]|Iterable<number>} params.timestamps - Array of monotonic frame timestamps in seconds
+   * @returns {Promise<AsyncGenerator<WrappedCanvas|null>|null>}
+   */
+  async createFrameIterator({ file, url, timestamps }) {
+    const source = file || url;
+    if (!source || !timestamps) return null;
+    const sinkData = await this.ensureSink(source);
+    if (sinkData && sinkData.sink) {
+      try {
+        return sinkData.sink.canvasesAtTimestamps(timestamps);
+      } catch (err) {
+        console.warn('CanvasSink canvasesAtTimestamps creation failed:', err);
+      }
+    }
+    return null;
+  }
+
+  /**
    * Extracts frame bitmap/canvas at target timestamp in seconds.
+   * Uses frame-accurate CanvasSink.getCanvas with HTML5 video seeker fallback.
    *
    * @param {Object} params
    * @param {File|Blob} [params.file]
@@ -126,38 +151,18 @@ class VideoSourceCache {
       const sinkData = await this.ensureSink(source);
       if (sinkData && sinkData.sink) {
         try {
-          if (!sinkData.iterator || Math.abs(time - sinkData.lastTime) > 1.5) {
-            if (sinkData.iterator && sinkData.iterator.return) {
-              await sinkData.iterator.return();
-            }
-            sinkData.iterator = sinkData.sink.canvases(time);
-          }
-
-          const { value: wrappedCanvas, done } = await sinkData.iterator.next();
-          if (!done && wrappedCanvas && wrappedCanvas.canvas) {
-            sinkData.lastTime = wrappedCanvas.timestamp;
+          const targetTime = Math.max(0, time);
+          const wrappedCanvas = await sinkData.sink.getCanvas(targetTime).catch(() => null);
+          if (wrappedCanvas && wrappedCanvas.canvas) {
             return wrappedCanvas.canvas;
           }
-
-          // Fallback: If iterator ended or returned done, attempt exact getCanvas(time)
-          const fallbackCanvas = await sinkData.sink.getCanvas(time).catch(() => null);
-          if (fallbackCanvas && fallbackCanvas.canvas) {
-            sinkData.lastTime = fallbackCanvas.timestamp;
-            return fallbackCanvas.canvas;
-          }
         } catch (sinkErr) {
-          console.warn('CanvasSink frame extraction failed, trying getCanvas fallback:', sinkErr);
-          try {
-            const fallbackCanvas = await sinkData.sink.getCanvas(time).catch(() => null);
-            if (fallbackCanvas && fallbackCanvas.canvas) {
-              return fallbackCanvas.canvas;
-            }
-          } catch (_) {}
+          console.warn('CanvasSink getCanvas frame extraction failed, trying HTML5 seeker fallback:', sinkErr);
         }
       }
     }
 
-    // 2. Fallback: Frame stepping via HTML5 Video element with precision seek
+    // Fallback: Frame stepping via HTML5 Video element with precision seek
     return this.seekVideoElementFrame({ file, url, time });
   }
 
