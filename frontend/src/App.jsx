@@ -1,27 +1,100 @@
 import React, { useEffect } from 'react';
+import { Sparkles, AlertTriangle } from 'lucide-react';
 import { Navbar } from './components/Navbar';
 import { VideoPlayer } from './components/VideoPlayer';
 import { CaptionListEditor } from './components/CaptionListEditor';
 import { StyleInspector } from './components/StyleInspector';
 import { HorizontalTimeline } from './components/HorizontalTimeline';
 import { ConsoleDrawer } from './components/ConsoleDrawer';
-import { UploadModal } from './components/UploadModal';
+import { ProjectsHub } from './components/ProjectsHub';
+import { ReplaceVideoModal } from './components/ReplaceVideoModal';
+import { TranscribeModal } from './components/TranscribeModal';
 import { ExportModal } from './components/ExportModal';
+import { BatchExportModal } from './components/BatchExportModal';
+import { SettingsModal } from './components/SettingsModal';
+import { HelpModal } from './components/HelpModal';
+import { KeywordLibraryModal } from './components/KeywordLibraryModal';
+import { VocalExtractorModal } from './components/VocalExtractorModal';
+import { VideoUpscaleModal } from './components/VideoUpscaleModal';
 import { useEditorStore } from './store/useEditorStore';
+import { useGlobalShortcuts } from './engine/useGlobalShortcuts';
+import { browseLocalFile } from './engine/mediaLinker';
+import './App.css';
 
 const BACKEND_URL = 'http://127.0.0.1:8000';
 
 export function App() {
-  const { setBackendAvailable } = useEditorStore();
+  useGlobalShortcuts();
+
+  const { 
+    currentView,
+    setCurrentView,
+    fetchProjectsList,
+    setBackendAvailable, 
+    fetchModelsStatus, 
+    canvasLayout,
+    registerVideoPickerTrigger,
+    handleFileSelected,
+    studioToast,
+    hideStudioToast
+  } = useEditorStore();
+  const fileInputRef = React.useRef(null);
   const [timelineHeight, setTimelineHeight] = React.useState(160);
   const [isResizingTimeline, setIsResizingTimeline] = React.useState(false);
 
+  // Sync route with URL hash (#projects vs #editor)
   useEffect(() => {
-    // Check backend health
+    fetchProjectsList();
+
+    const handleHash = () => {
+      const hash = window.location.hash.toLowerCase();
+      if (hash === '#editor') {
+        setCurrentView('editor');
+      } else {
+        setCurrentView('hub');
+      }
+    };
+
+    handleHash();
+    window.addEventListener('hashchange', handleHash);
+    return () => window.removeEventListener('hashchange', handleHash);
+  }, [fetchProjectsList, setCurrentView]);
+
+  useEffect(() => {
+    registerVideoPickerTrigger(async () => {
+      if (useEditorStore.getState().backendAvailable) {
+        try {
+          const res = await browseLocalFile();
+          if (!res.cancelled && res.filePath) {
+            const title = res.filename.replace(/\.[^/.]+$/, "");
+            await useEditorStore.getState().createNewProject({
+              aspect: res.width > res.height ? '16:9' : '9:16',
+              title: title,
+              linkedPath: res.filePath
+            });
+            useEditorStore.getState().setTranscribeModalOpen(true);
+            return;
+          } else if (res.cancelled) {
+            return;
+          }
+        } catch (e) {
+          console.warn('Native file picker failed, falling back to browser picker:', e);
+        }
+      }
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+        fileInputRef.current.click();
+      }
+    });
+  }, [registerVideoPickerTrigger]);
+
+  useEffect(() => {
+    // Check backend health and fetch model cache status
     fetch(`${BACKEND_URL}/api/health`)
       .then((res) => {
         if (res.ok) {
           setBackendAvailable(true);
+          fetchModelsStatus();
         } else {
           setBackendAvailable(false);
         }
@@ -29,7 +102,7 @@ export function App() {
       .catch(() => {
         setBackendAvailable(false);
       });
-  }, [setBackendAvailable]);
+  }, [setBackendAvailable, fetchModelsStatus]);
 
   // Draggable timeline height resize handler
   const handleTimelineResizeStart = (e) => {
@@ -55,90 +128,169 @@ export function App() {
     window.addEventListener('mouseup', handleMouseUp);
   };
 
+  const layoutClass = `layout-${canvasLayout || 'right'}`;
+
+  if (currentView === 'hub') {
+    return (
+      <div className="app-container" style={{ overflow: 'hidden', height: '100vh', display: 'flex', flexDirection: 'column' }}>
+        <ProjectsHub />
+        <BatchExportModal />
+        <SettingsModal />
+        <HelpModal />
+      </div>
+    );
+  }
+
   return (
-    <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100vh',
-      width: '100vw',
-      overflow: 'hidden',
-      userSelect: isResizingTimeline ? 'none' : 'auto'
-    }}>
-      {/* Top Navigation Bar */}
+    <div
+      className="app-container"
+      style={{ userSelect: isResizingTimeline ? 'none' : 'auto' }}
+    >
+      {/* 48px Translucent Apple Glass Header */}
       <Navbar />
 
-      {/* Main Studio Middle Stage */}
-      <div style={{
-        flex: 1,
-        display: 'grid',
-        gridTemplateColumns: '320px 1fr 340px',
-        gap: '12px',
-        padding: '10px 12px 0 12px',
-        overflow: 'hidden',
-        background: 'radial-gradient(ellipse at 50% 0%, rgba(30, 58, 138, 0.15) 0%, rgba(11, 15, 23, 1) 70%)'
-      }}>
-        {/* Left Sidebar: Caption & Word Editor */}
-        <div style={{ overflow: 'hidden', height: '100%' }}>
-          <CaptionListEditor />
-        </div>
+      {/* Main Studio 3-Column Grid Stage */}
+      <main className={`studio-grid ${layoutClass}`}>
+        {canvasLayout === 'left' && (
+          <>
+            {/* Left: Video Player & Preview Canvas */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', height: '100%', position: 'relative' }}>
+              <VideoPlayer />
+            </div>
+            {/* Center: Caption & Word Editor */}
+            <div style={{ overflow: 'hidden', height: '100%' }}>
+              <CaptionListEditor />
+            </div>
+            {/* Right: Style & Presets Inspector */}
+            <div style={{ overflow: 'hidden', height: '100%' }}>
+              <StyleInspector />
+            </div>
+          </>
+        )}
 
-        {/* Center: 9:16 Video Player & Preview Canvas */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          overflow: 'hidden',
-          height: '100%'
-        }}>
-          <VideoPlayer />
-        </div>
+        {canvasLayout === 'center' && (
+          <>
+            {/* Left: Caption & Word Editor */}
+            <div style={{ overflow: 'hidden', height: '100%' }}>
+              <CaptionListEditor />
+            </div>
+            {/* Center: Video Player & Preview Canvas */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', height: '100%', position: 'relative' }}>
+              <VideoPlayer />
+            </div>
+            {/* Right: Style & Presets Inspector */}
+            <div style={{ overflow: 'hidden', height: '100%' }}>
+              <StyleInspector />
+            </div>
+          </>
+        )}
 
-        {/* Right Sidebar: Style & Presets Inspector */}
-        <div style={{ overflow: 'hidden', height: '100%' }}>
-          <StyleInspector />
-        </div>
-      </div>
+        {(!canvasLayout || canvasLayout === 'right') && (
+          <>
+            {/* Left: Caption & Word Editor */}
+            <div style={{ overflow: 'hidden', height: '100%' }}>
+              <CaptionListEditor />
+            </div>
+            {/* Center: Style & Presets Inspector */}
+            <div style={{ overflow: 'hidden', height: '100%' }}>
+              <StyleInspector />
+            </div>
+            {/* Right: Dedicated Video Player & Preview Canvas Tower */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', height: '100%', position: 'relative' }}>
+              <VideoPlayer />
+            </div>
+          </>
+        )}
+      </main>
 
-      {/* Horizontal Resizable Splitter Handle */}
-      <div
+      {/* Draggable Resizer Splitter Thumb */}
+      <div 
+        className={`timeline-splitter ${isResizingTimeline ? 'is-resizing' : ''}`}
         onMouseDown={handleTimelineResizeStart}
-        style={{
-          height: '8px',
-          margin: '2px 0',
-          cursor: 'ns-resize',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 35,
-          position: 'relative'
-        }}
-        title="Drag up/down to resize timeline height"
+        title="Drag up/down to resize timeline"
       >
-        <div style={{
-          width: '48px',
-          height: '3px',
-          borderRadius: '999px',
-          background: isResizingTimeline ? 'var(--accent-primary)' : 'rgba(255,255,255,0.2)',
-          boxShadow: isResizingTimeline ? '0 0 8px var(--accent-primary)' : 'none',
-          transition: 'background 120ms ease'
-        }} />
+        <div className="timeline-splitter-thumb" />
       </div>
 
-      {/* Bottom Horizontal Timeline (Resizable) */}
-      <div style={{
-        height: `${timelineHeight}px`,
-        padding: '0 12px 4px 12px',
-        transition: isResizingTimeline ? 'none' : 'height 100ms ease'
-      }}>
+      {/* Bottom Docked Multi-Track Timeline */}
+      <section 
+        className="timeline-container"
+        style={{
+          height: `${timelineHeight}px`,
+          transition: isResizingTimeline ? 'none' : 'height 100ms ease'
+        }}
+      >
         <HorizontalTimeline />
-      </div>
+      </section>
 
       {/* Bottom Live Hardware Monitor & Console Drawer */}
       <ConsoleDrawer />
 
-      {/* Modals */}
-      <UploadModal />
+      {/* Hidden Global Video Picker Input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="video/*,audio/*"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) {
+            handleFileSelected(file);
+          }
+          e.target.value = '';
+        }}
+      />
+
+      {/* Studio Sheets / Modals */}
+      <ReplaceVideoModal />
+      <TranscribeModal />
       <ExportModal />
+      <BatchExportModal />
+      <SettingsModal />
+      <HelpModal />
+      <KeywordLibraryModal />
+      <VocalExtractorModal />
+      <VideoUpscaleModal />
+
+      {/* Apple Studio Global Toast Notification */}
+      {studioToast && (
+        <div
+          onClick={hideStudioToast}
+          style={{
+            position: 'fixed',
+            bottom: '28px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'rgba(18, 20, 26, 0.92)',
+            backdropFilter: 'blur(20px)',
+            WebkitBackdropFilter: 'blur(20px)',
+            border: studioToast.type === 'warning'
+              ? '1px solid rgba(255, 153, 0, 0.45)'
+              : studioToast.type === 'error'
+              ? '1px solid rgba(255, 59, 48, 0.45)'
+              : '1px solid rgba(255, 255, 255, 0.16)',
+            boxShadow: '0 12px 36px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05)',
+            borderRadius: '999px',
+            padding: '10px 20px',
+            color: '#FFFFFF',
+            fontSize: '13px',
+            fontWeight: '600',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            zIndex: 9999,
+            cursor: 'pointer',
+            maxWidth: '90vw'
+          }}
+        >
+          {studioToast.type === 'warning' ? (
+            <AlertTriangle size={16} color="#FF9900" />
+          ) : (
+            <Sparkles size={16} color="var(--accent-primary)" />
+          )}
+          <span>{studioToast.message}</span>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,29 +1,44 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { 
-  Play, 
-  Pause, 
-  RotateCcw, 
-  RotateCw, 
-  Volume2, 
-  VolumeX, 
-  MoveVertical,
-  Maximize2,
-  ZoomIn,
-  ZoomOut,
-  RotateCcw as ResetZoom
+  UploadCloud, 
+  Sparkles, 
+  Film, 
+  Eye, 
+  EyeOff, 
+  Maximize, 
+  Music,
+  RotateCcw,
+  Hand,
+  Link2,
+  AlertTriangle,
+  RefreshCw,
+  FolderOpen,
+  Sliders,
+  Sun,
+  Check
 } from 'lucide-react';
 import { useEditorStore } from '../store/useEditorStore';
-import { getActiveSegmentAndWord, formatTimecode } from '../engine/animator';
-import { captureAndLogLayoutMetrics } from '../engine/layoutMeasurer';
+import { renderPreviewOverlay } from '../engine/captionCanvasRenderer';
+import { createCaptionScene } from '../engine/captionScene';
+import { getActiveSegmentAndWord } from '../engine/animator';
+import { TransportControls } from './TransportControls';
+import { CaptionDragHandle } from './CaptionDragHandle';
 
 export const VideoPlayer = () => {
   const videoRef = useRef(null);
+  const canvasRef = useRef(null);
   const containerRef = useRef(null);
-  const captionBoxRef = useRef(null);
-  const rafSeekRef = useRef(null);
+  const stageViewportRef = useRef(null);
+  const isRenderingRef = useRef(false);
+  const lastDrawnTimeRef = useRef(-1);
 
   const {
+    videoFile,
     videoUrl,
+    videoFilename,
+    videoFps,
+    videoWidth,
+    videoHeight,
     currentTime,
     seekRequestTime,
     duration,
@@ -32,146 +47,436 @@ export const VideoPlayer = () => {
     isMuted,
     playbackRate,
     aspectRatio,
+    setAspectRatio,
     showSafeZones,
+    studioColorMatch,
+    toggleStudioColorMatch,
+    videoBrightness,
+    videoContrast,
+    videoColorSpace,
+    setVideoBrightness,
+    setVideoContrast,
+    setVideoColorSpace,
+    resetVideoPicture,
+    matchColorSpaceRec709,
+    isColorTagged,
     segments,
     style,
     setDuration,
+    setVideoDimensions,
     setCurrentTime,
     setIsPlaying,
     setVolume,
     setIsMuted,
     setPlaybackRate,
-    updateStyle
+    updateStyle,
+    triggerVideoPicker,
+    handleFileSelected,
+    loadDemoData,
+    setMediaElement,
+    togglePlay,
+    // Premiere Pro Zero-Copy Media Linking state & actions
+    isMediaLinked,
+    linkedSourcePath,
+    mediaOffline,
+    activeProjectId,
+    linkLocalVideoFile,
+    relinkProjectMedia,
+    customKeywordRules,
+    getCustomDictionary,
+    getCustomEmphasisKeywords
   } = useEditorStore();
 
-  const [activeSegment, setActiveSegment] = useState(null);
-  const [activeWordIndex, setActiveWordIndex] = useState(-1);
+  // Drag and Drop Import State
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const dragCounterRef = useRef(0);
+
+  // Display Viewport & Zoom State
+  const [viewportDims, setViewportDims] = useState({ width: 380, height: 560 });
+  const [previewZoom, setPreviewZoom] = useState(1.0); // 1.0 = Fit scale
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [spacePressed, setSpacePressed] = useState(false);
   const [isDraggingCaption, setIsDraggingCaption] = useState(false);
-  const [zoomLevel, setZoomLevel] = useState(1.0); // 0.75, 1.0, 1.25, 1.5, 2.0
+  const [showPicturePopover, setShowPicturePopover] = useState(false);
+  const [isTaggingColorSpace, setIsTaggingColorSpace] = useState(false);
+  const [colorSpaceSuccessMsg, setColorSpaceSuccessMsg] = useState('');
+  const picturePopoverRef = useRef(null);
+  const panStartRef = useRef({ x: 0, y: 0 });
 
-  // Sync external seek requests (e.g. from Horizontal Timeline dragging/clicking)
+  // Close picture popover on click outside
   useEffect(() => {
-    if (seekRequestTime !== null && videoRef.current) {
-      if (rafSeekRef.current) cancelAnimationFrame(rafSeekRef.current);
-      rafSeekRef.current = requestAnimationFrame(() => {
-        if (videoRef.current) {
-          videoRef.current.currentTime = seekRequestTime;
-          const match = getActiveSegmentAndWord(segments, seekRequestTime);
-          setActiveSegment(match.activeSegment);
-          setActiveWordIndex(match.activeWordIndex);
-        }
-      });
-    }
-    return () => {
-      if (rafSeekRef.current) cancelAnimationFrame(rafSeekRef.current);
+    if (!showPicturePopover) return;
+    const handleClickOutside = (e) => {
+      if (picturePopoverRef.current && !picturePopoverRef.current.contains(e.target)) {
+        setShowPicturePopover(false);
+      }
     };
-  }, [seekRequestTime, segments]);
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showPicturePopover]);
 
-  // Capture and log DOM layout metrics when active segment or style changes
+  const videoFilterStyle = useMemo(() => {
+    if (videoBrightness === 100 && videoContrast === 100) return 'none';
+    const parts = [];
+    if (videoBrightness !== 100) parts.push(`brightness(${videoBrightness}%)`);
+    if (videoContrast !== 100) parts.push(`contrast(${videoContrast}%)`);
+    return parts.length > 0 ? parts.join(' ') : 'none';
+  }, [videoBrightness, videoContrast]);
+
+  // Determine media type (Video vs Audio-Only)
+  const isAudioOnly = Boolean(
+    (videoFile && videoFile.type && videoFile.type.startsWith('audio/')) ||
+    (videoFilename && (videoFilename.endsWith('.wav') || videoFilename.endsWith('.mp3') || videoFilename.endsWith('.m4a') || videoFilename.endsWith('.aac'))) ||
+    (videoUrl && (videoUrl.includes('.wav') || videoUrl.includes('.mp3') || videoUrl.includes('demo_audio')))
+  );
+
+  // ResizeObserver for the exact middle stage viewport area (No cyclic reflows)
   useEffect(() => {
-    if (activeSegment) {
-      const w = containerRef.current?.clientWidth || 310;
-      const h = containerRef.current?.clientHeight || 550;
-      captureAndLogLayoutMetrics(activeSegment, style, w, h);
-    }
-  }, [activeSegment?.id, style]);
+    const el = stageViewportRef.current;
+    if (!el) return;
 
-  // Sync video duration when media loads
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const newW = Math.floor(entry.contentRect.width);
+        const newH = Math.floor(entry.contentRect.height);
+        if (newW > 50 && newH > 50) {
+          setViewportDims((prev) => {
+            if (Math.abs(prev.width - newW) > 2 || Math.abs(prev.height - newH) > 2) {
+              return { width: newW, height: newH };
+            }
+            return prev;
+          });
+        }
+      }
+    });
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // Canonical resolution metrics matching source video natively
+  const canonical = useMemo(() => {
+    const w = videoWidth > 0 ? videoWidth : 0;
+    const h = videoHeight > 0 ? videoHeight : 0;
+
+    if (w > 0 && h > 0) {
+      const gcd = (a, b) => (b === 0 ? a : gcd(b, a % b));
+      const divisor = gcd(w, h);
+      let ratioLabel = `${w / divisor}:${h / divisor}`;
+      const ratioVal = w / h;
+      if (Math.abs(ratioVal - 9 / 16) < 0.03) ratioLabel = '9:16';
+      else if (Math.abs(ratioVal - 16 / 9) < 0.03) ratioLabel = '16:9';
+      else if (Math.abs(ratioVal - 1.0) < 0.03) ratioLabel = '1:1';
+      else if (Math.abs(ratioVal - 3 / 4) < 0.03) ratioLabel = '3:4';
+      else if (Math.abs(ratioVal - 4 / 3) < 0.03) ratioLabel = '4:3';
+      else if (Math.abs(ratioVal - 4 / 5) < 0.03) ratioLabel = '4:5';
+
+      return {
+        aspect: `${w}/${h}`,
+        ratioLabel,
+        exportW: w,
+        exportH: h,
+        cssAspect: w / h
+      };
+    }
+
+    // Default fallback when no video is loaded yet
+    switch (aspectRatio) {
+      case '16:9':
+        return { aspect: '16/9', ratioLabel: '16:9', exportW: 1920, exportH: 1080, cssAspect: 16 / 9 };
+      case '1:1':
+        return { aspect: '1/1', ratioLabel: '1:1', exportW: 1080, exportH: 1080, cssAspect: 1 / 1 };
+      case '3:4':
+        return { aspect: '3/4', ratioLabel: '3:4', exportW: 1080, exportH: 1440, cssAspect: 3 / 4 };
+      case '4:3':
+        return { aspect: '4/3', ratioLabel: '4:3', exportW: 1440, exportH: 1080, cssAspect: 4 / 3 };
+      case '4:5':
+        return { aspect: '4/5', ratioLabel: '4:5', exportW: 1080, exportH: 1350, cssAspect: 4 / 5 };
+      case '9:16':
+      default:
+        return { aspect: '9/16', ratioLabel: '9:16', exportW: 1080, exportH: 1920, cssAspect: 9 / 16 };
+    }
+  }, [videoWidth, videoHeight, aspectRatio]);
+
+  // Scaled Stage Transform (Maximized full-bleed canvas)
+  const transform = useMemo(() => {
+    const padding = 10;
+    const availW = Math.max(80, viewportDims.width - padding * 2);
+    const availH = Math.max(80, viewportDims.height - padding * 2);
+
+    let fitW, fitH;
+    if (availW / availH > canonical.cssAspect) {
+      fitH = availH;
+      fitW = fitH * canonical.cssAspect;
+    } else {
+      fitW = availW;
+      fitH = fitW / canonical.cssAspect;
+    }
+
+    const scale = previewZoom;
+    const displayW = Math.round(fitW * scale);
+    const displayH = Math.round(fitH * scale);
+
+    return {
+      displayW,
+      displayH,
+      pan: panOffset
+    };
+  }, [viewportDims, canonical, previewZoom, panOffset]);
+
+  // Handle Wheel Zoom
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const onWheel = (e) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const delta = e.deltaY < 0 ? 0.15 : -0.15;
+        setPreviewZoom((prev) => Math.max(0.5, Math.min(3.0, prev + delta)));
+      }
+    };
+
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
+
+  // Handle Spacebar Pan toggle with capture phase to avoid global play/pause conflict
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.code === 'Space' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+        if (previewZoom > 1.05) {
+          // Intercept in capture phase so global shortcuts don't toggle playback
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          if (!spacePressed) {
+            setSpacePressed(true);
+          }
+        }
+      }
+    };
+
+    const handleKeyUp = (e) => {
+      if (e.code === 'Space') {
+        if (previewZoom > 1.05) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+        }
+        setSpacePressed(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown, { capture: true });
+    window.addEventListener('keyup', handleKeyUp, { capture: true });
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, { capture: true });
+      window.removeEventListener('keyup', handleKeyUp, { capture: true });
+    };
+  }, [previewZoom, spacePressed]);
+
+  // Render Canvas Caption Overlay Frame
+  const drawOverlay = useCallback((time) => {
+    if (!canvasRef.current) return;
+
+    try {
+      const customDict = typeof getCustomDictionary === 'function' ? getCustomDictionary() : {};
+      const customEmphasis = typeof getCustomEmphasisKeywords === 'function' ? getCustomEmphasisKeywords() : [];
+
+      const scene = createCaptionScene({
+        style,
+        segments,
+        canvasSize: { width: canonical.exportW, height: canonical.exportH, fps: videoFps || 30 },
+        currentTime: time,
+        videoInfo: {
+          file: videoFile,
+          url: videoUrl,
+          duration
+        },
+        customDictionary: customDict,
+        customEmphasisKeywords: customEmphasis
+      });
+
+      renderPreviewOverlay({
+        canvas: canvasRef.current,
+        scene,
+        currentTime: time,
+        isPlaying
+      });
+    } catch (err) {
+      console.warn('Canvas render error:', err);
+    }
+  }, [style, segments, canonical.exportW, canonical.exportH, videoFile, videoUrl, duration, videoFps, isPlaying, customKeywordRules, getCustomDictionary, getCustomEmphasisKeywords]);
+
+  // Re-render canvas on state / style changes
+  useEffect(() => {
+    drawOverlay(currentTime);
+  }, [drawOverlay, currentTime, style, segments, aspectRatio, customKeywordRules]);
+
+  // Keep drawOverlay ref updated for animation loop without recreating RAF
+  const drawOverlayRef = useRef(drawOverlay);
+  useEffect(() => {
+    drawOverlayRef.current = drawOverlay;
+  }, [drawOverlay]);
+
+  // Sync external seek requests (direct and synchronous)
+  useEffect(() => {
+    if (seekRequestTime !== null) {
+      const targetTime = seekRequestTime;
+      const video = videoRef.current;
+      if (video && Math.abs(video.currentTime - targetTime) > 0.01) {
+        try {
+          video.currentTime = targetTime;
+        } catch (err) {
+          console.warn('Direct video seek error:', err);
+        }
+      }
+      if (drawOverlayRef.current) {
+        drawOverlayRef.current(targetTime);
+      }
+      // Immediately clear seekRequestTime so subsequent seeks to the same time trigger reliably
+      useEditorStore.setState({ seekRequestTime: null });
+    }
+  }, [seekRequestTime]);
+
+  // Sync audio properties
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.volume = Math.max(0, Math.min(1, volume));
+    video.muted = isMuted;
+    video.playbackRate = playbackRate;
+  }, [volume, isMuted, playbackRate]);
+
+  // Guard against dual-play promise collisions
+  const isPlayPendingRef = useRef(false);
+
+  // Sync isPlaying state to media element (handles external play/pause triggers)
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !videoUrl) return;
+
+    if (isPlaying && video.paused && !isPlayPendingRef.current) {
+      if (video.currentTime >= (video.duration || duration || 0) - 0.05) {
+        video.currentTime = 0;
+        setCurrentTime(0);
+      }
+      isPlayPendingRef.current = true;
+      video.play()
+        .catch((err) => {
+          console.warn('Auto play recovery:', err);
+          if (err.name === 'NotAllowedError') {
+            video.muted = true;
+            setIsMuted(true);
+            video.play().catch(() => {});
+          }
+        })
+        .finally(() => {
+          isPlayPendingRef.current = false;
+        });
+    } else if (!isPlaying && !video.paused) {
+      video.pause();
+    }
+  }, [isPlaying, videoUrl, duration, setCurrentTime, setIsMuted]);
+
+  // Callback ref to guarantee media element is always registered in store
+  const handleMediaRef = useCallback((el) => {
+    videoRef.current = el;
+    setMediaElement(el);
+  }, [setMediaElement]);
+
+  // Sync video duration & dimensions when media loads
   const handleMediaLoaded = () => {
     const video = videoRef.current;
     if (!video) return;
+    setMediaElement(video);
     if (video.duration && !isNaN(video.duration) && video.duration > 0) {
       setDuration(video.duration);
     }
-    video.volume = volume;
+    video.volume = Math.max(0, Math.min(1, volume));
+    video.muted = isMuted;
     video.playbackRate = playbackRate;
+
+    // Automatically synchronize video dimensions and aspect ratio to match source
+    if (video.videoWidth > 0 && video.videoHeight > 0) {
+      setVideoDimensions(video.videoWidth, video.videoHeight);
+    }
   };
 
-  // Sync state with HTML5 video playback
+  // Playback animation frame loop (Hardware Video + Software fallback)
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
     let animFrameId;
-    const updateLoop = () => {
-      if (!video.paused && !video.ended) {
-        const time = video.currentTime;
-        setCurrentTime(time);
-        const match = getActiveSegmentAndWord(segments, time);
-        setActiveSegment(match.activeSegment);
-        setActiveWordIndex(match.activeWordIndex);
+    let lastTs = performance.now();
+
+    const updateLoop = (now) => {
+      const video = videoRef.current;
+      if (video && videoUrl) {
+        if (!video.paused && !video.ended) {
+          const time = video.currentTime;
+          setCurrentTime(time);
+          if (drawOverlayRef.current) {
+            drawOverlayRef.current(time);
+          }
+        }
+      } else if (isPlaying) {
+        const delta = (now - lastTs) / 1000;
+        const maxDur = duration > 0 ? duration : (segments.length > 0 ? Math.max(...segments.map(s => s.end)) : 10);
+        const cur = useEditorStore.getState().currentTime;
+        const nextTime = cur + delta * (playbackRate || 1.0);
+        if (nextTime >= maxDur) {
+          setCurrentTime(0);
+          if (drawOverlayRef.current) drawOverlayRef.current(0);
+        } else {
+          setCurrentTime(nextTime);
+          if (drawOverlayRef.current) drawOverlayRef.current(nextTime);
+        }
       }
+      lastTs = now;
       animFrameId = requestAnimationFrame(updateLoop);
     };
 
-    animFrameId = requestAnimationFrame(updateLoop);
-    return () => cancelAnimationFrame(animFrameId);
-  }, [segments, setCurrentTime]);
-
-  // Handle Play/Pause toggle
-  const togglePlay = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    if (video.paused) {
-      video.play().then(() => setIsPlaying(true)).catch(() => {});
-    } else {
-      video.pause();
-      setIsPlaying(false);
+    if (isPlaying || (videoRef.current && !videoRef.current.paused)) {
+      animFrameId = requestAnimationFrame(updateLoop);
     }
-  }, [setIsPlaying]);
-
-  // Keyboard shortcuts (Spacebar play/pause, Left/Right skip)
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
-      if (e.code === 'Space') {
-        e.preventDefault();
-        togglePlay();
-      } else if (e.code === 'ArrowLeft') {
-        e.preventDefault();
-        seek(Math.max(0, (videoRef.current?.currentTime || 0) - 2));
-      } else if (e.code === 'ArrowRight') {
-        e.preventDefault();
-        seek(Math.min(duration || 100, (videoRef.current?.currentTime || 0) + 2));
-      }
+    return () => {
+      if (animFrameId) cancelAnimationFrame(animFrameId);
     };
+  }, [isPlaying, videoUrl, duration, playbackRate, segments, setCurrentTime]);
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [togglePlay, duration]);
-
+  // Seek helper
   const seek = (time) => {
-    if (!videoRef.current) return;
-    const safeTime = Math.max(0, Math.min(duration || 1000, time));
-    if (rafSeekRef.current) cancelAnimationFrame(rafSeekRef.current);
-    rafSeekRef.current = requestAnimationFrame(() => {
-      if (videoRef.current) {
-        videoRef.current.currentTime = safeTime;
-        setCurrentTime(safeTime);
-        const match = getActiveSegmentAndWord(segments, safeTime);
-        setActiveSegment(match.activeSegment);
-        setActiveWordIndex(match.activeWordIndex);
+    const maxDur = duration > 0 ? duration : 1000;
+    const safeTime = Math.max(0, Math.min(maxDur, time));
+    const video = videoRef.current;
+    if (video) {
+      try {
+        video.currentTime = safeTime;
+      } catch (err) {
+        console.warn('Direct video seek error:', err);
       }
-    });
+    }
+    setCurrentTime(safeTime);
+    if (drawOverlayRef.current) {
+      drawOverlayRef.current(safeTime);
+    }
   };
 
   const handleSeekChange = (e) => {
-    const time = parseFloat(e.target.value);
-    seek(time);
+    seek(parseFloat(e.target.value));
   };
 
   // Drag-to-position caption overlay
-  const handleMouseDown = (e) => {
+  const handleCaptionMouseDown = (e) => {
     e.preventDefault();
+    e.stopPropagation();
     setIsDraggingCaption(true);
 
     const handleMouseMove = (moveEvent) => {
-      if (!containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      const relativeY = ((moveEvent.clientY - rect.top) / rect.height) * 100;
-      const clampedY = Math.max(10, Math.min(90, Math.round(relativeY)));
-      updateStyle({ positionY: clampedY });
+      if (!canvasRef.current) return;
+      const rect = canvasRef.current.getBoundingClientRect();
+      const relativeY = moveEvent.clientY - rect.top;
+      const pctY = Math.max(10, Math.min(90, (relativeY / rect.height) * 100));
+      updateStyle({ positionY: Math.round(pctY) });
     };
 
     const handleMouseUp = () => {
@@ -184,392 +489,857 @@ export const VideoPlayer = () => {
     window.addEventListener('mouseup', handleMouseUp);
   };
 
-  // Compute container dimensions based on selected aspect ratio
-  const getAspectRatioDimensions = () => {
-    if (aspectRatio === '9:16') {
-      return { width: 310, height: 550, aspect: '9 / 16' };
+  // Pan stage handling
+  const handleStageMouseDown = (e) => {
+    if (spacePressed || previewZoom > 1.05) {
+      if (e.button === 0 || e.button === 1) {
+        setIsPanning(true);
+        panStartRef.current = {
+          x: e.clientX - panOffset.x,
+          y: e.clientY - panOffset.y
+        };
+      }
     }
-    if (aspectRatio === '1:1') {
-      return { width: 420, height: 420, aspect: '1 / 1' };
-    }
-    return { width: 540, height: 304, aspect: '16 / 9' };
   };
 
-  const dims = getAspectRatioDimensions();
+  const handleStageMouseMove = (e) => {
+    if (!isPanning) return;
+    setPanOffset({
+      x: e.clientX - panStartRef.current.x,
+      y: e.clientY - panStartRef.current.y
+    });
+  };
 
-  // Zoom handlers
-  const handleZoomIn = () => setZoomLevel((prev) => Math.min(2.0, +(prev + 0.25).toFixed(2)));
-  const handleZoomOut = () => setZoomLevel((prev) => Math.max(0.5, +(prev - 0.25).toFixed(2)));
-  const handleResetZoom = () => setZoomLevel(1.0);
+  const handleStageMouseUp = () => {
+    setIsPanning(false);
+  };
+
+  const handleResetPanZoom = () => {
+    setPreviewZoom(1.0);
+    setPanOffset({ x: 0, y: 0 });
+  };
+
+  const handleFullscreen = () => {
+    if (!containerRef.current) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else {
+      containerRef.current.requestFullscreen().catch(() => {});
+    }
+  };
+
+  // Drag-and-drop video import onto stage
+  const handleDragEnter = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current += 1;
+    if (e.dataTransfer?.items && e.dataTransfer.items.length > 0) {
+      setIsDraggingOver(true);
+    }
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
+      setIsDraggingOver(false);
+    }
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDraggingOver(false);
+
+    if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+      const droppedFile = e.dataTransfer.files[0];
+      handleFileSelected(droppedFile);
+    }
+  };
+
+  const { activeSegment } = getActiveSegmentAndWord(segments, currentTime);
+  const hasActiveSegment = Boolean(activeSegment);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', width: '100%' }}>
-      {/* Canvas Viewport Zoom & Inspection Toolbar */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        width: `${dims.width}px`,
-        maxWidth: '100%',
-        padding: '3px 8px',
-        borderRadius: '8px',
-        background: 'rgba(15, 23, 42, 0.75)',
-        border: '1px solid var(--border-color)',
-        fontSize: '11px'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-muted)' }}>
-          <span style={{ fontWeight: '700', color: 'var(--text-main)', fontSize: '10px' }}>CANVAS</span>
-          <span style={{ fontSize: '9px', opacity: 0.6 }}>({aspectRatio})</span>
-        </div>
-
-        {/* Zoom Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <button
-            onClick={handleZoomOut}
-            disabled={zoomLevel <= 0.5}
-            className="btn-secondary"
-            style={{ padding: '2px 5px', fontSize: '10px', height: '22px' }}
-            title="Zoom Out (-25%)"
-          >
-            <ZoomOut size={11} />
-          </button>
-
-          <select
-            value={zoomLevel}
-            onChange={(e) => setZoomLevel(parseFloat(e.target.value))}
-            style={{
-              background: 'rgba(0,0,0,0.4)',
-              border: '1px solid var(--border-color)',
-              color: 'var(--accent-primary)',
-              fontSize: '10px',
-              fontWeight: '800',
-              padding: '2px 4px',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              height: '22px'
-            }}
-          >
-            <option value="0.5">50%</option>
-            <option value="0.75">75%</option>
-            <option value="1.0">100%</option>
-            <option value="1.25">125%</option>
-            <option value="1.5">150%</option>
-            <option value="2.0">200%</option>
-          </select>
-
-          <button
-            onClick={handleZoomIn}
-            disabled={zoomLevel >= 2.0}
-            className="btn-secondary"
-            style={{ padding: '2px 5px', fontSize: '10px', height: '22px' }}
-            title="Zoom In (+25%)"
-          >
-            <ZoomIn size={11} />
-          </button>
-
-          {zoomLevel !== 1.0 && (
-            <button
-              onClick={handleResetZoom}
-              className="btn-secondary"
-              style={{ padding: '2px 5px', fontSize: '9px', height: '22px', color: 'var(--accent-viral-yellow)' }}
-              title="Reset Zoom to 100%"
-            >
-              <ResetZoom size={10} /> 1x
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Outer Scalable Viewport Host with Smooth Scrolling when Zoomed */}
-      <div style={{
-        width: `${dims.width}px`,
-        height: `${dims.height}px`,
+    <div
+      ref={containerRef}
+      className="studio-panel"
+      onMouseMove={handleStageMouseMove}
+      onMouseUp={handleStageMouseUp}
+      onMouseLeave={handleStageMouseUp}
+      style={{
+        width: '100%',
+        height: '100%',
+        position: 'relative',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        overflow: zoomLevel > 1.0 ? 'auto' : 'visible',
-        borderRadius: '16px',
-        position: 'relative'
+        overflow: 'hidden',
+        cursor: spacePressed ? 'grab' : isPanning ? 'grabbing' : 'default',
+        backgroundColor: 'var(--video-stage-bg)',
+        userSelect: 'none'
+      }}
+    >
+      {/* Top Floating Viewport Glass Overlay Bar */}
+      <div style={{
+        position: 'absolute',
+        top: '12px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        zIndex: 35,
+        pointerEvents: 'auto'
       }}>
-        {/* Scaled Video Viewport Container */}
-        <div
-          ref={containerRef}
+        {/* Aspect Ratio Badge */}
+        <div style={{
+          background: 'var(--glass-bg)',
+          backdropFilter: 'blur(16px)',
+          WebkitBackdropFilter: 'blur(16px)',
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 'var(--radius-pill)',
+          padding: '3px 9px',
+          fontSize: '11px',
+          fontWeight: '600',
+          color: 'var(--text-secondary)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '4px',
+          boxShadow: 'var(--shadow-subtle)'
+        }}>
+          <span>{canonical.ratioLabel || aspectRatio || 'Source'}</span>
+          <span style={{ opacity: 0.4 }}>•</span>
+          <span style={{ fontSize: '10px', opacity: 0.8 }}>
+            {canonical.exportW}x{canonical.exportH}
+          </span>
+        </div>
+
+        {/* Safe Zones Toggle */}
+        <button
+          onClick={() => useEditorStore.getState().toggleSafeZones()}
+          className="btn-ghost"
           style={{
-            position: 'relative',
-            width: `${dims.width}px`,
-            height: `${dims.height}px`,
-            aspectRatio: dims.aspect,
-            backgroundColor: '#000000',
-            borderRadius: '16px',
-            overflow: 'hidden',
-            boxShadow: '0 20px 50px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.1)',
+            padding: '4px 8px',
+            borderRadius: 'var(--radius-pill)',
+            background: showSafeZones ? 'var(--accent-blue-subtle)' : 'var(--glass-bg)',
+            backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
+            border: showSafeZones ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+            color: showSafeZones ? 'var(--accent-primary)' : 'var(--text-tertiary)',
+            fontSize: '11px',
+            boxShadow: 'var(--shadow-subtle)'
+          }}
+          title={showSafeZones ? 'Hide Safe Zone Overlay' : 'Show Safe Zone Overlay'}
+        >
+          {showSafeZones ? <Eye size={12} /> : <EyeOff size={12} />}
+          <span style={{ marginLeft: '4px' }}>Safe Zones</span>
+        </button>
+
+        {/* Video Color Space & Gamut Controls Popover */}
+        <div ref={picturePopoverRef} style={{ position: 'relative' }}>
+          <button
+            onClick={() => setShowPicturePopover((prev) => !prev)}
+            className="btn-ghost"
+            style={{
+              padding: '4px 10px',
+              borderRadius: 'var(--radius-pill)',
+              background: (videoBrightness !== 100 || videoContrast !== 100) ? 'rgba(56, 189, 248, 0.22)' : 'var(--glass-bg)',
+              backdropFilter: 'blur(16px)',
+              WebkitBackdropFilter: 'blur(16px)',
+              border: (videoBrightness !== 100 || videoContrast !== 100) ? '1px solid #38BDF8' : '1px solid var(--border-subtle)',
+              color: (videoBrightness !== 100 || videoContrast !== 100) ? '#38BDF8' : 'var(--text-secondary)',
+              fontSize: '11px',
+              fontWeight: '600',
+              boxShadow: 'var(--shadow-subtle)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px'
+            }}
+            title="Video Color Space (Rec.709 sRGB / After Effects Parity)"
+          >
+            <Sliders size={12} style={{ color: '#10B981' }} />
+            <span>
+              {videoBrightness !== 100 || videoContrast !== 100
+                ? `🎨 Rec.709 (${videoBrightness}%)`
+                : '🎨 Rec.709 Matched'}
+            </span>
+          </button>
+
+          {showPicturePopover && (
+            <div style={{
+              position: 'absolute',
+              top: 'calc(100% + 8px)',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              width: '280px',
+              background: 'rgba(15, 20, 28, 0.97)',
+              backdropFilter: 'blur(20px)',
+              WebkitBackdropFilter: 'blur(20px)',
+              border: '1px solid rgba(255, 255, 255, 0.15)',
+              borderRadius: '14px',
+              padding: '14px 16px',
+              boxShadow: '0 16px 45px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.08)',
+              zIndex: 100,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Sliders size={13} style={{ color: '#10B981' }} />
+                  <span style={{ fontSize: '11.5px', fontWeight: '700', color: '#FFFFFF' }}>
+                    Color Space & Gamut
+                  </span>
+                </div>
+                <button
+                  onClick={() => resetVideoPicture()}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#94A3B8',
+                    fontSize: '10.5px',
+                    cursor: 'pointer',
+                    padding: '2px 6px',
+                    borderRadius: '4px'
+                  }}
+                  title="Reset to 100% Neutral (No brightness/contrast filter)"
+                >
+                  Reset (100%)
+                </button>
+              </div>
+
+              {/* Status Banner */}
+              <div style={{
+                padding: '8px 10px',
+                borderRadius: '8px',
+                background: 'rgba(16, 185, 129, 0.12)',
+                border: '1px solid rgba(16, 185, 129, 0.28)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '3px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10B981' }} />
+                  <span style={{ fontSize: '11px', fontWeight: '600', color: '#10B981' }}>
+                    Rec.709 ITU-R BT.709 (Matched)
+                  </span>
+                </div>
+                <span style={{ fontSize: '9.5px', color: '#94A3B8', paddingLeft: '12px' }}>
+                  1:1 Parity with Adobe After Effects & Premiere Pro. Zero CSS wash, hardware native color mapping.
+                </span>
+              </div>
+
+              {/* 1-Click Match Color Space Action */}
+              <button
+                disabled={isTaggingColorSpace}
+                onClick={async () => {
+                  setIsTaggingColorSpace(true);
+                  setColorSpaceSuccessMsg('');
+                  const res = await matchColorSpaceRec709(false);
+                  setIsTaggingColorSpace(false);
+                  if (res && res.success) {
+                    setColorSpaceSuccessMsg('✓ Stream matched to Rec.709');
+                    setTimeout(() => setColorSpaceSuccessMsg(''), 4000);
+                  }
+                }}
+                className="btn-ghost"
+                style={{
+                  padding: '7px 10px',
+                  borderRadius: '8px',
+                  background: 'rgba(56, 189, 248, 0.15)',
+                  border: '1px solid rgba(56, 189, 248, 0.35)',
+                  color: '#38BDF8',
+                  fontSize: '11px',
+                  fontWeight: '600',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  cursor: isTaggingColorSpace ? 'wait' : 'pointer'
+                }}
+                title="Losslessly injects Rec.709 VUI tags into video bitstream with zero re-encoding"
+              >
+                {isTaggingColorSpace ? (
+                  <>
+                    <RefreshCw size={12} className="spin-animate" />
+                    <span>Tagging Rec.709...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={12} />
+                    <span>Match Source Color Space (Rec.709)</span>
+                  </>
+                )}
+              </button>
+              {colorSpaceSuccessMsg && (
+                <span style={{ fontSize: '10px', color: '#10B981', textAlign: 'center', fontWeight: '600' }}>
+                  {colorSpaceSuccessMsg}
+                </span>
+              )}
+
+              {/* Optional Fine-Tuning Sliders */}
+              <div style={{ borderTop: '1px solid rgba(255, 255, 255, 0.08)', paddingTop: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <span style={{ fontSize: '10px', color: '#64748B', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Fine-Tune (Optional)
+                </span>
+
+                {/* Exposure Slider */}
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px', color: '#94A3B8', marginBottom: '3px' }}>
+                    <span>Exposure / Brightness</span>
+                    <span style={{ fontWeight: '700', color: videoBrightness === 100 ? '#94A3B8' : '#38BDF8' }}>
+                      {videoBrightness}% {videoBrightness === 100 && '(Neutral)'}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="80"
+                    max="140"
+                    step="1"
+                    value={videoBrightness}
+                    onChange={(e) => setVideoBrightness(Number(e.target.value))}
+                    style={{ width: '100%', accentColor: '#38BDF8', cursor: 'pointer' }}
+                  />
+                </div>
+
+                {/* Contrast Slider */}
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px', color: '#94A3B8', marginBottom: '3px' }}>
+                    <span>Contrast / Depth</span>
+                    <span style={{ fontWeight: '700', color: videoContrast === 100 ? '#94A3B8' : '#38BDF8' }}>
+                      {videoContrast}% {videoContrast === 100 && '(Neutral)'}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="80"
+                    max="130"
+                    step="1"
+                    value={videoContrast}
+                    onChange={(e) => setVideoContrast(Number(e.target.value))}
+                    style={{ width: '100%', accentColor: '#38BDF8', cursor: 'pointer' }}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Zoom Reset */}
+        {previewZoom !== 1.0 && (
+          <button
+            onClick={handleResetPanZoom}
+            className="btn-ghost"
+            style={{
+              padding: '3px 8px',
+              borderRadius: 'var(--radius-pill)',
+              background: 'var(--glass-bg)',
+              backdropFilter: 'blur(16px)',
+              WebkitBackdropFilter: 'blur(16px)',
+              border: '1px solid var(--border-subtle)',
+              fontSize: '11px',
+              color: 'var(--accent-primary)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              boxShadow: 'var(--shadow-subtle)'
+            }}
+            title="Reset Zoom to Fit (Ctrl + 0)"
+          >
+            <RotateCcw size={11} />
+            <span>Fit ({Math.round(previewZoom * 100)}%)</span>
+          </button>
+        )}
+
+        {/* Space Pan Help Badge */}
+        {previewZoom > 1.05 && (
+          <div style={{
+            background: spacePressed ? 'var(--accent-primary)' : 'var(--glass-bg)',
+            backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
+            color: spacePressed ? '#FFFFFF' : 'var(--text-tertiary)',
+            borderRadius: 'var(--radius-pill)',
+            padding: '3px 8px',
+            border: '1px solid var(--border-subtle)',
+            fontSize: '10px',
+            fontWeight: '500',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center',
-            transform: `scale(${zoomLevel})`,
-            transformOrigin: 'center center',
-            transition: 'transform 180ms cubic-bezier(0.4, 0, 0.2, 1)',
+            gap: '4px',
+            boxShadow: 'var(--shadow-subtle)'
+          }}>
+            <Hand size={11} />
+            <span>Space + Drag</span>
+          </div>
+        )}
+
+        {/* Fullscreen Button */}
+        <button
+          onClick={handleFullscreen}
+          className="btn-ghost"
+          style={{
+            padding: '4px 6px',
+            borderRadius: 'var(--radius-pill)',
+            background: 'var(--glass-bg)',
+            backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
+            border: '1px solid var(--border-subtle)',
+            color: 'var(--text-secondary)',
+            boxShadow: 'var(--shadow-subtle)'
+          }}
+          title="Toggle Fullscreen"
+        >
+          <Maximize size={12} />
+        </button>
+      </div>
+
+      {/* Full-Height Scaled Stage Area */}
+      <div
+        ref={stageViewportRef}
+        onMouseDown={handleStageMouseDown}
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        style={{
+          width: '100%',
+          height: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          position: 'relative',
+          overflow: 'hidden'
+        }}
+      >
+        {/* Dynamic Scaled Canvas Stage */}
+        <div
+          style={{
+            position: 'relative',
+            width: `${transform.displayW}px`,
+            height: `${transform.displayH}px`,
+            aspectRatio: canonical.aspect,
+            backgroundColor: isAudioOnly ? '#FFFFFF' : (videoUrl ? '#000000' : 'var(--bg-panel)'),
+            borderRadius: '16px',
+            overflow: 'hidden',
+            border: videoUrl ? 'none' : '1px solid var(--border-subtle)',
+            boxShadow: isAudioOnly 
+              ? 'var(--shadow-card)'
+              : videoUrl 
+                ? '0 12px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.08)' 
+                : 'var(--shadow-card)',
+            transform: `translate(${transform.pan.x}px, ${transform.pan.y}px)`,
             flexShrink: 0
           }}
         >
-          {videoUrl ? (
-            <video
-              ref={videoRef}
-              src={videoUrl}
-              playsInline
-              muted={isMuted}
-              onClick={togglePlay}
-              onLoadedMetadata={handleMediaLoaded}
-              onDurationChange={handleMediaLoaded}
-              onEnded={() => setIsPlaying(false)}
-              style={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'cover',
-                cursor: 'pointer'
-              }}
-            />
-          ) : (
-            <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px' }}>
-              <p style={{ fontSize: '13px', fontWeight: '700' }}>No Video Loaded</p>
-              <p style={{ fontSize: '11px', marginTop: '4px' }}>Click "Upload" or "Demo" to begin</p>
+          {/* Animated Glowing Dropzone Overlay */}
+          {isDraggingOver && (
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 60,
+              background: 'rgba(0, 113, 227, 0.28)',
+              backdropFilter: 'blur(14px)',
+              WebkitBackdropFilter: 'blur(14px)',
+              border: '2px dashed #0071E3',
+              boxShadow: 'inset 0 0 45px rgba(0, 113, 227, 0.5), 0 0 35px rgba(41, 151, 255, 0.6)',
+              borderRadius: '12px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '12px',
+              pointerEvents: 'none'
+            }}>
+              <div style={{
+                width: '64px',
+                height: '64px',
+                borderRadius: '50%',
+                background: 'rgba(0, 113, 227, 0.35)',
+                border: '1px solid rgba(255, 255, 255, 0.4)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 4px 20px rgba(0, 113, 227, 0.4)'
+              }}>
+                <UploadCloud size={32} color="#FFFFFF" />
+              </div>
+              <div style={{ textAlign: 'center', padding: '0 16px' }}>
+                <p style={{ fontSize: '15px', fontWeight: '700', color: '#FFFFFF', margin: 0, textShadow: '0 2px 10px rgba(0,0,0,0.7)' }}>
+                  Drop Video to Import
+                </p>
+                <p style={{ fontSize: '12px', color: 'rgba(255, 255, 255, 0.85)', margin: '4px 0 0 0', textShadow: '0 1px 4px rgba(0,0,0,0.7)' }}>
+                  Instantly loads into player & timeline
+                </p>
+              </div>
             </div>
           )}
 
-          {/* TikTok / Shorts UI Safe Zones Overlay */}
-          {showSafeZones && aspectRatio === '9:16' && (
-            <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 10 }}>
-              {/* Top Bar Safe Zone */}
+          {/* HTML5 Media Player Layer (Audio or Video) */}
+          {videoUrl ? (
+            <>
+              {isAudioOnly ? (
+                <>
+                  <audio
+                    ref={handleMediaRef}
+                    src={videoUrl}
+                    preload="auto"
+                    muted={isMuted}
+                    onPlay={() => setIsPlaying(true)}
+                    onPause={() => setIsPlaying(false)}
+                    onLoadedMetadata={handleMediaLoaded}
+                    onDurationChange={handleMediaLoaded}
+                    onEnded={() => {
+                      setIsPlaying(false);
+                      setCurrentTime(0);
+                      if (videoRef.current) videoRef.current.currentTime = 0;
+                    }}
+                  />
+                  {/* Clean White Audio Stage Background */}
+                  <div 
+                    onClick={togglePlay}
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      backgroundColor: '#FFFFFF',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'flex-start',
+                      padding: '16px',
+                      zIndex: 1
+                    }}
+                  >
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      background: 'rgba(0, 0, 0, 0.06)',
+                      padding: '4px 10px',
+                      borderRadius: 'var(--radius-pill)',
+                      fontSize: '11px',
+                      fontWeight: '600',
+                      color: '#1C1C1E',
+                      userSelect: 'none',
+                      alignSelf: 'flex-start',
+                      border: '1px solid rgba(0, 0, 0, 0.08)'
+                    }}>
+                      <Music size={12} color="var(--accent-bright-blue)" />
+                      <span>{videoFilename || 'demo_audio.wav'}</span>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <video
+                  ref={handleMediaRef}
+                  src={videoUrl}
+                  playsInline
+                  crossOrigin="anonymous"
+                  preload="auto"
+                  muted={isMuted}
+                  onClick={togglePlay}
+                  onPlay={() => setIsPlaying(true)}
+                  onPause={() => setIsPlaying(false)}
+                  onLoadedMetadata={handleMediaLoaded}
+                  onDurationChange={handleMediaLoaded}
+                  onEnded={() => {
+                    setIsPlaying(false);
+                    setCurrentTime(0);
+                    if (videoRef.current) videoRef.current.currentTime = 0;
+                  }}
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                    cursor: 'pointer',
+                    filter: videoFilterStyle,
+                    transition: 'filter 0.15s cubic-bezier(0.16, 1, 0.3, 1)'
+                  }}
+                />
+              )}
+            </>
+          ) : (
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              height: '100%',
+              color: 'var(--text-tertiary)',
+              padding: '24px',
+              textAlign: 'center',
+              gap: '12px'
+            }}>
+              <div style={{
+                width: '48px',
+                height: '48px',
+                borderRadius: 'var(--radius-lg)',
+                background: 'var(--bg-active)',
+                border: '1px solid var(--border-subtle)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <Film size={24} color="var(--text-primary)" />
+              </div>
+
+              <div>
+                <p style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-primary)', margin: 0 }}>
+                  No Video Loaded
+                </p>
+                <p style={{ fontSize: '11px', marginTop: '4px', color: 'var(--text-tertiary)', maxWidth: '280px', lineHeight: '1.4' }}>
+                  Import video (.mp4, .avi, .mov, .mkv) or drop footage to begin.
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '4px', justifyContent: 'center' }}>
+                <button
+                  onClick={() => linkLocalVideoFile()}
+                  className="btn-primary"
+                  style={{ fontSize: '11px', padding: '6px 12px', gap: '5px' }}
+                  title="Import video file directly"
+                >
+                  <FolderOpen size={13} />
+                  <span>Import Video (.mp4, .avi, .mov)</span>
+                </button>
+
+                <button
+                  onClick={triggerVideoPicker}
+                  className="btn-secondary"
+                  style={{ fontSize: '11px', padding: '6px 12px', gap: '5px' }}
+                >
+                  <UploadCloud size={13} />
+                  <span>Upload Video</span>
+                </button>
+
+                <button
+                  onClick={() => loadDemoData()}
+                  className="btn-secondary"
+                  style={{ fontSize: '11px', padding: '6px 12px', gap: '5px' }}
+                >
+                  <Sparkles size={13} />
+                  <span>Load Demo</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Premiere Pro-style Media Offline Warning Overlay */}
+          {isMediaLinked && mediaOffline && (
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              background: 'rgba(15, 23, 42, 0.94)',
+              backdropFilter: 'blur(8px)',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '24px',
+              textAlign: 'center',
+              gap: '12px',
+              zIndex: 25,
+              color: '#F8FAFC'
+            }}>
+              <div style={{
+                width: '50px',
+                height: '50px',
+                borderRadius: 'var(--radius-lg)',
+                background: 'rgba(239, 68, 68, 0.15)',
+                border: '1px solid rgba(239, 68, 68, 0.35)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#EF4444'
+              }}>
+                <AlertTriangle size={26} />
+              </div>
+
+              <div>
+                <span style={{
+                  fontSize: '10px',
+                  fontWeight: '700',
+                  letterSpacing: '0.08em',
+                  textTransform: 'uppercase',
+                  color: '#EF4444',
+                  display: 'block',
+                  marginBottom: '4px'
+                }}>
+                  Zero-Copy Media Offline
+                </span>
+                <h3 style={{ fontSize: '15px', fontWeight: '700', margin: 0, color: '#FFFFFF' }}>
+                  Source Video File Not Found
+                </h3>
+                <p style={{
+                  fontSize: '11px',
+                  color: '#94A3B8',
+                  marginTop: '6px',
+                  maxWidth: '300px',
+                  lineHeight: '1.4',
+                  wordBreak: 'break-all',
+                  fontFamily: 'monospace',
+                  background: 'rgba(0,0,0,0.35)',
+                  padding: '5px 8px',
+                  borderRadius: '4px',
+                  border: '1px solid rgba(255,255,255,0.06)'
+                }}>
+                  {linkedSourcePath || 'Original file location unavailable'}
+                </p>
+              </div>
+
+              <button
+                onClick={() => relinkProjectMedia(activeProjectId)}
+                className="btn-primary"
+                style={{
+                  marginTop: '6px',
+                  padding: '7px 16px',
+                  fontSize: '11.5px',
+                  background: '#FFFFFF',
+                  color: '#0F172A',
+                  gap: '6px'
+                }}
+              >
+                <RefreshCw size={13} />
+                <span>Locate & Relink Media</span>
+              </button>
+            </div>
+          )}
+
+          {/* Canvas 2D Caption Overlay */}
+          <canvas
+            ref={canvasRef}
+            width={canonical.exportW}
+            height={canonical.exportH}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              width: '100%',
+              height: '100%',
+              pointerEvents: 'none',
+              zIndex: 15
+            }}
+          />
+
+          {/* Caption Drag Position Handle */}
+          {hasActiveSegment && (
+            <CaptionDragHandle
+              style={style}
+              isDragging={isDraggingCaption}
+              onMouseDown={handleCaptionMouseDown}
+            />
+          )}
+
+          {/* Social Safe Zones Overlay (TikTok / Reels / Shorts) */}
+          {showSafeZones && videoUrl && (
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              pointerEvents: 'none',
+              zIndex: 20
+            }}>
+              {/* Top Profile / Header Safe Zone */}
               <div style={{
                 position: 'absolute',
                 top: 0,
                 left: 0,
                 right: 0,
-                height: '65px',
-                borderBottom: '1px dashed rgba(239, 68, 68, 0.4)',
-                background: 'rgba(239, 68, 68, 0.05)',
+                height: '12%',
+                borderBottom: '1px dashed rgba(255, 255, 255, 0.25)',
+                background: 'rgba(255, 255, 255, 0.03)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center'
               }}>
-                <span style={{ fontSize: '9px', color: 'rgba(239, 68, 68, 0.8)', fontWeight: '600', letterSpacing: '1px' }}>
+                <span style={{ fontSize: '9px', color: 'rgba(255, 255, 255, 0.4)', fontWeight: '500', letterSpacing: '0.04em' }}>
                   HEADER SAFE ZONE
                 </span>
               </div>
 
-              {/* Right Action Buttons Safe Zone */}
+              {/* Right Action Icons Safe Zone */}
               <div style={{
                 position: 'absolute',
-                top: '100px',
+                top: '12%',
+                bottom: '15%',
                 right: 0,
-                bottom: '100px',
-                width: '55px',
-                borderLeft: '1px dashed rgba(239, 68, 68, 0.4)',
-                background: 'rgba(239, 68, 68, 0.05)',
+                width: '15%',
+                borderLeft: '1px dashed rgba(255, 255, 255, 0.25)',
+                background: 'rgba(255, 255, 255, 0.03)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center'
               }}>
-                <span style={{ fontSize: '9px', color: 'rgba(239, 68, 68, 0.8)', fontWeight: '600', transform: 'rotate(90deg)', whiteSpace: 'nowrap' }}>
-                  LIKE / SHARE
+                <span style={{ fontSize: '8px', color: 'rgba(255, 255, 255, 0.4)', fontWeight: '500', transform: 'rotate(90deg)', letterSpacing: '0.04em' }}>
+                  ACTIONS
                 </span>
               </div>
 
-              {/* Bottom Caption & Audio Safe Zone */}
+              {/* Bottom Caption Safe Zone */}
               <div style={{
                 position: 'absolute',
                 bottom: 0,
                 left: 0,
                 right: 0,
-                height: '95px',
-                borderTop: '1px dashed rgba(239, 68, 68, 0.4)',
-                background: 'rgba(239, 68, 68, 0.05)',
+                height: '15%',
+                borderTop: '1px dashed rgba(255, 255, 255, 0.25)',
+                background: 'rgba(255, 255, 255, 0.03)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center'
               }}>
-                <span style={{ fontSize: '9px', color: 'rgba(239, 68, 68, 0.8)', fontWeight: '600', letterSpacing: '1px' }}>
-                  SOUND / CAPTION SAFE ZONE
+                <span style={{ fontSize: '9px', color: 'rgba(255, 255, 255, 0.4)', fontWeight: '500', letterSpacing: '0.04em' }}>
+                  UI / CAPTIONS
                 </span>
               </div>
             </div>
           )}
-
-          {/* Dynamic Animated Caption Overlay */}
-          {activeSegment && (
-            <div
-              ref={captionBoxRef}
-              className="caption-drag-handle"
-              onMouseDown={handleMouseDown}
-              style={{
-                position: 'absolute',
-                top: `${style.positionY}%`,
-                left: `${style.positionX}%`,
-                transform: 'translate(-50%, -50%)',
-                width: '90%',
-                textAlign: 'center',
-                zIndex: 20,
-                backgroundColor: style.backgroundColor || 'transparent',
-                padding: style.backgroundPadding ? `${style.backgroundPadding}px` : '0px',
-                borderRadius: style.borderRadius ? `${style.borderRadius}px` : '0px',
-                backdropFilter: style.backgroundColor && style.backgroundColor !== 'transparent' ? 'blur(8px)' : 'none',
-                cursor: isDraggingCaption ? 'grabbing' : 'grab'
-              }}
-            >
-              {/* Drag Handle Tag */}
-              <div style={{
-                position: 'absolute',
-                top: '-16px',
-                left: '50%',
-                transform: 'translateX(-50%)',
-                background: 'rgba(15, 23, 42, 0.85)',
-                padding: '1px 7px',
-                borderRadius: '999px',
-                fontSize: '9px',
-                color: 'var(--text-muted)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                pointerEvents: 'none'
-              }}>
-                <MoveVertical size={10} /> {Math.round(style.positionY)}%
-              </div>
-
-              {/* Word Tokens */}
-              <div style={{
-                fontFamily: style.fontFamily,
-                fontSize: `${style.fontSize}px`,
-                fontWeight: style.fontWeight,
-                lineHeight: 1.15,
-                textTransform: style.textTransform,
-                letterSpacing: style.fontFamily === 'Bebas Neue' ? '1px' : '-0.5px',
-                paintOrder: 'stroke fill'
-              }}>
-                {activeSegment.words.map((w, idx) => {
-                  const isActive = idx === activeWordIndex;
-                  const animClass = isActive ? `anim-${style.animationType}` : '';
-                  
-                  return (
-                    <span
-                      key={w.id || idx}
-                      className={`word-token ${isActive ? 'is-active' : ''} ${animClass}`}
-                      style={{
-                        color: isActive ? style.activeColor : style.primaryColor,
-                        // Halve stroke width to match CSS paint-order: stroke fill behavior (50% outward)
-                        // This ensures preview matches final render output
-                        WebkitTextStroke: style.strokeWidth ? `${(style.strokeWidth / 2)}px ${style.strokeColor}` : 'none',
-                        // Use proper shadow format with blur radius
-                        textShadow: style.shadowBlur 
-                          ? `0 4px ${style.shadowBlur}px ${style.shadowColor}` 
-                          : 'none',
-                        display: 'inline-block',
-                        margin: '0 4px',
-                        paintOrder: 'stroke fill',
-                        strokeLinejoin: 'round',
-                        WebkitTextStrokeLinejoin: 'round'
-                      }}
-                    >
-                      {w.word}
-                    </span>
-                  );
-                })}
-              </div>
-            </div>
-          )}
         </div>
       </div>
 
-      {/* Playback Controls & Scrubber */}
-      <div className="glass-card" style={{ width: `${dims.width}px`, maxWidth: '100%', padding: '10px 14px', borderRadius: '12px' }}>
-        {/* Scrubber Range */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-          <span style={{ fontSize: '11px', fontFamily: 'monospace', color: 'var(--accent-primary)', minWidth: '46px' }}>
-            {formatTimecode(currentTime)}
-          </span>
-          <input
-            type="range"
-            min={0}
-            max={Math.max(0.1, duration || 1)}
-            step={0.02}
-            value={currentTime}
-            onChange={handleSeekChange}
-            style={{
-              flex: 1,
-              accentColor: 'var(--accent-primary)',
-              cursor: 'pointer',
-              height: '5px'
+      {/* Docked Floating Glass Transport Controls Overlay */}
+      {videoUrl && (
+        <div style={{
+          position: 'absolute',
+          bottom: '14px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 35,
+          pointerEvents: 'auto',
+          width: 'calc(100% - 28px)',
+          maxWidth: `${Math.max(340, Math.min(transform.displayW, 460))}px`,
+          display: 'flex',
+          justifyContent: 'center'
+        }}>
+          <TransportControls
+            currentTime={currentTime}
+            duration={duration}
+            isPlaying={isPlaying}
+            volume={volume}
+            isMuted={isMuted}
+            playbackRate={playbackRate}
+            onTogglePlay={togglePlay}
+            onSeek={seek}
+            onSeekChange={handleSeekChange}
+            onSetVolume={setVolume}
+            onSetIsMuted={setIsMuted}
+            onSetPlaybackRate={(rate) => {
+              setPlaybackRate(rate);
+              if (videoRef.current) videoRef.current.playbackRate = rate;
             }}
           />
-          <span style={{ fontSize: '11px', fontFamily: 'monospace', color: 'var(--text-muted)', minWidth: '46px', textAlign: 'right' }}>
-            {formatTimecode(duration)}
-          </span>
         </div>
-
-        {/* Buttons Row */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <button
-              onClick={() => seek(Math.max(0, currentTime - 2))}
-              className="btn-secondary"
-              style={{ padding: '5px 7px' }}
-              title="Back 2s"
-            >
-              <RotateCcw size={13} />
-            </button>
-            <button
-              onClick={togglePlay}
-              className="btn-primary"
-              style={{ padding: '5px 12px', borderRadius: '6px' }}
-            >
-              {isPlaying ? <Pause size={15} /> : <Play size={15} />}
-            </button>
-            <button
-              onClick={() => seek(Math.min(duration, currentTime + 2))}
-              className="btn-secondary"
-              style={{ padding: '5px 7px' }}
-              title="Forward 2s"
-            >
-              <RotateCw size={13} />
-            </button>
-          </div>
-
-          {/* Volume & Speed Controls */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <button
-              onClick={() => setIsMuted(!isMuted)}
-              style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
-            >
-              {isMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
-            </button>
-
-            <select
-              value={playbackRate}
-              onChange={(e) => {
-                const rate = parseFloat(e.target.value);
-                setPlaybackRate(rate);
-                if (videoRef.current) videoRef.current.playbackRate = rate;
-              }}
-              style={{
-                background: 'rgba(0,0,0,0.3)',
-                border: '1px solid var(--border-color)',
-                color: 'var(--text-main)',
-                fontSize: '11px',
-                fontWeight: '600',
-                padding: '3px 5px',
-                borderRadius: '6px',
-                cursor: 'pointer'
-              }}
-            >
-              <option value="0.5">0.5x</option>
-              <option value="0.75">0.75x</option>
-              <option value="1">1.0x</option>
-              <option value="1.25">1.25x</option>
-              <option value="1.5">1.5x</option>
-              <option value="2.0">2.0x</option>
-            </select>
-          </div>
-        </div>
-      </div>
+      )}
     </div>
   );
 };

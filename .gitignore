@@ -26,11 +26,15 @@ backend/storage/exports/*
 backend/storage/debug/*
 backend/storage/demo/*
 backend/storage/temp/*
+backend/storage/thumbnails/*
+!backend/storage/thumbnails/.gitkeep
 *.ass
 backend/*.ass
 backend/test_sub_out.mp4
 scratch/test_*.mp4
 scratch/test_*.png
+
+scratch/
 
 # Testing & Coverage
 .coverage
@@ -46,3 +50,17 @@ htmlcov/
 *.swo
 .DS_Store
 Thumbs.db
+
+# Documentation & Plans
+plan/
+opencut_autocaption_ai_and_effects_report.md
+
+# AI Agent Configs, Rules & Skills
+.agents/
+.agent/
+.gemini/
+
+# User Projects & External Binaries
+backend/storage/projects/*
+!backend/storage/projects/.gitkeep
+backend/tools/

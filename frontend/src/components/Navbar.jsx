@@ -1,9 +1,8 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Sparkles, 
   Upload, 
   Download, 
-  Server, 
   Smartphone, 
   Square, 
   Tv, 
@@ -11,182 +10,334 @@ import {
   EyeOff, 
   RotateCcw,
   Film,
-  Loader2
+  Loader2,
+  Settings,
+  Cpu,
+  ChevronDown,
+  Check,
+  HelpCircle,
+  PanelLeft,
+  PanelRight,
+  Columns,
+  Mic,
+  Sun,
+  Moon,
+  Folder,
+  Link2,
+  FolderOpen,
+  Layers
 } from 'lucide-react';
 import { useEditorStore } from '../store/useEditorStore';
 
 const BACKEND_URL = 'http://127.0.0.1:8000';
+
+const MODEL_LABELS = {
+  'tiny': { name: 'Tiny', speed: '32x Speed', size: '~75 MB' },
+  'base': { name: 'Base (Default)', speed: '16x Speed', size: '~145 MB' },
+  'small': { name: 'Small', speed: '6x Speed', size: '~480 MB' },
+  'medium': { name: 'Medium', speed: '2x Speed', size: '~1.5 GB' },
+  'large-v3-turbo': { name: 'Large v3 Turbo', speed: '8x Speed', size: '~1.6 GB' },
+  'large-v3': { name: 'Large v3', speed: '1x Speed', size: '~3.1 GB' }
+};
 
 export const Navbar = () => {
   const {
     backendAvailable,
     aspectRatio,
     setAspectRatio,
+    videoWidth,
+    videoHeight,
+    canvasLayout,
+    setCanvasLayout,
     showSafeZones,
     toggleSafeZones,
-    setUploadModalOpen,
+    triggerVideoPicker,
+    setTranscribeModalOpen,
     setExportModalOpen,
+    setBatchModalOpen,
+    setUpscaleModalOpen,
+    setSettingsModalOpen,
+    setHelpModalOpen,
+    setVocalExtractorOpen,
     loadDemoData,
     isTranscribing,
     setIsTranscribing,
     videoFile,
     videoFilename,
     setSegments,
-    style
+    style,
+    selectedModel,
+    setSelectedModel,
+    modelsData,
+    fetchModelsStatus,
+    ensureModelDownloaded,
+    removePunctuation,
+    theme,
+    toggleTheme,
+    // Projects & Media Linking
+    setCurrentView,
+    activeProjectId,
+    activeProjectTitle,
+    renameCurrentProject,
+    saveStatus,
+    lastSavedTime,
+    relinkProjectMedia,
+    isMediaLinked,
+    linkedSourcePath,
+    mediaOffline
   } = useEditorStore();
 
-  const handleQuickTranscribe = async () => {
+  const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    fetchModelsStatus();
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setModelDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleQuickTranscribe = () => {
     if (isTranscribing) return;
     if (!videoFile && !videoFilename) {
-      setUploadModalOpen(true);
+      triggerVideoPicker();
       return;
     }
+    setTranscribeModalOpen(true);
+  };
 
-    setIsTranscribing(true, 'Extracting audio and generating word timestamps...');
-    try {
-      if (backendAvailable && videoFile) {
-        const formData = new FormData();
-        formData.append('file', videoFile);
-        formData.append('model_name', 'base');
-        formData.append('max_words_per_segment', style.maxWordsPerSegment || 3);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [tempTitle, setTempTitle] = useState('');
+  const titleInputRef = useRef(null);
 
-        const res = await fetch(`${BACKEND_URL}/api/transcribe`, {
-          method: 'POST',
-          body: formData
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.detail || 'Transcription failed');
-        }
-        const data = await res.json();
-        setSegments(data.segments);
-      } else if (backendAvailable && videoFilename) {
-        const res = await fetch(`${BACKEND_URL}/api/transcribe-saved`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            video_filename: videoFilename,
-            model_name: 'base',
-            max_words_per_segment: style.maxWordsPerSegment || 3
-          })
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.detail || 'Transcription failed');
-        }
-        const data = await res.json();
-        setSegments(data.segments);
-      }
-    } catch (err) {
-      console.error(err);
-      alert(`Transcription error: ${err.message}`);
-    } finally {
-      setIsTranscribing(false, '');
+  const startRename = () => {
+    setTempTitle(activeProjectTitle || 'Untitled Project');
+    setIsEditingTitle(true);
+    setTimeout(() => {
+      titleInputRef.current?.focus();
+      titleInputRef.current?.select();
+    }, 50);
+  };
+
+  const handleTitleCommit = () => {
+    setIsEditingTitle(false);
+    if (tempTitle && tempTitle.trim() && tempTitle.trim() !== activeProjectTitle) {
+      renameCurrentProject(tempTitle.trim());
     }
   };
 
+  const handleTitleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      handleTitleCommit();
+    } else if (e.key === 'Escape') {
+      setIsEditingTitle(false);
+    }
+  };
+
+  const currentModelInfo = modelsData?.models?.find((m) => m.id === selectedModel) || {
+    id: selectedModel,
+    name: MODEL_LABELS[selectedModel]?.name || selectedModel,
+    is_downloaded: true,
+    size_label: MODEL_LABELS[selectedModel]?.size || ''
+  };
+
   return (
-    <header className="glass-panel" style={{ padding: '10px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', zIndex: 50 }}>
-      {/* Brand Logo */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-        <div style={{ 
-          width: '34px', 
-          height: '34px', 
-          borderRadius: '10px', 
-          background: 'linear-gradient(135deg, #0284C7 0%, #38BDF8 100%)', 
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'center',
-          boxShadow: '0 4px 12px rgba(56, 189, 248, 0.4)'
-        }}>
-          <Film size={20} color="#FFFFFF" />
-        </div>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ fontSize: '17px', fontWeight: '800', letterSpacing: '-0.5px' }}>
-              Auto<span style={{ color: 'var(--accent-primary)' }}>Caption</span>
-            </span>
+    <header style={{
+      height: '48px',
+      padding: '0 16px',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: 'var(--glass-bg)',
+      backdropFilter: 'saturate(180%) blur(20px)',
+      borderBottom: '1px solid var(--border-subtle)',
+      userSelect: 'none',
+      zIndex: 50
+    }}>
+      {/* Left section: App Brand & Project Title */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <button
+          onClick={() => setCurrentView('hub')}
+          className="btn-secondary"
+          style={{
+            padding: '5px 11px',
+            borderRadius: 'var(--radius-pill)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            cursor: 'pointer'
+          }}
+          title="Return to Projects Hub"
+        >
+          <Folder size={13} />
+          <span style={{ fontSize: '11.5px', fontWeight: 600 }}>Projects</span>
+        </button>
+
+        <div style={{ width: '1px', height: '18px', background: 'var(--border-subtle)', margin: '0 2px' }} />
+
+        {/* Project Title with Apple inline click-to-rename */}
+        {isEditingTitle ? (
+          <input
+            ref={titleInputRef}
+            type="text"
+            value={tempTitle}
+            onChange={(e) => setTempTitle(e.target.value)}
+            onBlur={handleTitleCommit}
+            onKeyDown={handleTitleKeyDown}
+            style={{
+              fontSize: '13px',
+              fontWeight: '600',
+              letterSpacing: '-0.01em',
+              color: 'var(--text-primary)',
+              background: 'var(--bg-surface)',
+              border: '1.5px solid var(--btn-primary-bg)',
+              borderRadius: 'var(--radius-sm)',
+              padding: '2px 8px',
+              outline: 'none',
+              width: '180px',
+              height: '24px'
+            }}
+          />
+        ) : (
+          <div 
+            onClick={startRename}
+            style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '6px',
+              cursor: 'pointer',
+              padding: '4px 8px',
+              borderRadius: 'var(--radius-sm)',
+              transition: 'background var(--transition-fast)'
+            }}
+            title="Click to rename project"
+          >
             <span style={{ 
-              fontSize: '10px', 
-              fontWeight: '700', 
-              padding: '1px 6px', 
-              borderRadius: '999px', 
-              background: 'rgba(56, 189, 248, 0.15)', 
-              color: 'var(--accent-primary)',
-              border: '1px solid rgba(56, 189, 248, 0.3)'
+              fontSize: '13px', 
+              fontWeight: '600', 
+              letterSpacing: '-0.01em',
+              color: 'var(--text-primary)',
+              maxWidth: '180px',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis'
             }}>
-              STUDIO
+              {activeProjectTitle || 'Untitled Project'}
+            </span>
+            <span style={{
+              fontSize: '9.5px',
+              fontWeight: '600',
+              color: saveStatus === 'saving' 
+                ? 'var(--system-warning)' 
+                : (saveStatus === 'unsaved' ? 'var(--text-tertiary)' : 'var(--system-success)'),
+              display: 'flex',
+              alignItems: 'center',
+              gap: '3px'
+            }}>
+              ● {saveStatus === 'saving' ? 'Saving...' : (saveStatus === 'unsaved' ? 'Unsaved' : (lastSavedTime ? `Saved ${lastSavedTime}` : 'Saved'))}
             </span>
           </div>
-        </div>
+        )}
+
+        {isMediaLinked && (
+          <button 
+            type="button"
+            onClick={() => mediaOffline && activeProjectId && relinkProjectMedia(activeProjectId)}
+            style={{ 
+              fontSize: '10px', 
+              fontWeight: '600', 
+              padding: '2px 8px', 
+              borderRadius: 'var(--radius-pill)', 
+              background: mediaOffline ? 'rgba(239, 68, 68, 0.12)' : 'var(--bg-surface)', 
+              border: mediaOffline ? '1px solid rgba(239, 68, 68, 0.35)' : '1px solid var(--border-subtle)',
+              color: mediaOffline ? 'var(--system-error)' : 'var(--text-secondary)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              cursor: mediaOffline ? 'pointer' : 'default'
+            }}
+            title={mediaOffline ? `Media offline! Click to relink file: ${linkedSourcePath || ''}` : `Video File: ${linkedSourcePath || ''}`}
+          >
+            <Link2 size={11} />
+            <span>{mediaOffline ? 'Relink Offline Media' : 'Linked Video'}</span>
+          </button>
+        )}
       </div>
 
-      {/* Center Controls: Aspect Ratio & Safe Zones */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-        {/* Aspect Ratio Picker */}
-        <div style={{ 
-          display: 'flex', 
-          background: 'rgba(0,0,0,0.35)', 
-          padding: '3px', 
-          borderRadius: '8px',
-          border: '1px solid var(--border-color)'
-        }}>
+      {/* Center Controls: Segmented Aspect Ratio, Safe Zones, Model Selector */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        {/* Dynamic Match Source Aspect Ratio Indicator */}
+        <div 
+          className="match-source-badge"
+          title={videoWidth > 0 && videoHeight > 0 
+            ? `Canvas automatically matches source footage: ${aspectRatio} (${videoWidth} × ${videoHeight})` 
+            : 'Canvas automatically matches source video dimensions'}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-pill)',
+            padding: '4px 10px',
+            fontSize: '11px',
+            fontWeight: '600',
+            color: 'var(--text-primary)',
+            boxShadow: 'var(--shadow-subtle)',
+            userSelect: 'none'
+          }}
+        >
+          <Sparkles size={12} color="var(--accent-bright-blue)" />
+          <span>Match Source</span>
+          <span style={{ 
+            background: 'var(--accent-blue-subtle)', 
+            color: 'var(--accent-bright-blue)', 
+            padding: '1px 6px', 
+            borderRadius: '4px',
+            fontSize: '10px',
+            fontWeight: '700'
+          }}>
+            {aspectRatio || 'Source'}
+          </span>
+          {videoWidth > 0 && videoHeight > 0 && (
+            <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', fontWeight: '500' }}>
+              {videoWidth}×{videoHeight}
+            </span>
+          )}
+        </div>
+
+        {/* Layout Switcher (Canvas on Right / Center / Left) */}
+        <div className="segmented-control" title="Canvas Stage Layout Position">
           <button
-            onClick={() => setAspectRatio('9:16')}
-            title="9:16 TikTok / Reels / Shorts"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              padding: '5px 10px',
-              fontSize: '11px',
-              fontWeight: '700',
-              borderRadius: '6px',
-              border: 'none',
-              cursor: 'pointer',
-              background: aspectRatio === '9:16' ? 'var(--accent-primary)' : 'transparent',
-              color: aspectRatio === '9:16' ? '#000000' : 'var(--text-muted)'
-            }}
+            onClick={() => setCanvasLayout('left')}
+            className={`segmented-control-item ${canvasLayout === 'left' ? 'active' : ''}`}
+            title="Canvas on Left (Stage First)"
           >
-            <Smartphone size={13} /> 9:16
+            <PanelLeft size={12} />
+            <span>Left</span>
           </button>
           <button
-            onClick={() => setAspectRatio('1:1')}
-            title="1:1 Square Feed"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              padding: '5px 10px',
-              fontSize: '11px',
-              fontWeight: '700',
-              borderRadius: '6px',
-              border: 'none',
-              cursor: 'pointer',
-              background: aspectRatio === '1:1' ? 'var(--accent-primary)' : 'transparent',
-              color: aspectRatio === '1:1' ? '#000000' : 'var(--text-muted)'
-            }}
+            onClick={() => setCanvasLayout('center')}
+            className={`segmented-control-item ${canvasLayout === 'center' ? 'active' : ''}`}
+            title="Canvas in Center (Classic 3-Column)"
           >
-            <Square size={13} /> 1:1
+            <Columns size={12} />
+            <span>Center</span>
           </button>
           <button
-            onClick={() => setAspectRatio('16:9')}
-            title="16:9 Standard Wide"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              padding: '5px 10px',
-              fontSize: '11px',
-              fontWeight: '700',
-              borderRadius: '6px',
-              border: 'none',
-              cursor: 'pointer',
-              background: aspectRatio === '16:9' ? 'var(--accent-primary)' : 'transparent',
-              color: aspectRatio === '16:9' ? '#000000' : 'var(--text-muted)'
-            }}
+            onClick={() => setCanvasLayout('right')}
+            className={`segmented-control-item ${(!canvasLayout || canvasLayout === 'right') ? 'active' : ''}`}
+            title="Canvas on Right (9:16 Dedicated Tower)"
           >
-            <Tv size={13} /> 16:9
+            <PanelRight size={12} />
+            <span>Right</span>
           </button>
         </div>
 
@@ -194,67 +345,330 @@ export const Navbar = () => {
         <button
           onClick={toggleSafeZones}
           className="btn-secondary"
-          style={{ padding: '6px 10px', fontSize: '11px' }}
-          title="Toggle TikTok / Shorts UI Safe Zone Overlays"
+          style={{ 
+            padding: '5px 9px',
+            color: showSafeZones ? 'var(--text-primary)' : 'var(--text-secondary)',
+            borderColor: showSafeZones ? 'var(--accent-primary)' : 'var(--border-subtle)',
+            backgroundColor: showSafeZones ? 'var(--bg-active)' : 'var(--btn-secondary-bg)'
+          }}
+          title="Toggle Social UI Safe Zones Overlay"
         >
-          {showSafeZones ? <Eye size={13} color="var(--accent-primary)" /> : <EyeOff size={13} />}
-          <span>Safe Zones</span>
+          {showSafeZones ? <Eye size={12} color="var(--accent-primary)" /> : <EyeOff size={12} />}
+          <span style={{ fontSize: '11px' }}>Safe Zones</span>
         </button>
 
-        {/* Quick Transcribe CTA Button in Header */}
+        {/* Whisper AI Model Selector Dropdown */}
+        <div ref={dropdownRef} style={{ position: 'relative' }}>
+          <button
+            onClick={() => setModelDropdownOpen(!modelDropdownOpen)}
+            className="btn-secondary"
+            style={{
+              padding: '5px 9px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              backgroundColor: modelDropdownOpen ? 'var(--bg-surface-hover)' : 'var(--btn-secondary-bg)',
+              borderColor: modelDropdownOpen ? 'var(--border-hover)' : 'var(--border-subtle)'
+            }}
+            title="Select Whisper AI Speech Model"
+          >
+            <Cpu size={12} color="var(--text-secondary)" />
+            <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+              Model: <strong style={{ color: 'var(--text-primary)' }}>{currentModelInfo.name}</strong>
+            </span>
+            <span 
+              style={{ 
+                width: '6px', 
+                height: '6px', 
+                borderRadius: '50%', 
+                backgroundColor: currentModelInfo.is_downloaded ? 'var(--system-success)' : 'var(--system-warning)' 
+              }} 
+              title={currentModelInfo.is_downloaded ? 'Model Cached Locally' : 'Needs Download'}
+            />
+            <ChevronDown 
+              size={11} 
+              style={{ 
+                transform: modelDropdownOpen ? 'rotate(180deg)' : 'none', 
+                transition: 'transform 120ms ease',
+                color: 'var(--text-tertiary)'
+              }} 
+            />
+          </button>
+
+          {modelDropdownOpen && (
+            <div style={{
+              position: 'absolute',
+              top: 'calc(100% + 6px)',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              width: '290px',
+              backgroundColor: 'var(--bg-surface-elevated)',
+              backdropFilter: 'saturate(180%) blur(20px)',
+              border: '1px solid var(--border-hover)',
+              borderRadius: 'var(--radius-lg)',
+              boxShadow: 'var(--shadow-popover)',
+              padding: '8px',
+              zIndex: 200,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '4px'
+            }}>
+              <div style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'space-between', 
+                padding: '4px 6px 6px 6px', 
+                borderBottom: '1px solid var(--border-subtle)' 
+              }}>
+                <span style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Whisper Models
+                </span>
+                <button
+                  onClick={() => {
+                    setModelDropdownOpen(false);
+                    setSettingsModalOpen(true);
+                  }}
+                  className="btn-ghost"
+                  style={{ fontSize: '11px', padding: '2px 6px', color: 'var(--accent-bright-blue)' }}
+                >
+                  <Settings size={11} />
+                  <span>Manage</span>
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', maxHeight: '260px', overflowY: 'auto' }}>
+                {Object.keys(MODEL_LABELS).map((mid) => {
+                  const mInfo = modelsData?.models?.find(m => m.id === mid) || {
+                    id: mid,
+                    name: MODEL_LABELS[mid].name,
+                    is_downloaded: mid === 'base',
+                    size_label: MODEL_LABELS[mid].size,
+                    speed: MODEL_LABELS[mid].speed
+                  };
+                  const isSelected = selectedModel === mid;
+                  const isDownloaded = mInfo.is_downloaded;
+
+                  return (
+                    <button
+                      key={mid}
+                      onClick={() => {
+                        setSelectedModel(mid);
+                        setModelDropdownOpen(false);
+                      }}
+                      style={{
+                        padding: '7px 8px',
+                        borderRadius: 'var(--radius-md)',
+                        border: '1px solid transparent',
+                        background: isSelected ? 'var(--accent-blue-subtle)' : 'transparent',
+                        borderColor: isSelected ? 'var(--accent-primary)' : 'transparent',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        textAlign: 'left',
+                        transition: 'background var(--transition-fast)'
+                      }}
+                    >
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ 
+                            fontSize: '12px', 
+                            fontWeight: isSelected ? '600' : '500', 
+                            color: isSelected ? 'var(--accent-bright-blue)' : 'var(--text-primary)' 
+                          }}>
+                            {MODEL_LABELS[mid].name}
+                          </span>
+                          {mid === 'base' && (
+                            <span style={{ 
+                              fontSize: '8px', 
+                              fontWeight: '600', 
+                              padding: '1px 4px', 
+                              borderRadius: '3px', 
+                              background: 'var(--border-subtle)', 
+                              color: 'var(--text-secondary)' 
+                            }}>
+                              DEFAULT
+                            </span>
+                          )}
+                        </div>
+                        <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>
+                          {mInfo.speed || MODEL_LABELS[mid].speed} • {mInfo.size_label || MODEL_LABELS[mid].size}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        {isDownloaded ? (
+                          <span style={{ fontSize: '9px', fontWeight: '500', color: 'var(--system-success)' }}>
+                            Ready
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: '9px', fontWeight: '500', color: 'var(--text-tertiary)' }}>
+                            {mInfo.size_label || MODEL_LABELS[mid].size}
+                          </span>
+                        )}
+                        {isSelected && <Check size={13} color="var(--accent-bright-blue)" />}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Quick Auto-Caption Button */}
         <button
           onClick={handleQuickTranscribe}
-          className="btn-primary"
+          className="btn-secondary"
           disabled={isTranscribing}
           style={{
-            padding: '6px 14px',
-            fontSize: '12px',
-            background: 'linear-gradient(135deg, #0284C7 0%, #38BDF8 100%)',
-            boxShadow: '0 4px 14px rgba(56, 189, 248, 0.4)'
+            padding: '5px 10px',
+            fontSize: '11px',
+            borderColor: 'var(--border-subtle)',
+            color: 'var(--text-primary)',
+            backgroundColor: 'var(--btn-secondary-bg)'
           }}
-          title="Run Whisper word-level transcription on current video"
+          title="Run speech-to-text with selected AI model"
         >
           {isTranscribing ? (
             <>
-              <Loader2 size={14} className="animate-spin" />
+              <Loader2 size={12} className="animate-spin" />
               <span>Transcribing...</span>
             </>
           ) : (
             <>
-              <Sparkles size={14} />
-              <span>Auto-Caption (Whisper)</span>
+              <Sparkles size={12} color="var(--accent-primary)" />
+              <span>Auto-Caption</span>
             </>
           )}
         </button>
       </div>
 
-      {/* Right Action CTAs */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+      {/* Right Action CTAs: Theme Toggle, Help, Settings, Demo, Upload, Export */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <button
+          onClick={toggleTheme}
+          className="btn-secondary"
+          title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}
+          style={{ padding: '5px 8px', fontSize: '11px' }}
+        >
+          {theme === 'dark' ? (
+            <>
+              <Sun size={12} color="var(--text-primary)" />
+              <span>Light</span>
+            </>
+          ) : (
+            <>
+              <Moon size={12} color="var(--text-secondary)" />
+              <span>Dark</span>
+            </>
+          )}
+        </button>
+
+        <button
+          onClick={() => setHelpModalOpen(true)}
+          className="btn-secondary"
+          title="Studio Guide & Keyboard Shortcuts (?)"
+          style={{ padding: '5px 8px', fontSize: '11px' }}
+        >
+          <HelpCircle size={12} color="var(--text-secondary)" />
+          <span>Help</span>
+        </button>
+
+        <button
+          onClick={() => setSettingsModalOpen(true)}
+          className="btn-secondary"
+          title="Studio Settings & Models"
+          style={{ padding: '5px 10px', fontSize: '11px' }}
+        >
+          <Settings size={12} />
+          <span>Settings</span>
+        </button>
+
         <button
           onClick={loadDemoData}
           className="btn-secondary"
-          title="Reset or Load Demo Sample"
-          style={{ fontSize: '12px', padding: '6px 12px' }}
+          title="Load Sample Demo Video"
+          style={{ padding: '5px 10px', fontSize: '11px' }}
         >
-          <RotateCcw size={14} />
+          <RotateCcw size={12} />
           <span>Demo</span>
         </button>
 
         <button
-          onClick={() => setUploadModalOpen(true)}
+          onClick={() => setVocalExtractorOpen(true)}
           className="btn-secondary"
-          style={{ fontSize: '12px', padding: '6px 12px' }}
+          title="Extract & Isolate Vocals from Background Music"
+          style={{
+            padding: '5px 10px',
+            fontSize: '11px'
+          }}
         >
-          <Upload size={14} />
+          <Mic size={12} color="#E11D48" />
+          <span>Vocal Extractor</span>
+        </button>
+
+        <button
+          onClick={() => setUpscaleModalOpen(true)}
+          className="btn-secondary"
+          title="AI Super-Resolution Video Upscaler (Real-ESRGAN Vulkan 720p -> 1080p / 4K)"
+          style={{
+            padding: '5px 10px',
+            fontSize: '11px',
+            borderColor: 'rgba(56, 189, 248, 0.4)',
+            backgroundColor: 'rgba(56, 189, 248, 0.08)',
+            color: 'var(--accent-bright-blue)'
+          }}
+        >
+          <Sparkles size={12} color="var(--accent-bright-blue)" />
+          <span style={{ fontWeight: '600' }}>AI Upscale</span>
+        </button>
+
+        <button
+          onClick={triggerVideoPicker}
+          className="btn-secondary"
+          style={{ padding: '5px 10px', fontSize: '11px' }}
+          title="Import or replace video footage"
+        >
+          <Upload size={12} />
           <span>Upload</span>
         </button>
 
         <button
-          onClick={() => setExportModalOpen(true)}
-          className="btn-viral"
-          style={{ fontSize: '12px', padding: '7px 16px' }}
+          onClick={() => setBatchModalOpen(true)}
+          className="btn-secondary"
+          title="Batch Mode: Upload videos from multiple folders, apply global subtitle settings, and export all at once"
+          style={{
+            padding: '5px 12px',
+            fontSize: '11px',
+            borderColor: 'rgba(168, 85, 247, 0.5)',
+            backgroundColor: 'rgba(168, 85, 247, 0.14)',
+            color: '#C084FC',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            boxShadow: '0 2px 8px rgba(168, 85, 247, 0.15)'
+          }}
         >
-          <Download size={15} />
+          <Layers size={13} color="#C084FC" />
+          <span style={{ fontWeight: '700' }}>Batch Mode</span>
+          <span style={{
+            fontSize: '9px',
+            backgroundColor: '#A855F7',
+            color: '#FFFFFF',
+            padding: '1px 5px',
+            borderRadius: '4px',
+            fontWeight: '700',
+            letterSpacing: '0.4px'
+          }}>MULTI</span>
+        </button>
+
+        <button
+          onClick={() => setExportModalOpen(true)}
+          className="btn-primary"
+          style={{ padding: '6px 14px', fontSize: '12px', fontWeight: '600' }}
+        >
+          <Download size={13} />
           <span>Export</span>
         </button>
       </div>
