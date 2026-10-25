@@ -101,10 +101,11 @@ export async function checkMediaStatus(paths) {
     const res = await fetch(`${BACKEND_URL}/api/media/check-status`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(paths)
+      body: JSON.stringify({ paths })
     });
     if (!res.ok) return {};
-    return await res.json();
+    const data = await res.json();
+    return data.results || data;
   } catch (err) {
     console.warn('Media status check failed:', err);
     return {};
@@ -158,3 +159,22 @@ export async function pruneStorageUploads() {
   }
   return { freed_mb: 0 };
 }
+
+/**
+ * Detects whether a filename or identifier is a temporary/internal UUID or system-generated string,
+ * e.g. "3a7f8b9c1d2e.mp4", standard 32/36-char UUIDs, "export_...", "clean_upscaled_...", "proj-...", "batch-..."
+ */
+export function isTempOrGeneratedName(val) {
+  if (!val || typeof val !== 'string') return false;
+  const str = val.trim();
+  const withoutExt = str.replace(/\.[^/.]+$/, '');
+  // Hex string between 8 and 64 characters (e.g. 12-char fast uuid, 32-char md5/uuid hex, 64-char sha)
+  if (/^[a-f0-9]{8,64}$/i.test(withoutExt)) return true;
+  // Standard UUID format with hyphens (e.g. 123e4567-e89b-12d3-a456-426614174000)
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(withoutExt)) return true;
+  // System-generated prefixes
+  if (/^(export|overlay|clean_upscaled|clean|proj|batch)[_-][a-z0-9_-]+$/i.test(withoutExt)) return true;
+  return false;
+}
+
+export const isUuid = isTempOrGeneratedName;

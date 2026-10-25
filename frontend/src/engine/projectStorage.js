@@ -183,13 +183,17 @@ export async function saveProject(project) {
     console.warn('localStorage save warning:', e);
   }
 
-  // Async backend sync if available
+  // Backend sync if available
   try {
-    fetch(`${BACKEND_URL}/api/projects`, {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
+    await fetch(`${BACKEND_URL}/api/projects`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(fullProj)
+      body: JSON.stringify(fullProj),
+      signal: controller.signal
     }).catch(() => {});
+    clearTimeout(timeout);
   } catch (e) {}
 
   return fullProj;
@@ -220,7 +224,13 @@ export async function deleteProject(id) {
   } catch (e) {}
 
   try {
-    fetch(`${BACKEND_URL}/api/projects/${id}`, { method: 'DELETE' }).catch(() => {});
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
+    await fetch(`${BACKEND_URL}/api/projects/${id}`, {
+      method: 'DELETE',
+      signal: controller.signal
+    }).catch(() => {});
+    clearTimeout(timeout);
   } catch (e) {}
 }
 

@@ -358,7 +358,7 @@ def upscale_video(
         actual_upscaled_w = src_w * scale
         actual_upscaled_h = src_h * scale
         if actual_upscaled_w != out_w or actual_upscaled_h != out_h:
-            vf_filters.append(f"scale={out_w}:{out_h}:flags=lanczos")
+            vf_filters.append(f"scale={out_w}:{out_h}:flags=lanczos:out_color_matrix=bt709:out_range=tv")
 
         cmd_merge = [
             ffmpeg_exe, "-y",
@@ -374,6 +374,10 @@ def upscale_video(
 
         cmd_merge.extend([
             "-pix_fmt", "yuv420p",
+            "-colorspace", "bt709",
+            "-color_primaries", "bt709",
+            "-color_trc", "bt709",
+            "-color_range", "tv",
             "-r", str(fps)
         ])
 

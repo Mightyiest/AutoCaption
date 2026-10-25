@@ -691,6 +691,14 @@ export async function renderCompositeFrame({ canvas, videoFrame, scene, currentT
     const srcWidth = videoFrame.width || videoFrame.naturalWidth || targetWidth;
     const srcHeight = videoFrame.height || videoFrame.naturalHeight || targetHeight;
 
+    const userBrightness = scene.video.brightness || 100;
+    const userContrast = scene.video.contrast || 100;
+    if (userBrightness !== 100 || userContrast !== 100) {
+      ctx.filter = `brightness(${userBrightness}%) contrast(${userContrast}%)`;
+    } else {
+      ctx.filter = 'none';
+    }
+
     const fit = scene.video.fit || 'cover';
     if (fit === 'cover') {
       const scale = Math.max(targetWidth / srcWidth, targetHeight / srcHeight);
@@ -708,6 +716,8 @@ export async function renderCompositeFrame({ canvas, videoFrame, scene, currentT
       const dy = (targetHeight - drawH) / 2;
       ctx.drawImage(videoFrame, dx, dy, drawW, drawH);
     }
+
+    ctx.filter = 'none';
   }
 
   // 2. Draw styled caption overlay
@@ -716,7 +726,7 @@ export async function renderCompositeFrame({ canvas, videoFrame, scene, currentT
     await ensureFontLoaded(scene.style.fontFamily, scene.style.fontWeight, scene.style.fontStyle);
     const layout = measureCaptionLayout({ scene, segment: activeSegment, ctx });
     if (layout) {
-      drawCaptionFrame({ ctx, scene, layout, currentTime });
+      drawCaptionFrame({ ctx, scene, layout, currentTime, isPlaying: true });
     }
   }
 }

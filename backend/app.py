@@ -14,8 +14,8 @@ import datetime
 import time
 import hashlib
 import zipfile
-from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Request
+from typing import Optional, List, Dict, Any, Union
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Request, Body
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 import imageio_ffmpeg
 from transcriber import transcribe_media, scan_model_cache, trigger_model_download, get_model_download_status, delete_cached_model, get_models_cache_dir, setup_cuda_dlls, log_msg, LOG_HISTORY
-from renderer import render_captioned_video
+from renderer import render_captioned_video, render_hybrid_overlay_video
 from dom_renderer import render_captioned_video_dom
 from audio_separator import process_audio_separation, VOCALS_DIR
 from upscaler import is_upscaler_installed, ensure_upscaler_ready, upscale_video, AVAILABLE_MODELS, get_video_stream_info as get_upscaler_video_info
@@ -45,7 +45,7 @@ app = FastAPI(title="AutoCaption Studio API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -60,6 +60,7 @@ app.mount("/static/thumbnails", StaticFiles(directory=THUMBNAILS_DIR), name="thu
 RENDER_JOBS: Dict[str, Dict[str, Any]] = {}
 ACTIVE_RENDER_PROCESSES: Dict[str, subprocess.Popen] = {}
 SEPARATION_JOBS: Dict[str, Dict[str, Any]] = {}
+ACTIVE_SEPARATION_PROCESSES: Dict[str, subprocess.Popen] = {}
 UPSCALE_JOBS: Dict[str, Dict[str, Any]] = {}
 ACTIVE_UPSCALE_PROCESSES: Dict[str, subprocess.Popen] = {}
 
@@ -107,6 +108,10 @@ class RenderRequest(BaseModel):
     output_filename: Optional[str] = None
     ai_upscale: Optional[bool] = False
     ai_model: Optional[str] = "realesr-animevideov3"
+    fps: Optional[float] = None
+    video_quality: Optional[str] = None
+    brightness: Optional[float] = 1.0
+    contrast: Optional[float] = 1.0
 
 class UpscaleRequest(BaseModel):
     video_filename: Optional[str] = None
@@ -129,6 +134,9 @@ class TranscribeSavedRequest(BaseModel):
 class LinkPathRequest(BaseModel):
     file_path: str
 
+class CheckMediaStatusRequest(BaseModel):
+    paths: Optional[List[str]] = None
+
 class TranscribeLinkedRequest(BaseModel):
     file_path: str
     model_name: Optional[str] = "base"
@@ -148,6 +156,12 @@ class VocalModelActionRequest(BaseModel):
 class BatchZipRequest(BaseModel):
     filenames: List[str]
     zip_name: Optional[str] = "AutoCaption_Batch_Export.zip"
+
+class TagRec709Request(BaseModel):
+    file_path: Optional[str] = None
+    linked_path: Optional[str] = None
+    filename: Optional[str] = None
+    full_range: Optional[bool] = False
 
 def get_system_hardware_stats() -> dict:
     cpu_percent = psutil.cpu_percent(interval=None)
@@ -401,7 +415,15 @@ def probe_media_file(file_path: str) -> dict:
     if fps_m:
         fps = float(fps_m.group(1))
 
-    return {"duration": round(dur, 2), "width": w, "height": h, "fps": fps}
+    is_color_tagged = bool(re.search(r"(bt709|rec709|smpte170m|bt2020)", out, re.IGNORECASE))
+
+    return {
+        "duration": round(dur, 2),
+        "width": w,
+        "height": h,
+        "fps": fps,
+        "is_color_tagged": is_color_tagged
+    }
 
 def resolve_media_path(filename: Optional[str] = None, linked_path: Optional[str] = None) -> Optional[str]:
     """
@@ -572,7 +594,79 @@ def link_path_endpoint(req: LinkPathRequest):
         "width": probe.get("width", 1080),
         "height": probe.get("height", 1920),
         "fps": probe.get("fps", 30),
+        "is_color_tagged": probe.get("is_color_tagged", False),
         "stream_url": f"/api/media/stream?path={quoted_path}"
+    }
+
+@app.post("/api/media/tag-rec709")
+def tag_media_rec709_endpoint(req: TagRec709Request):
+    """
+    Losslessly injects Rec.709 VUI color metadata tags into an H.264 MP4 bitstream.
+    Executes in <1 second with zero quality loss (-c copy) and preserves all video frames bit-for-bit.
+    """
+    target_path = resolve_media_path(filename=req.filename, linked_path=req.linked_path or req.file_path)
+    if not target_path or not os.path.isfile(target_path):
+        raise HTTPException(status_code=404, detail="Media file not found on disk")
+
+    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    dir_name = os.path.dirname(target_path)
+    base_name, ext = os.path.splitext(os.path.basename(target_path))
+    clean_base = re.sub(r"_rec709(_tv|_pc)?$", "", base_name)
+    range_suffix = "_pc" if req.full_range else "_tv"
+    tagged_filename = f"{clean_base}_rec709{range_suffix}{ext}"
+    tagged_path = os.path.join(dir_name, tagged_filename)
+
+    # If the tagged file already exists and has valid color tags, return instantly
+    if os.path.isfile(tagged_path) and os.path.getsize(tagged_path) > 1000:
+        probe = probe_media_file(tagged_path)
+        if probe.get("is_color_tagged"):
+            quoted = urllib.parse.quote(tagged_path)
+            file_size_mb = round(os.path.getsize(tagged_path) / (1024 * 1024), 2)
+            log_msg("MEDIA", f"Using existing Rec.709 tagged file: '{tagged_filename}' ({file_size_mb} MB)")
+            return {
+                "success": True,
+                "tagged_path": tagged_path,
+                "filename": tagged_filename,
+                "size_mb": file_size_mb,
+                "duration": probe.get("duration", 0),
+                "width": probe.get("width", 1080),
+                "height": probe.get("height", 1920),
+                "fps": probe.get("fps", 30),
+                "is_color_tagged": True,
+                "stream_url": f"/api/media/stream?path={quoted}"
+            }
+
+    full_range_flag = 1 if req.full_range else 0
+    cmd = [
+        ffmpeg_exe, "-y",
+        "-i", target_path,
+        "-c", "copy",
+        "-bsf:v", f"h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1:video_full_range_flag={full_range_flag}",
+        "-color_range", "pc" if req.full_range else "tv",
+        "-movflags", "+faststart",
+        tagged_path
+    ]
+
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0 or not os.path.isfile(tagged_path):
+        raise HTTPException(status_code=500, detail=f"Rec.709 color tagging failed: {res.stderr}")
+
+    probe = probe_media_file(tagged_path)
+    quoted = urllib.parse.quote(tagged_path)
+    file_size_mb = round(os.path.getsize(tagged_path) / (1024 * 1024), 2)
+    log_msg("MEDIA", f"Losslessly injected Rec.709 color tags: '{tagged_filename}' ({file_size_mb} MB)")
+
+    return {
+        "success": True,
+        "tagged_path": tagged_path,
+        "filename": tagged_filename,
+        "size_mb": file_size_mb,
+        "duration": probe.get("duration", 0),
+        "width": probe.get("width", 1080),
+        "height": probe.get("height", 1920),
+        "fps": probe.get("fps", 30),
+        "is_color_tagged": True,
+        "stream_url": f"/api/media/stream?path={quoted}"
     }
 
 @app.get("/api/media/stream")
@@ -581,6 +675,15 @@ def stream_media_endpoint(path: str, request: Request):
     norm_path = os.path.normpath(urllib.parse.unquote(path))
     if not os.path.isfile(norm_path):
         raise HTTPException(status_code=404, detail="Media file not found on disk")
+
+    valid_media_exts = {
+        ".mp4", ".mov", ".mkv", ".webm", ".avi", ".wmv", ".m4v",
+        ".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".wma",
+        ".jpg", ".jpeg", ".png", ".webp"
+    }
+    _, ext = os.path.splitext(norm_path.lower())
+    if ext not in valid_media_exts:
+        raise HTTPException(status_code=403, detail="Forbidden media file type")
 
     file_size = os.path.getsize(norm_path)
     mime_type, _ = mimetypes.guess_type(norm_path)
@@ -696,13 +799,32 @@ def get_media_thumbnail_endpoint(
 
 
 @app.post("/api/media/check-status")
-def check_media_status_endpoint(paths: List[str]):
+def check_media_status_endpoint(body: Any = Body(...)):
     """Premiere Pro-style offline media check: verifies if linked files still exist on disk."""
+    raw_paths = []
+    if isinstance(body, dict):
+        raw_paths = body.get("paths", [])
+    elif isinstance(body, list):
+        raw_paths = body
+    elif hasattr(body, "paths"):
+        raw_paths = body.paths or []
+
     results = {}
-    for p in paths:
-        norm = os.path.normpath(p) if p else ""
-        results[p] = bool(norm and os.path.isfile(norm))
-    return results
+    for p in raw_paths:
+        if not p or not isinstance(p, str):
+            continue
+        norm = os.path.normpath(p)
+        exists = bool(norm and os.path.isfile(norm))
+        results[p] = exists
+        results[norm] = exists
+        results[norm.replace('\\', '/')] = exists
+        results[norm.replace('/', '\\')] = exists
+
+    return {
+        "status": "ok",
+        "results": results,
+        **results
+    }
 
 @app.post("/api/transcribe-linked")
 def transcribe_linked_endpoint(req: TranscribeLinkedRequest):
@@ -785,15 +907,20 @@ def save_project_endpoint(project_data: Dict[str, Any]):
         project_data["created_at"] = datetime.datetime.now().isoformat()
     project_data["updated_at"] = datetime.datetime.now().isoformat()
 
-    fpath = os.path.join(PROJECTS_DIR, f"{pid}.json")
+    clean_pid = re.sub(r'[^a-zA-Z0-9_-]', '', pid) or f"proj_{uuid.uuid4().hex[:10]}"
+    project_data["id"] = clean_pid
+    fpath = os.path.join(PROJECTS_DIR, f"{clean_pid}.json")
     with open(fpath, "w", encoding="utf-8") as f:
         json.dump(project_data, f, indent=2)
-    log_msg("PROJECTS", f"Saved project '{project_data.get('title', pid)}' -> {pid}.json")
+    log_msg("PROJECTS", f"Saved project '{project_data.get('title', clean_pid)}' -> {clean_pid}.json")
     return {"status": "saved", "project": project_data}
 
 @app.get("/api/projects/{project_id}")
 def get_project_endpoint(project_id: str):
-    fpath = os.path.join(PROJECTS_DIR, f"{project_id}.json")
+    clean_pid = re.sub(r'[^a-zA-Z0-9_-]', '', project_id)
+    if not clean_pid:
+        raise HTTPException(status_code=400, detail="Invalid project ID")
+    fpath = os.path.join(PROJECTS_DIR, f"{clean_pid}.json")
     if not os.path.exists(fpath):
         raise HTTPException(status_code=404, detail="Project not found")
     with open(fpath, "r", encoding="utf-8") as f:
@@ -804,11 +931,14 @@ def get_project_endpoint(project_id: str):
 
 @app.delete("/api/projects/{project_id}")
 def delete_project_endpoint(project_id: str):
-    fpath = os.path.join(PROJECTS_DIR, f"{project_id}.json")
+    clean_pid = re.sub(r'[^a-zA-Z0-9_-]', '', project_id)
+    if not clean_pid:
+        raise HTTPException(status_code=400, detail="Invalid project ID")
+    fpath = os.path.join(PROJECTS_DIR, f"{clean_pid}.json")
     if os.path.exists(fpath):
         os.remove(fpath)
-        log_msg("PROJECTS", f"Deleted project {project_id}")
-        return {"status": "deleted", "id": project_id}
+        log_msg("PROJECTS", f"Deleted project {clean_pid}")
+        return {"status": "deleted", "id": clean_pid}
     raise HTTPException(status_code=404, detail="Project not found")
 
 @app.post("/api/transcribe-saved")
@@ -909,6 +1039,9 @@ def _do_render_task(job_id: str, req: RenderRequest, source_path: str, output_pa
     def on_proc(proc):
         ACTIVE_RENDER_PROCESSES[job_id] = proc
 
+    def is_cancelled():
+        return RENDER_JOBS.get(job_id, {}).get("status") == "cancelled"
+
     def on_progress(pct_val):
         try:
             if isinstance(pct_val, dict):
@@ -993,8 +1126,14 @@ def _do_render_task(job_id: str, req: RenderRequest, source_path: str, output_pa
                     RENDER_JOBS[job_id]["message"] = "Phase 2/2: Burning in styled captions onto upscaled master..."
                     log_msg("RENDER", f"AI Super-Resolution pre-pass complete! Now rendering captions onto {clean_filename}.")
             except Exception as up_err:
+                if is_cancelled():
+                    log_msg("RENDER", f"Job {job_id} cancelled during upscaling, stopping pipeline.")
+                    return
                 log_msg("WARN", f"AI Super-Resolution pre-pass encountered issue ({up_err}), falling back to native source scaling.")
         
+        if is_cancelled():
+            return
+
         if req.engine_type == "dom":
             render_captioned_video_dom(
                 source_video_path=actual_source_path,
@@ -1005,8 +1144,11 @@ def _do_render_task(job_id: str, req: RenderRequest, source_path: str, output_pa
                 video_height=req.height or 1920,
                 video_duration=req.video_duration,
                 encoder_mode=req.encoder_mode or "gpu_nvenc",
+                brightness=req.brightness or 1.0,
+                contrast=req.contrast or 1.0,
                 on_proc_ready=on_proc,
-                progress_callback=on_progress
+                progress_callback=on_progress,
+                is_cancelled=is_cancelled
             )
         else:
             render_captioned_video(
@@ -1019,8 +1161,11 @@ def _do_render_task(job_id: str, req: RenderRequest, source_path: str, output_pa
                 video_duration=req.video_duration,
                 encoder_mode=req.encoder_mode or "gpu_nvenc",
                 preview_metrics=req.preview_metrics,
+                brightness=req.brightness or 1.0,
+                contrast=req.contrast or 1.0,
                 on_proc_ready=on_proc,
-                progress_callback=on_progress
+                progress_callback=on_progress,
+                is_cancelled=is_cancelled
             )
         
         if RENDER_JOBS[job_id].get("status") != "cancelled":
@@ -1090,6 +1235,158 @@ async def render_endpoint(req: RenderRequest, background_tasks: BackgroundTasks)
         "download_url": f"/static/exports/{export_filename}"
     }
 
+def _do_hybrid_render_task(
+    job_id: str,
+    overlay_webm_path: str,
+    source_path: str,
+    output_path: str,
+    export_filename: str,
+    width: int,
+    height: int,
+    fps: float,
+    encoder_mode: str,
+    video_quality: str,
+    brightness: float,
+    contrast: float,
+    video_duration: Optional[float] = None
+):
+    def is_cancelled():
+        return RENDER_JOBS.get(job_id, {}).get("status") == "cancelled"
+
+    def on_proc(proc):
+        ACTIVE_RENDER_PROCESSES[job_id] = proc
+
+    def on_progress(p_data: dict):
+        if is_cancelled():
+            return
+        pct = p_data.get("percent", 0)
+        RENDER_JOBS[job_id]["percent"] = min(99, pct)
+        RENDER_JOBS[job_id]["current_frame"] = p_data.get("current_frame", 0)
+        RENDER_JOBS[job_id]["total_frames"] = p_data.get("total_frames", 0)
+        RENDER_JOBS[job_id]["fps"] = p_data.get("fps", 0)
+        RENDER_JOBS[job_id]["message"] = p_data.get("message", "Overlaying previewer captions...")
+
+    try:
+        RENDER_JOBS[job_id]["percent"] = 5
+        RENDER_JOBS[job_id]["status"] = "rendering"
+        RENDER_JOBS[job_id]["stage"] = "rendering"
+        RENDER_JOBS[job_id]["message"] = "Phase 2/2: Compositing previewer captions with native video..."
+        log_msg("RENDER", f"[Hybrid Studio Overlay] Starting hardware composite for '{export_filename}' ({width}x{height} @ {fps}fps)")
+
+        render_hybrid_overlay_video(
+            source_video_path=source_path,
+            overlay_webm_path=overlay_webm_path,
+            output_video_path=output_path,
+            video_width=width,
+            video_height=height,
+            video_duration=video_duration,
+            encoder_mode=encoder_mode,
+            video_quality=video_quality,
+            brightness=brightness,
+            contrast=contrast,
+            on_proc_ready=on_proc,
+            progress_callback=on_progress,
+            is_cancelled=is_cancelled
+        )
+
+        if RENDER_JOBS[job_id].get("status") != "cancelled":
+            RENDER_JOBS[job_id]["percent"] = 100
+            RENDER_JOBS[job_id]["status"] = "done"
+            RENDER_JOBS[job_id]["stage"] = "completed"
+            RENDER_JOBS[job_id]["message"] = "Hybrid Studio export successfully completed!"
+            RENDER_JOBS[job_id]["download_url"] = f"/static/exports/{export_filename}"
+            log_msg("SUCCESS", f"[Hybrid Studio Overlay] Export complete: {export_filename}")
+    except Exception as e:
+        if RENDER_JOBS[job_id].get("status") != "cancelled":
+            RENDER_JOBS[job_id]["status"] = "error"
+            RENDER_JOBS[job_id]["stage"] = "error"
+            RENDER_JOBS[job_id]["error"] = str(e)
+            log_msg("ERROR", f"Hybrid render job {job_id} failed: {e}")
+    finally:
+        if job_id in ACTIVE_RENDER_PROCESSES:
+            del ACTIVE_RENDER_PROCESSES[job_id]
+        if os.path.exists(overlay_webm_path):
+            try:
+                os.remove(overlay_webm_path)
+            except Exception:
+                pass
+
+@app.post("/api/render-hybrid")
+async def render_hybrid_endpoint(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    video_filename: str = Form(""),
+    linked_path: Optional[str] = Form(None),
+    output_filename: Optional[str] = Form(None),
+    width: int = Form(1080),
+    height: int = Form(1920),
+    fps: float = Form(30.0),
+    encoder_mode: str = Form("gpu_nvenc"),
+    video_quality: str = Form("crf18"),
+    brightness: float = Form(1.0),
+    contrast: float = Form(1.0),
+    video_duration: Optional[float] = Form(None)
+):
+    source_path = resolve_media_path(video_filename, linked_path)
+    if not source_path:
+        log_msg("RENDER", f"Source file not found: video_filename='{video_filename}', linked_path='{linked_path}'")
+        raise HTTPException(status_code=404, detail="Source video file not found")
+
+    _prune_old_jobs()
+    job_id = uuid.uuid4().hex[:12]
+
+    # Save the incoming transparent WebM overlay file
+    overlay_filename = f"overlay_{job_id}.webm"
+    overlay_path = os.path.join(UPLOADS_DIR, overlay_filename)
+    try:
+        with open(overlay_path, "wb") as f_out:
+            content = await file.read()
+            f_out.write(content)
+    except Exception as save_err:
+        raise HTTPException(status_code=500, detail=f"Failed to save overlay track: {save_err}")
+
+    if output_filename and isinstance(output_filename, str) and output_filename.strip():
+        safe_name = re.sub(r'[/\\?%*:|"<>]+', '', output_filename).strip()
+        if safe_name.lower().endswith('.mp4'):
+            safe_name = safe_name[:-4]
+        export_filename = f"{safe_name}.mp4" if safe_name else f"export_{job_id}.mp4"
+    else:
+        export_filename = f"export_{job_id}.mp4"
+    output_path = os.path.join(EXPORTS_DIR, export_filename)
+
+    RENDER_JOBS[job_id] = {
+        "job_id": job_id,
+        "percent": 0,
+        "status": "queued",
+        "stage": "starting",
+        "message": "Initializing Hybrid Studio pipeline...",
+        "download_url": f"/static/exports/{export_filename}",
+        "error": None
+    }
+
+    background_tasks.add_task(
+        _do_hybrid_render_task,
+        job_id,
+        overlay_path,
+        source_path,
+        output_path,
+        export_filename,
+        width,
+        height,
+        fps,
+        encoder_mode,
+        video_quality,
+        brightness,
+        contrast,
+        video_duration
+    )
+
+    return {
+        "status": "queued",
+        "job_id": job_id,
+        "download_url": f"/static/exports/{export_filename}"
+    }
+
 @app.post("/api/render-cancel/{job_id}")
 def cancel_render_endpoint(job_id: str):
     if job_id in RENDER_JOBS:
@@ -1147,6 +1444,32 @@ def download_file_endpoint(filename: str):
         }
     )
 
+@app.post("/api/batch/save-export")
+async def save_batch_export_endpoint(
+    file: UploadFile = File(...),
+    filename: Optional[str] = Form(None)
+):
+    """
+    Saves a finished client-rendered video export directly into EXPORTS_DIR
+    with its real target filename for batch download and ZIP packaging.
+    """
+    target_name = filename or file.filename or "export.mp4"
+    clean_name = re.sub(r'[/\\?%*:|"<>]+', '', target_name).strip()
+    if not clean_name.lower().endswith(".mp4"):
+        clean_name += ".mp4"
+
+    out_path = os.path.join(EXPORTS_DIR, clean_name)
+    with open(out_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    file_size = os.path.getsize(out_path)
+    log_msg("EXPORT", f"Saved client export to backend storage: '{clean_name}' ({file_size} bytes)")
+    return {
+        "status": "saved",
+        "filename": clean_name,
+        "download_url": f"/static/exports/{clean_name}"
+    }
+
 @app.post("/api/batch/zip-exports")
 def create_batch_zip_endpoint(req: BatchZipRequest):
     """
@@ -1170,11 +1493,21 @@ def create_batch_zip_endpoint(req: BatchZipRequest):
             clean_fname = os.path.basename(urllib.parse.unquote(fname))
             fpath = os.path.join(EXPORTS_DIR, clean_fname)
             if not os.path.isfile(fpath):
+                if not clean_fname.lower().endswith(".mp4"):
+                    alt_path = os.path.join(EXPORTS_DIR, f"{clean_fname}.mp4")
+                    if os.path.isfile(alt_path):
+                        fpath = alt_path
+            if not os.path.isfile(fpath):
                 up_path = os.path.join(UPLOADS_DIR, clean_fname)
                 if os.path.isfile(up_path):
                     fpath = up_path
+            if not os.path.isfile(fpath):
+                resolved = resolve_media_path(clean_fname)
+                if resolved and os.path.isfile(resolved):
+                    fpath = resolved
             if os.path.isfile(fpath):
-                zf.write(fpath, arcname=clean_fname)
+                arcname = clean_fname if clean_fname.lower().endswith(".mp4") else f"{clean_fname}.mp4"
+                zf.write(fpath, arcname=arcname)
                 added_count += 1
 
     if added_count == 0:
@@ -1432,8 +1765,29 @@ def cancel_separation_endpoint(job_id: str):
     if job_id in SEPARATION_JOBS:
         SEPARATION_JOBS[job_id]["status"] = "cancelled"
         SEPARATION_JOBS[job_id]["error"] = "Cancelled by user"
+        log_msg("SEPARATOR", f"Separation job {job_id} cancelled by user")
+
+    proc = ACTIVE_SEPARATION_PROCESSES.get(job_id)
+    if proc:
+        try:
+            parent = psutil.Process(proc.pid)
+            for child in parent.children(recursive=True):
+                try:
+                    child.kill()
+                except Exception:
+                    pass
+            parent.kill()
+            proc.wait(timeout=1.0)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        if job_id in ACTIVE_SEPARATION_PROCESSES:
+            del ACTIVE_SEPARATION_PROCESSES[job_id]
+
     return {"status": "cancelled", "job_id": job_id}
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=False)
+    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True)

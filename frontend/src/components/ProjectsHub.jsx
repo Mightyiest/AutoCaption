@@ -46,7 +46,9 @@ export const ProjectsHub = () => {
     theme,
     toggleTheme,
     setBatchModalOpen,
-    addProjectsToBatchQueue
+    addProjectsToBatchQueue,
+    renameProject,
+    duplicateProject
   } = useEditorStore();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -196,7 +198,7 @@ export const ProjectsHub = () => {
 
       setNewLinkedFile({
         file: file,
-        filePath: null,
+        filePath: file.path || null,
         filename: file.name,
         sizeMb: sizeMb,
         duration: duration,
@@ -249,26 +251,27 @@ export const ProjectsHub = () => {
     setRenameModal({ isOpen: true, project: p, title: p.title });
   };
 
-  const handleConfirmRename = (e) => {
+  const handleConfirmRename = async (e) => {
     if (e) e.preventDefault();
     if (renameModal.project && renameModal.title.trim()) {
       const updatedTitle = renameModal.title.trim();
-      useEditorStore.getState().renameCurrentProject(updatedTitle);
+      const targetId = renameModal.project.id;
       setRenameModal({ isOpen: false, project: null, title: '' });
-      fetchProjectsList();
-      triggerToast('Project renamed!');
+      await renameProject(targetId, updatedTitle);
+      triggerToast(`Renamed to "${updatedTitle}"`);
     }
   };
 
   // Duplicate Handler
   const handleDuplicate = async (p) => {
-    await useEditorStore.getState().createNewProject({
-      aspect: p.aspectRatio || p.aspect || '9:16',
-      title: `Copy of ${p.title}`,
-      linkedPath: p.linkedSourcePath
-    });
-    fetchProjectsList();
-    triggerToast('Duplicated project!');
+    if (!p || !p.id) return;
+    try {
+      await duplicateProject(p.id);
+      triggerToast(`Duplicated "${p.title}"`);
+    } catch (err) {
+      console.error('Failed to duplicate project:', err);
+      triggerToast('Failed to duplicate project');
+    }
   };
 
   // Delete Handlers

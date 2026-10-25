@@ -40,6 +40,25 @@ class VideoSourceCache {
   constructor() {
     this.sinks = new Map();
     this.videoElements = new Map();
+    this.fileBlobUrls = new WeakMap();
+    this.fileKeys = new WeakMap();
+  }
+
+  _getSourceKey(fileOrUrl) {
+    if (!fileOrUrl) return null;
+    if (typeof fileOrUrl === 'string') return fileOrUrl;
+    if (!this.fileKeys.has(fileOrUrl)) {
+      this.fileKeys.set(fileOrUrl, `file_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`);
+    }
+    return this.fileKeys.get(fileOrUrl);
+  }
+
+  _getFileBlobUrl(file) {
+    if (!file) return null;
+    if (!this.fileBlobUrls.has(file)) {
+      this.fileBlobUrls.set(file, URL.createObjectURL(file));
+    }
+    return this.fileBlobUrls.get(file);
   }
 
   /**
@@ -47,7 +66,7 @@ class VideoSourceCache {
    */
   async ensureSink(fileOrUrl) {
     if (!fileOrUrl) return null;
-    const key = typeof fileOrUrl === 'string' ? fileOrUrl : (fileOrUrl.name || 'blob-video');
+    const key = this._getSourceKey(fileOrUrl);
     if (this.sinks.has(key)) {
       return this.sinks.get(key);
     }
@@ -170,7 +189,7 @@ class VideoSourceCache {
    * Fallback: Seeks an offscreen HTML5 video element to extract frame.
    */
   async seekVideoElementFrame({ file, url, time }) {
-    const videoUrl = url || (file ? URL.createObjectURL(file) : null);
+    const videoUrl = url || (file ? this._getFileBlobUrl(file) : null);
     if (!videoUrl) return null;
 
     let video = this.videoElements.get(videoUrl);
@@ -221,12 +240,17 @@ class VideoSourceCache {
     }
     this.sinks.clear();
 
-    for (const [, video] of this.videoElements) {
+    for (const [videoUrl, video] of this.videoElements) {
       try {
         video.src = '';
+        if (typeof videoUrl === 'string' && videoUrl.startsWith('blob:')) {
+          URL.revokeObjectURL(videoUrl);
+        }
       } catch (_) {}
     }
     this.videoElements.clear();
+    this.fileBlobUrls = new WeakMap();
+    this.fileKeys = new WeakMap();
   }
 }
 

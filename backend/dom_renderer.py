@@ -2,6 +2,8 @@ import os
 import sys
 import json
 import time
+import uuid
+import html
 import base64
 import shutil
 import subprocess
@@ -184,7 +186,7 @@ def generate_state_html(style: dict, words_data: list, video_width: int, video_h
             else:
                 emoji_html = f'<span class="emoji-sticker anim-{emoji_anim} pos-{emoji_pos}">{emoji_str}</span>'
 
-        word_text = w["text"]
+        word_text = html.escape(str(w.get("text", "")))
         if emoji_pos == "above_word" and emoji_html:
             spans.append(f'<span class="{" ".join(classes)}" style="position: relative;">{emoji_html}{word_text}</span>')
         elif emoji_pos == "inline" and emoji_html:
@@ -409,12 +411,16 @@ def extract_timeline_intervals(segments: list, total_duration: float) -> list:
 def capture_single_snapshot(browser_exe: str, html_path: str, out_png_path: str, video_width: int, video_height: int) -> bool:
     file_url = 'file:///' + os.path.abspath(html_path).replace('\\', '/')
     abs_out_png = os.path.abspath(out_png_path)
+    user_data_dir = os.path.join(os.path.dirname(abs_out_png), f"u_{uuid.uuid4().hex[:8]}")
     
     cmd = [
         browser_exe,
         "--headless=new",
         "--disable-gpu",
         "--hide-scrollbars",
+        f"--user-data-dir={user_data_dir}",
+        "--no-first-run",
+        "--no-default-browser-check",
         "--default-background-color=00000000",
         f"--window-size={video_width},{video_height}",
         f"--screenshot={abs_out_png}",
@@ -425,6 +431,12 @@ def capture_single_snapshot(browser_exe: str, html_path: str, out_png_path: str,
         return res.returncode == 0 and os.path.exists(abs_out_png)
     except (subprocess.TimeoutExpired, Exception):
         return False
+    finally:
+        if os.path.exists(user_data_dir):
+            try:
+                shutil.rmtree(user_data_dir, ignore_errors=True)
+            except Exception:
+                pass
 
 def get_video_stream_info(video_path: str) -> tuple:
     """Inspects video file to get exact (duration_seconds, fps). Defaults to (10.0, 30.0)."""
@@ -458,8 +470,11 @@ def render_captioned_video_dom(
     video_height: int = 1920,
     video_duration: float = None,
     encoder_mode: str = "gpu_nvenc",
+    brightness: float = 1.0,
+    contrast: float = 1.0,
     on_proc_ready = None,
-    progress_callback = None
+    progress_callback = None,
+    is_cancelled = None
 ) -> None:
     ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
     browser_exe = get_browser_executable()
@@ -514,12 +529,21 @@ def render_captioned_video_dom(
                 for t in tasks_to_render
             ]
             for f in futures:
-                f.result()
+                if is_cancelled and is_cancelled():
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    return
+                try:
+                    f.result()
+                except Exception:
+                    pass
                 completed_count += 1
                 if progress_callback and total_tasks > 0:
                     pct = int(completed_count / total_tasks * 50)
                     progress_callback(pct)
                     
+        if is_cancelled and is_cancelled():
+            return
+
         # 4. Generate FFmpeg Concat List
         concat_txt = os.path.join(temp_dir, "concat_frames.txt")
         with open(concat_txt, "w", encoding="utf-8") as f:
@@ -533,25 +557,70 @@ def render_captioned_video_dom(
             f.write(f"file '{last_p}'\n")
             
         # 5. FFmpeg Video Normalization + Resampled Concat Overlay (Preserves smooth 30/60 native FPS)
-        filter_complex = (
-            f"[0:v]scale={video_width}:{video_height}:force_original_aspect_ratio=increase,crop={video_width}:{video_height}[bg]; "
-            f"[1:v]fps=fps={native_fps},format=rgba[fg]; "
-            f"[bg][fg]overlay=0:0:eof_action=pass:repeatlast=1[outv]"
-        )
-        
-        cmd = [
-            ffmpeg_exe,
-            "-y",
-            "-i", source_video_path,
-            "-f", "concat",
-            "-safe", "0",
-            "-i", concat_txt,
-            "-filter_complex", filter_complex,
-            "-map", "[outv]",
-            "-map", "0:a?",
+        audio_exts = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".wma"}
+        _, src_ext = os.path.splitext(source_video_path.lower())
+        is_audio_only = src_ext in audio_exts
 
-            "-pix_fmt", "yuv420p",
-        ]
+        if is_audio_only:
+            filter_complex = (
+                f"[1:v]scale={video_width}:{video_height}:force_original_aspect_ratio=increase:out_color_matrix=bt709:out_range=tv,crop={video_width}:{video_height}[bg]; "
+                f"[2:v]fps=fps={native_fps},format=rgba[fg]; "
+                f"[bg][fg]overlay=0:0:eof_action=pass:repeatlast=1[outv]"
+            )
+            cmd = [
+                ffmpeg_exe,
+                "-y",
+                "-i", source_video_path,
+                "-f", "lavfi",
+                "-i", f"color=c=white:s={video_width}x{video_height}:r=30:d={effective_duration}",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", concat_txt,
+                "-filter_complex", filter_complex,
+                "-map", "[outv]",
+                "-map", "0:a",
+                "-shortest",
+                "-pix_fmt", "yuv420p",
+                "-colorspace", "bt709",
+                "-color_primaries", "bt709",
+                "-color_trc", "bt709",
+                "-color_range", "tv"
+            ]
+        else:
+            bg_filters = [
+                f"scale={video_width}:{video_height}:force_original_aspect_ratio=increase:out_color_matrix=bt709:out_range=tv",
+                f"crop={video_width}:{video_height}"
+            ]
+            eq_parts = []
+            if brightness and abs(brightness - 1.0) > 0.01:
+                eq_parts.append(f"brightness={round(brightness - 1.0, 3)}")
+            if contrast and abs(contrast - 1.0) > 0.01:
+                eq_parts.append(f"contrast={round(contrast, 3)}")
+            if eq_parts:
+                bg_filters.append(f"eq={':'.join(eq_parts)}")
+            bg_filter_str = ",".join(bg_filters)
+
+            filter_complex = (
+                f"[0:v]{bg_filter_str}[bg]; "
+                f"[1:v]fps=fps={native_fps},format=rgba[fg]; "
+                f"[bg][fg]overlay=0:0:eof_action=pass:repeatlast=1[outv]"
+            )
+            cmd = [
+                ffmpeg_exe,
+                "-y",
+                "-i", source_video_path,
+                "-f", "concat",
+                "-safe", "0",
+                "-i", concat_txt,
+                "-filter_complex", filter_complex,
+                "-map", "[outv]",
+                "-map", "0:a?",
+                "-pix_fmt", "yuv420p",
+                "-colorspace", "bt709",
+                "-color_primaries", "bt709",
+                "-color_trc", "bt709",
+                "-color_range", "tv"
+            ]
         
         if encoder_mode == "gpu_nvenc":
             cmd.extend(["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "20"])
@@ -568,7 +637,12 @@ def render_captioned_video_dom(
                 pass
         stdout, stderr = proc.communicate()
         
+        if is_cancelled and is_cancelled():
+            return
+
         if proc.returncode != 0:
+            if is_cancelled and is_cancelled():
+                return
             # Fallback to CPU libx264 if GPU NVENC was not supported
             if encoder_mode == "gpu_nvenc":
                 cmd_fallback = [c if c != "h264_nvenc" else "libx264" for c in cmd]
@@ -581,12 +655,14 @@ def render_captioned_video_dom(
                     except Exception:
                         pass
                 p2.communicate()
+                if is_cancelled and is_cancelled():
+                    return
                 if p2.returncode != 0:
                     raise RuntimeError(f"FFmpeg render error: {stderr}")
             else:
                 raise RuntimeError(f"FFmpeg render error: {stderr}")
                 
-        if progress_callback:
+        if progress_callback and not (is_cancelled and is_cancelled()):
             progress_callback(100)
             
     finally:

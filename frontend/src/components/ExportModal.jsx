@@ -18,10 +18,11 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { useEditorStore } from '../store/useEditorStore';
-import { ClientSceneExporter } from '../engine/sceneExporter';
+import { ClientSceneExporter, exportTransparentCaptionTrack } from '../engine/sceneExporter';
 import { sanitizeStyle } from '../engine/presets';
 import { measureAllSegmentsLayout } from '../engine/layoutMeasurer';
 import { videoSourceCache } from '../engine/videoSourceCache';
+import { isTempOrGeneratedName } from '../engine/mediaLinker';
 
 const BACKEND_URL = 'http://127.0.0.1:8000';
 
@@ -32,6 +33,7 @@ export const ExportModal = () => {
     videoFile,
     videoUrl,
     videoFilename,
+    originalFilename,
     videoFps,
     videoWidth,
     videoHeight,
@@ -47,20 +49,27 @@ export const ExportModal = () => {
     replaceProjectVideo,
     setUpscaleModalOpen,
     lastExportResult,
-    setLastExportResult
+    setLastExportResult,
+    videoBrightness,
+    videoContrast
   } = useEditorStore();
 
   const getCleanProjectBase = () => {
-    const raw = (activeProjectTitle || videoFilename || 'Untitled Project').trim();
-    return raw
+    let raw = originalFilename || (videoFile && videoFile.name) || (linkedSourcePath && linkedSourcePath.split(/[/\\]/).pop());
+    if (!raw || isTempOrGeneratedName(raw)) {
+      raw = (!isTempOrGeneratedName(activeProjectTitle) && activeProjectTitle) ? activeProjectTitle : (!isTempOrGeneratedName(videoFilename) ? videoFilename : 'Untitled Project');
+    }
+    const clean = raw
       .replace(/\.[^/.]+$/, '')
       .replace(/[/\\?%*:|"<>]/g, '')
-      .trim() || 'Untitled Project';
+      .replace(/_captioned$/i, '')
+      .trim();
+    return clean || 'Untitled Project';
   };
 
   // Compute native video dimensions
-  const nativeW = videoWidth > 0 ? videoWidth : (aspectRatio === '16:9' ? 1280 : aspectRatio === '1:1' ? 720 : aspectRatio === '4:3' ? 960 : 720);
-  const nativeH = videoHeight > 0 ? videoHeight : (aspectRatio === '16:9' ? 720 : aspectRatio === '1:1' ? 720 : aspectRatio === '4:3' ? 720 : 1280);
+  const nativeW = videoWidth > 0 ? videoWidth : (aspectRatio === '16:9' ? 1280 : aspectRatio === '1:1' ? 720 : aspectRatio === '3:4' ? 1080 : aspectRatio === '4:3' ? 960 : 720);
+  const nativeH = videoHeight > 0 ? videoHeight : (aspectRatio === '16:9' ? 720 : aspectRatio === '1:1' ? 720 : aspectRatio === '3:4' ? 1440 : aspectRatio === '4:3' ? 720 : 1280);
 
   // Automatically detect if current video is already high-resolution or upscaled
   const isAlreadyUpscaled = Boolean(
@@ -70,7 +79,7 @@ export const ExportModal = () => {
     (nativeW >= 1920 || nativeH >= 1920)
   );
 
-  const [selectedAspect, setSelectedAspect] = useState(aspectRatio || '9:16');
+  const [selectedAspect, setSelectedAspect] = useState(aspectRatio || 'source');
   const [aiUpscale, setAiUpscale] = useState(!isAlreadyUpscaled);
   const [aiModel, setAiModel] = useState('realesr-animevideov3');
   const [cleanResultUrl, setCleanResultUrl] = useState(null);
@@ -84,6 +93,12 @@ export const ExportModal = () => {
           { id: `${srcW}x${srcH}`, label: 'Original Size (1x)', sub: `${srcW} × ${srcH} Native`, tier: 'original' },
           { id: '1920x1080', label: 'Full HD 1080p', sub: '1920 × 1080', tier: '1080p' },
           { id: '3840x2160', label: '4K Ultra HD', sub: '3840 × 2160', tier: '4k' }
+        ];
+      case '3:4':
+        return [
+          { id: `${srcW}x${srcH}`, label: 'Original Size (1x)', sub: `${srcW} × ${srcH} Native`, tier: 'original' },
+          { id: '1080x1440', label: 'Full HD 1080p', sub: '1080 × 1440', tier: '1080p' },
+          { id: '2160x2880', label: '4K Ultra HD', sub: '2160 × 2880', tier: '4k' }
         ];
       case '4:3':
         return [
@@ -104,22 +119,26 @@ export const ExportModal = () => {
           { id: '2160x2700', label: '4K Ultra HD', sub: '2160 × 2700', tier: '4k' }
         ];
       case '9:16':
-      default:
         return [
           { id: `${srcW}x${srcH}`, label: 'Original Size (1x)', sub: `${srcW} × ${srcH} Native`, tier: 'original' },
           { id: '1080x1920', label: 'Full HD 1080p', sub: '1080 × 1920', tier: '1080p' },
           { id: '2160x3840', label: '4K Ultra HD', sub: '2160 × 3840', tier: '4k' }
         ];
+      default:
+        return [
+          { id: `${srcW}x${srcH}`, label: 'Original Size (1x)', sub: `${srcW} × ${srcH} Native`, tier: 'original' },
+          { id: `${srcW >= 1080 ? srcW : Math.round(srcW * (1080 / Math.max(1, srcH)))}x${srcH >= 1080 ? srcH : 1080}`, label: 'Full HD 1080p', sub: 'Proportional 1080p', tier: '1080p' },
+          { id: `${srcW * 2}x${srcH * 2}`, label: '4K Ultra HD', sub: `${srcW * 2} × ${srcH * 2}`, tier: '4k' }
+        ];
     }
   };
 
   const resolutionTiers = getResolutionTiers(selectedAspect, nativeW, nativeH);
-  const [resolution, setResolution] = useState(
-    aspectRatio === '9:16' ? '1080x1920' : aspectRatio === '1:1' ? '1080x1080' : aspectRatio === '4:3' ? '1440x1080' : '1920x1080'
-  );
+  const [resolution, setResolution] = useState(`${nativeW}x${nativeH}`);
   const [quality, setQuality] = useState('high'); // 'high' | 'very_high' | 'medium'
   const [targetFps, setTargetFps] = useState('source'); // 'source' | '30' | '60'
   const [encoderMode] = useState('gpu_nvenc'); // 'gpu_nvenc' | 'cpu'
+  const [renderEngine, setRenderEngine] = useState('hybrid'); // 'hybrid' (100% Colors & Fluidity + 100% Preview Text) | 'backend' | 'client_canvas'
 
   const [isExporting, setIsExporting] = useState(false);
   const [exportStats, setExportStats] = useState({ percent: 0, currentFrame: 0, totalFrames: 0, fps: 0, etaSeconds: 0, stage: 'idle', message: '' });
@@ -127,6 +146,7 @@ export const ExportModal = () => {
   const [errorMessage, setErrorMessage] = useState(null);
 
   const clientExporterRef = useRef(null);
+  const overlayCancelledRef = useRef(false);
   const pollIntervalRef = useRef(null);
   const activeJobIdRef = useRef(null);
 
@@ -218,12 +238,20 @@ export const ExportModal = () => {
 
       // If video is already upscaled, default aiUpscale to false to prevent redundant 2-minute re-runs
       setAiUpscale(!isAlreadyUpscaled);
+
+      // Default aspect ratio and resolution tier to match source video
+      const initialAspect = aspectRatio || 'source';
+      setSelectedAspect(initialAspect);
+      const initialTiers = getResolutionTiers(initialAspect, nativeW, nativeH);
+      const originalTier = initialTiers.find(t => t.tier === 'original') || initialTiers[0];
+      setResolution(originalTier ? originalTier.id : `${nativeW}x${nativeH}`);
     }
-  }, [isExportModalOpen, activeProjectId, activeProjectTitle, videoFilename, isAlreadyUpscaled]);
+  }, [isExportModalOpen, activeProjectId, activeProjectTitle, videoFilename, isAlreadyUpscaled, nativeW, nativeH, aspectRatio]);
 
   if (!isExportModalOpen) return null;
 
   const handleCancelExport = async () => {
+    overlayCancelledRef.current = true;
     if (clientExporterRef.current) {
       clientExporterRef.current.cancel();
       clientExporterRef.current = null;
@@ -289,6 +317,34 @@ export const ExportModal = () => {
       let upscaledData = null;
       let upscaledCleanUrl = null;
 
+      let effectiveFilename = videoFilename || (linkedSourcePath ? linkedSourcePath.split(/[/\\]/).pop() : (videoFile ? videoFile.name : ''));
+
+      // If user loaded a file in memory and it is not on backend disk, auto-upload first
+      if (backendAvailable && videoFile instanceof File && !linkedSourcePath) {
+        try {
+          setExportStats((prev) => ({
+            ...prev,
+            percent: 4,
+            stage: 'uploading',
+            message: 'Uploading source video to server...'
+          }));
+          const formData = new FormData();
+          formData.append('file', videoFile);
+          const uploadRes = await fetch(`${BACKEND_URL}/api/upload-video`, {
+            method: 'POST',
+            body: formData
+          });
+          if (uploadRes.ok) {
+            const uploadData = await uploadRes.json();
+            if (uploadData.video_filename) {
+              effectiveFilename = uploadData.video_filename;
+            }
+          }
+        } catch (upErr) {
+          console.warn('Source auto-upload fallback error:', upErr);
+        }
+      }
+
       // ---------------------------------------------------------------------
       // PHASE 1: AI Super-Resolution (Real-ESRGAN Vulkan) if enabled
       // ---------------------------------------------------------------------
@@ -299,34 +355,6 @@ export const ExportModal = () => {
           stage: 'upscaling',
           message: 'Phase 1/2: Preparing source video for AI Super-Resolution...'
         }));
-
-        let effectiveFilename = videoFilename || (linkedSourcePath ? linkedSourcePath.split(/[/\\]/).pop() : (videoFile ? videoFile.name : ''));
-
-        // If user loaded a file in memory and it is not on backend disk, auto-upload first
-        if (videoFile instanceof File && !linkedSourcePath) {
-          try {
-            setExportStats((prev) => ({
-              ...prev,
-              percent: 6,
-              stage: 'uploading',
-              message: 'Uploading source video to AI engine...'
-            }));
-            const formData = new FormData();
-            formData.append('file', videoFile);
-            const uploadRes = await fetch(`${BACKEND_URL}/api/upload-video`, {
-              method: 'POST',
-              body: formData
-            });
-            if (uploadRes.ok) {
-              const uploadData = await uploadRes.json();
-              if (uploadData.video_filename) {
-                effectiveFilename = uploadData.video_filename;
-              }
-            }
-          } catch (upErr) {
-            console.warn('Source auto-upload fallback error:', upErr);
-          }
-        }
 
         const upscaleScale = (w <= nativeW * 2.2 && h <= nativeH * 2.2) ? 2 : 4;
         const upscalePayload = {
@@ -450,10 +478,13 @@ export const ExportModal = () => {
         videoSourceCache.clear();
         effectiveVideoUrl = upscaledBlobUrl;
         effectiveVideoFile = upscaledFile;
+        if (upscaledData.output_filename) {
+          effectiveFilename = upscaledData.output_filename;
+        }
       }
 
       // ---------------------------------------------------------------------
-      // PHASE 2: Client Canvas Video Export (100% Visual Parity)
+      // PHASE 2: Video Caption Rendering & Encoding (100% Color & Gamma Parity)
       // ---------------------------------------------------------------------
       setExportStats({
         percent: aiUpscale ? 72 : 5,
@@ -463,8 +494,8 @@ export const ExportModal = () => {
         etaSeconds: 0,
         stage: 'rendering',
         message: aiUpscale
-          ? 'Phase 2/2: Burning in styled captions with 100% parity...'
-          : 'Encoding video frames with styled captions...'
+          ? 'Phase 2/2: Burning in styled captions with 100% color parity...'
+          : 'Encoding video frames with 100% color parity...'
       });
 
       let calculatedFps = 30;
@@ -478,61 +509,342 @@ export const ExportModal = () => {
 
       const targetDuration = (upscaledData && upscaledData.duration) ? upscaledData.duration : (duration || 10);
 
-      const exporter = new ClientSceneExporter({
-        width: w,
-        height: h,
-        fps: calculatedFps,
-        format: 'mp4',
-        quality
-      });
-      clientExporterRef.current = exporter;
+      if (renderEngine === 'hybrid' && backendAvailable && effectiveFilename) {
+        // Hybrid Studio Overlay Pipeline (100% Original Video Color + 100% Previewer Caption Animation & Emojis)
+        overlayCancelledRef.current = false;
+        setExportStats({
+          percent: aiUpscale ? 73 : 6,
+          currentFrame: 0,
+          totalFrames: 0,
+          fps: calculatedFps,
+          etaSeconds: 0,
+          stage: 'rendering',
+          message: 'Step 1/2: Generating previewer caption track (WebM alpha)...'
+        });
 
-      const blob = await exporter.exportVideo({
-        videoFile: effectiveVideoFile,
-        videoUrl: effectiveVideoUrl,
-        duration: targetDuration,
-        segments,
-        style: sanitizeStyle(style),
-        onProgress: (stats) => {
-          const basePct = aiUpscale ? 72 : 5;
-          const pctRange = aiUpscale ? 27 : 94;
-          const combinedPercent = Math.min(99, Math.round(basePct + ((stats.percent || 0) / 100) * pctRange));
+        // 1. Render transparent caption track (WebM with alpha) in browser
+        const overlayBlob = await exportTransparentCaptionTrack({
+          width: w,
+          height: h,
+          fps: calculatedFps,
+          duration: targetDuration,
+          segments,
+          style: sanitizeStyle(style),
+          onProgress: (stats) => {
+            const basePct = aiUpscale ? 73 : 6;
+            const pctRange = aiUpscale ? 12 : 36;
+            const combinedPercent = Math.min(99, Math.round(basePct + ((stats.percent || 0) / 100) * pctRange));
+            setExportStats({
+              percent: combinedPercent,
+              currentFrame: stats.currentFrame,
+              totalFrames: stats.totalFrames,
+              fps: stats.fps || 0,
+              etaSeconds: stats.etaSeconds,
+              stage: 'rendering',
+              message: `Step 1/2 [Preview Engine]: Captions ${stats.currentFrame}/${stats.totalFrames} (${Math.round((stats.percent || 0))}%)`
+            });
+          },
+          isCancelledRef: overlayCancelledRef
+        });
 
-          setExportStats({
-            percent: combinedPercent,
-            currentFrame: stats.currentFrame,
-            totalFrames: stats.totalFrames,
-            fps: stats.fps || 0,
-            etaSeconds: stats.etaSeconds,
-            stage: 'rendering',
-            message: aiUpscale
-              ? `Phase 2/2: Frame ${stats.currentFrame}/${stats.totalFrames} (100% Canvas Parity)`
-              : `Encoding frame ${stats.currentFrame}/${stats.totalFrames}`
+        if (overlayCancelledRef.current) {
+          throw new Error('Export cancelled by user');
+        }
+
+        // 2. Upload transparent caption track and run hardware NVENC composite on backend
+        setExportStats((prev) => ({
+          ...prev,
+          percent: aiUpscale ? 86 : 43,
+          stage: 'rendering',
+          message: 'Step 2/2: Burning captions onto native video bitstream (Hardware NVENC)...'
+        }));
+
+        const formData = new FormData();
+        formData.append('file', overlayBlob, 'captions_overlay.webm');
+        formData.append('video_filename', effectiveFilename);
+        if (linkedSourcePath && !upscaledData) {
+          formData.append('linked_path', linkedSourcePath);
+        }
+        formData.append('output_filename', finalFilename);
+        formData.append('width', String(w));
+        formData.append('height', String(h));
+        formData.append('fps', String(calculatedFps));
+        formData.append('encoder_mode', encoderMode || 'gpu_nvenc');
+        formData.append('video_quality', quality === 'very_high' ? 'crf18' : quality === 'medium' ? 'crf26' : 'crf20');
+        formData.append('brightness', String((videoBrightness || 100) / 100));
+        formData.append('contrast', String((videoContrast || 100) / 100));
+        formData.append('video_duration', String(targetDuration));
+
+        const renderRes = await fetch(`${BACKEND_URL}/api/render-hybrid`, {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!renderRes.ok) {
+          const errData = await renderRes.json().catch(() => ({}));
+          throw new Error(errData.detail || 'Failed to start Hybrid Studio rendering job');
+        }
+
+        const renderData = await renderRes.json();
+        const jobId = renderData.job_id;
+        activeJobIdRef.current = jobId;
+
+        // Poll render progress until completion
+        const renderResult = await new Promise((resolve, reject) => {
+          pollIntervalRef.current = setInterval(async () => {
+            try {
+              const pRes = await fetch(`${BACKEND_URL}/api/render-progress/${jobId}`);
+              if (pRes.ok) {
+                const pData = await pRes.json();
+                if (pData.status === 'cancelled') {
+                  if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+                  pollIntervalRef.current = null;
+                  reject(new Error('Export cancelled'));
+                  return;
+                }
+                if (pData.status === 'error') {
+                  if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+                  pollIntervalRef.current = null;
+                  reject(new Error(pData.error || 'Video rendering failed'));
+                  return;
+                }
+
+                const rawPercent = Math.max(0, Math.min(100, typeof pData.percent === 'number' ? pData.percent : 0));
+                const basePct = aiUpscale ? 86 : 43;
+                const pctRange = aiUpscale ? 13 : 56;
+                const combinedPercent = Math.min(99, Math.round(basePct + (rawPercent / 100) * pctRange));
+
+                setExportStats({
+                  percent: combinedPercent,
+                  currentFrame: pData.current_frame || 0,
+                  totalFrames: pData.total_frames || 0,
+                  fps: pData.fps || 0,
+                  etaSeconds: pData.eta_seconds || 0,
+                  stage: 'rendering',
+                  message: pData.message || `Step 2/2 [Hardware NVENC]: Frame ${pData.current_frame || 0}/${pData.total_frames || 0}`
+                });
+
+                if (pData.status === 'done') {
+                  if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+                  pollIntervalRef.current = null;
+                  resolve(pData);
+                }
+              }
+            } catch (pollErr) {
+              console.warn('Hybrid render progress polling error:', pollErr);
+            }
+          }, 350);
+        });
+
+        activeJobIdRef.current = null;
+
+        const downloadPath = renderResult.download_url || renderData.download_url;
+        const cleanExportUrl = downloadPath?.startsWith('http')
+          ? downloadPath
+          : `${BACKEND_URL}${downloadPath}`;
+
+        setExportResultUrl(cleanExportUrl);
+        if (renderResult.clean_download_url) {
+          setCleanResultUrl(`${BACKEND_URL}${renderResult.clean_download_url}`);
+        }
+
+        setExportStats({
+          percent: 100,
+          currentFrame: 0,
+          totalFrames: 0,
+          fps: 0,
+          etaSeconds: 0,
+          stage: 'completed',
+          message: 'Export Complete!'
+        });
+        setIsExporting(false);
+
+        if (typeof setLastExportResult === 'function') {
+          setLastExportResult({
+            projectId: activeProjectId,
+            exportResultUrl: cleanExportUrl,
+            cleanResultUrl: renderResult.clean_download_url ? `${BACKEND_URL}${renderResult.clean_download_url}` : (upscaledCleanUrl || cleanResultUrl || null),
+            finalFilename,
+            timestamp: Date.now()
           });
         }
-      });
+      } else if (renderEngine === 'backend' && backendAvailable && effectiveFilename) {
+        // High-Fidelity Backend FFmpeg / ASS Rendering (Server Hardware NVENC)
+        const measured = await measureAllSegmentsLayout(segments, sanitizeStyle(style), w, h);
+        const renderPayload = {
+          video_filename: effectiveFilename,
+          linked_path: (upscaledData ? null : (linkedSourcePath || null)),
+          segments: (measured && (measured.segments || measured.measuredSegments)) ? (measured.segments || measured.measuredSegments) : segments,
+          style: sanitizeStyle(style),
+          width: w,
+          height: h,
+          video_duration: targetDuration,
+          encoder_mode: encoderMode || 'gpu_nvenc',
+          engine_type: 'ass',
+          preview_metrics: (measured && (measured.preview_metrics || measured.previewMetrics)) ? (measured.preview_metrics || measured.previewMetrics) : null,
+          output_filename: finalFilename,
+          fps: calculatedFps,
+          video_quality: quality === 'very_high' ? 'crf18' : quality === 'medium' ? 'crf26' : 'crf20',
+          brightness: (videoBrightness || 100) / 100,
+          contrast: (videoContrast || 100) / 100
+        };
 
-      const blobUrl = URL.createObjectURL(blob);
-      setExportResultUrl(blobUrl);
-      setExportStats({
-        percent: 100,
-        currentFrame: 0,
-        totalFrames: 0,
-        fps: 0,
-        etaSeconds: 0,
-        stage: 'completed',
-        message: 'Export Complete!'
-      });
-      setIsExporting(false);
-
-      if (typeof setLastExportResult === 'function') {
-        setLastExportResult({
-          projectId: activeProjectId,
-          exportResultUrl: blobUrl,
-          cleanResultUrl: upscaledCleanUrl || cleanResultUrl || null,
-          finalFilename,
-          timestamp: Date.now()
+        const renderRes = await fetch(`${BACKEND_URL}/api/render`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(renderPayload)
         });
+
+        if (!renderRes.ok) {
+          const errData = await renderRes.json().catch(() => ({}));
+          throw new Error(errData.detail || 'Failed to start video rendering job');
+        }
+
+        const renderData = await renderRes.json();
+        const jobId = renderData.job_id;
+        activeJobIdRef.current = jobId;
+
+        // Poll render progress until completion
+        const renderResult = await new Promise((resolve, reject) => {
+          pollIntervalRef.current = setInterval(async () => {
+            try {
+              const pRes = await fetch(`${BACKEND_URL}/api/render-progress/${jobId}`);
+              if (pRes.ok) {
+                const pData = await pRes.json();
+                if (pData.status === 'cancelled') {
+                  if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+                  pollIntervalRef.current = null;
+                  reject(new Error('Export cancelled'));
+                  return;
+                }
+                if (pData.status === 'error') {
+                  if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+                  pollIntervalRef.current = null;
+                  reject(new Error(pData.error || 'Video rendering failed'));
+                  return;
+                }
+
+                const rawPercent = Math.max(0, Math.min(100, typeof pData.percent === 'number' ? pData.percent : 0));
+                const basePct = aiUpscale ? 72 : 5;
+                const pctRange = aiUpscale ? 27 : 94;
+                const combinedPercent = Math.min(99, Math.round(basePct + (rawPercent / 100) * pctRange));
+
+                setExportStats({
+                  percent: combinedPercent,
+                  currentFrame: pData.current_frame || 0,
+                  totalFrames: pData.total_frames || 0,
+                  fps: pData.fps || 0,
+                  etaSeconds: pData.eta_seconds || 0,
+                  stage: 'rendering',
+                  message: aiUpscale
+                    ? `Phase 2/2: Burning captions (Frame ${pData.current_frame || 0}/${pData.total_frames || 0})`
+                    : `Encoding frame ${pData.current_frame || 0}/${pData.total_frames || 0} ${pData.fps > 0 ? `(${pData.fps} FPS)` : ''}`
+                });
+
+                if (pData.status === 'done') {
+                  if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+                  pollIntervalRef.current = null;
+                  resolve(pData);
+                }
+              }
+            } catch (pollErr) {
+              console.warn('Render progress polling error:', pollErr);
+            }
+          }, 350);
+        });
+
+        activeJobIdRef.current = null;
+
+        const downloadPath = renderResult.download_url || renderData.download_url;
+        const cleanExportUrl = downloadPath?.startsWith('http')
+          ? downloadPath
+          : `${BACKEND_URL}${downloadPath}`;
+
+        setExportResultUrl(cleanExportUrl);
+        if (renderResult.clean_download_url) {
+          setCleanResultUrl(`${BACKEND_URL}${renderResult.clean_download_url}`);
+        }
+
+        setExportStats({
+          percent: 100,
+          currentFrame: 0,
+          totalFrames: 0,
+          fps: 0,
+          etaSeconds: 0,
+          stage: 'completed',
+          message: 'Export Complete!'
+        });
+        setIsExporting(false);
+
+        if (typeof setLastExportResult === 'function') {
+          setLastExportResult({
+            projectId: activeProjectId,
+            exportResultUrl: cleanExportUrl,
+            cleanResultUrl: renderResult.clean_download_url ? `${BACKEND_URL}${renderResult.clean_download_url}` : (upscaledCleanUrl || cleanResultUrl || null),
+            finalFilename,
+            timestamp: Date.now()
+          });
+        }
+      } else {
+        // Client Canvas DOM Ultra Exporter (100% Preview & Old Videos Parity)
+        const exporter = new ClientSceneExporter({
+          width: w,
+          height: h,
+          fps: calculatedFps,
+          format: 'mp4',
+          quality
+        });
+        clientExporterRef.current = exporter;
+
+        const blob = await exporter.exportVideo({
+          videoFile: effectiveVideoFile,
+          videoUrl: effectiveVideoUrl,
+          duration: targetDuration,
+          segments,
+          style: sanitizeStyle(style),
+          brightness: videoBrightness || 100,
+          contrast: videoContrast || 100,
+          onProgress: (stats) => {
+            const basePct = aiUpscale ? 72 : 5;
+            const pctRange = aiUpscale ? 27 : 94;
+            const combinedPercent = Math.min(99, Math.round(basePct + ((stats.percent || 0) / 100) * pctRange));
+
+            setExportStats({
+              percent: combinedPercent,
+              currentFrame: stats.currentFrame,
+              totalFrames: stats.totalFrames,
+              fps: stats.fps || 0,
+              etaSeconds: stats.etaSeconds,
+              stage: 'rendering',
+              message: aiUpscale
+                ? `Phase 2/2: Frame ${stats.currentFrame}/${stats.totalFrames} (Canvas DOM Ultra)`
+                : `Rendering frame ${stats.currentFrame}/${stats.totalFrames} (100% Preview Parity)`
+            });
+          }
+        });
+
+        const blobUrl = URL.createObjectURL(blob);
+        setExportResultUrl(blobUrl);
+        setExportStats({
+          percent: 100,
+          currentFrame: 0,
+          totalFrames: 0,
+          fps: 0,
+          etaSeconds: 0,
+          stage: 'completed',
+          message: 'Export Complete!'
+        });
+        setIsExporting(false);
+
+        if (typeof setLastExportResult === 'function') {
+          setLastExportResult({
+            projectId: activeProjectId,
+            exportResultUrl: blobUrl,
+            cleanResultUrl: upscaledCleanUrl || cleanResultUrl || null,
+            finalFilename,
+            timestamp: Date.now()
+          });
+        }
       }
     } catch (err) {
       if (!err.message?.toLowerCase().includes('cancel')) {
@@ -648,11 +960,12 @@ export const ExportModal = () => {
                 Native: {nativeW} × {nativeH}
               </span>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '4px' }}>
               {[
+                { id: 'source', label: 'Source', sub: 'Match' },
+                { id: '3:4', label: '3:4', sub: 'Portrait' },
                 { id: '9:16', label: '9:16', sub: 'Reels/TikTok' },
                 { id: '16:9', label: '16:9', sub: 'YouTube' },
-                { id: '4:3', label: '4:3', sub: 'Classic' },
                 { id: '1:1', label: '1:1', sub: 'Square' },
                 { id: '4:5', label: '4:5', sub: 'Portrait' }
               ].map((asp) => {
@@ -665,8 +978,10 @@ export const ExportModal = () => {
                       if (!isExporting) {
                         setSelectedAspect(asp.id);
                         const tiers = getResolutionTiers(asp.id, nativeW, nativeH);
-                        // Default to 1080p tier for that aspect
-                        const defaultTier = tiers.find(t => t.tier === '1080p') || tiers[1] || tiers[0];
+                        // Default to original tier if source, otherwise 1080p
+                        const defaultTier = asp.id === 'source'
+                          ? (tiers.find(t => t.tier === 'original') || tiers[0])
+                          : (tiers.find(t => t.tier === '1080p') || tiers[1] || tiers[0]);
                         setResolution(defaultTier.id);
                       }
                     }}
@@ -907,6 +1222,140 @@ export const ExportModal = () => {
                 </div>
               </div>
             )}
+          </div>
+
+          {/* Render Engine Selector (Hybrid Studio vs Backend Studio vs Canvas DOM) */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>
+                Render Engine
+              </label>
+              <span style={{ fontSize: '10px', color: 'var(--accent-bright-blue)', fontWeight: '600' }}>
+                {renderEngine === 'hybrid' 
+                  ? '★ 100% Original Colors + 100% Preview Animations' 
+                  : renderEngine === 'backend' 
+                    ? 'FFmpeg ASS Burn-in' 
+                    : 'Client Canvas Recording'}
+              </span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '8px' }}>
+              <button
+                type="button"
+                onClick={() => !isExporting && setRenderEngine('hybrid')}
+                style={{
+                  padding: '10px 10px',
+                  borderRadius: 'var(--radius-md)',
+                  cursor: isExporting ? 'not-allowed' : 'pointer',
+                  border: renderEngine === 'hybrid' ? '1.5px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+                  background: renderEngine === 'hybrid' ? 'var(--accent-blue-subtle)' : 'var(--bg-surface)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px',
+                  textAlign: 'left',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <Sparkles size={13} color={renderEngine === 'hybrid' ? 'var(--accent-bright-blue)' : 'var(--text-tertiary)'} />
+                    <span style={{ fontSize: '11px', fontWeight: '700', color: renderEngine === 'hybrid' ? 'var(--accent-bright-blue)' : 'var(--text-primary)' }}>
+                      Hybrid Studio
+                    </span>
+                  </div>
+                  <span style={{
+                    fontSize: '8px',
+                    fontWeight: '700',
+                    background: renderEngine === 'hybrid' ? 'rgba(56, 189, 248, 0.25)' : 'rgba(255, 255, 255, 0.08)',
+                    color: renderEngine === 'hybrid' ? 'var(--accent-bright-blue)' : 'var(--text-tertiary)',
+                    padding: '1px 5px',
+                    borderRadius: '4px'
+                  }}>
+                    Recommended
+                  </span>
+                </div>
+                <span style={{ fontSize: '9px', color: renderEngine === 'hybrid' ? 'var(--text-secondary)' : 'var(--text-tertiary)', lineHeight: '1.3' }}>
+                  100% untouched video color + 100% previewer text animations & emojis.
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => !isExporting && setRenderEngine('backend')}
+                style={{
+                  padding: '10px 10px',
+                  borderRadius: 'var(--radius-md)',
+                  cursor: isExporting ? 'not-allowed' : 'pointer',
+                  border: renderEngine === 'backend' ? '1.5px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+                  background: renderEngine === 'backend' ? 'var(--accent-blue-subtle)' : 'var(--bg-surface)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px',
+                  textAlign: 'left',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <Cpu size={13} color={renderEngine === 'backend' ? 'var(--accent-bright-blue)' : 'var(--text-tertiary)'} />
+                    <span style={{ fontSize: '11px', fontWeight: '700', color: renderEngine === 'backend' ? 'var(--accent-bright-blue)' : 'var(--text-primary)' }}>
+                      Backend (ASS)
+                    </span>
+                  </div>
+                  <span style={{
+                    fontSize: '8px',
+                    fontWeight: '700',
+                    background: renderEngine === 'backend' ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255, 255, 255, 0.08)',
+                    color: renderEngine === 'backend' ? 'var(--accent-bright-blue)' : 'var(--text-tertiary)',
+                    padding: '1px 5px',
+                    borderRadius: '4px'
+                  }}>
+                    FFmpeg Native
+                  </span>
+                </div>
+                <span style={{ fontSize: '9px', color: renderEngine === 'backend' ? 'var(--text-secondary)' : 'var(--text-tertiary)', lineHeight: '1.3' }}>
+                  Direct ASS subtitle burn-in script.
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => !isExporting && setRenderEngine('client_canvas')}
+                style={{
+                  padding: '10px 10px',
+                  borderRadius: 'var(--radius-md)',
+                  cursor: isExporting ? 'not-allowed' : 'pointer',
+                  border: renderEngine === 'client_canvas' ? '1.5px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+                  background: renderEngine === 'client_canvas' ? 'var(--accent-blue-subtle)' : 'var(--bg-surface)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px',
+                  textAlign: 'left',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <Film size={13} color={renderEngine === 'client_canvas' ? 'var(--accent-bright-blue)' : 'var(--text-tertiary)'} />
+                    <span style={{ fontSize: '11px', fontWeight: '700', color: renderEngine === 'client_canvas' ? 'var(--accent-bright-blue)' : 'var(--text-primary)' }}>
+                      Canvas DOM
+                    </span>
+                  </div>
+                  <span style={{
+                    fontSize: '8px',
+                    fontWeight: '700',
+                    background: renderEngine === 'client_canvas' ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255, 255, 255, 0.08)',
+                    color: renderEngine === 'client_canvas' ? 'var(--accent-bright-blue)' : 'var(--text-tertiary)',
+                    padding: '1px 5px',
+                    borderRadius: '4px'
+                  }}>
+                    Browser
+                  </span>
+                </div>
+                <span style={{ fontSize: '9px', color: renderEngine === 'client_canvas' ? 'var(--text-secondary)' : 'var(--text-tertiary)', lineHeight: '1.3' }}>
+                  Client-side WebCodecs canvas recording.
+                </span>
+              </button>
+            </div>
           </div>
 
           {/* Quality & Native Framerate Display */}

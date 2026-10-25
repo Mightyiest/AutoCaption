@@ -50,7 +50,10 @@ export function useGlobalShortcuts() {
         return;
       }
 
-      // 1. Universal Undo / Redo (Works everywhere including inside inputs if not native)
+      // If user is actively typing in a text field, let standard typing and native undo through
+      if (isTextInput) return;
+
+      // 1. Universal Undo / Redo
       if ((e.ctrlKey || e.metaKey)) {
         if (!e.shiftKey && e.key.toLowerCase() === 'z') {
           e.preventDefault();
@@ -63,9 +66,6 @@ export function useGlobalShortcuts() {
           return;
         }
       }
-
-      // If user is actively typing in a text field, let standard typing through
-      if (isTextInput) return;
 
       const isModifier = e.ctrlKey || e.metaKey || e.altKey;
 
@@ -89,7 +89,6 @@ export function useGlobalShortcuts() {
         const activeSeg = store.segments.find(s => store.currentTime >= s.start && store.currentTime <= s.end);
         const targetId = store.selectedSegmentId || (activeSeg ? activeSeg.id : null);
         if (targetId) {
-          store.pushHistoryState();
           store.splitSegmentAtPlayhead(targetId);
         }
         return;
@@ -99,7 +98,6 @@ export function useGlobalShortcuts() {
       if (!isModifier && (e.key === 'Delete' || e.key === 'Backspace')) {
         if (store.selectedSegmentId) {
           e.preventDefault();
-          store.pushHistoryState();
           store.deleteSegment(store.selectedSegmentId);
         }
         return;
@@ -109,7 +107,6 @@ export function useGlobalShortcuts() {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
         if (store.selectedSegmentId) {
           e.preventDefault();
-          store.pushHistoryState();
           store.duplicateSegment(store.selectedSegmentId);
         }
         return;

@@ -110,7 +110,26 @@ export const TranscribeModal = () => {
         } catch (_) {}
       }
 
-      if (backendAvailable && fileToUpload) {
+      if (backendAvailable && linkedSourcePath) {
+        const effectiveFilename = videoFilename || (linkedSourcePath ? linkedSourcePath.split(/[/\\]/).pop() : '');
+        const res = await fetch(`${BACKEND_URL}/api/transcribe-saved`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            video_filename: effectiveFilename,
+            linked_path: linkedSourcePath,
+            model_name: selectedModel,
+            language: language !== 'auto' ? language : null,
+            max_words_per_segment: wordsPerChunk,
+            remove_punctuation: stripPunct
+          })
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || 'Transcription failed on server');
+        }
+        resultData = await res.json();
+      } else if (backendAvailable && fileToUpload) {
         const formData = new FormData();
         formData.append('file', fileToUpload);
         formData.append('model_name', selectedModel);
@@ -127,14 +146,13 @@ export const TranscribeModal = () => {
           throw new Error(err.detail || 'Transcription failed on server');
         }
         resultData = await res.json();
-      } else if (backendAvailable && (videoFilename || linkedSourcePath)) {
-        const effectiveFilename = videoFilename || (linkedSourcePath ? linkedSourcePath.split(/[/\\]/).pop() : '');
+      } else if (backendAvailable && videoFilename) {
         const res = await fetch(`${BACKEND_URL}/api/transcribe-saved`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            video_filename: effectiveFilename,
-            linked_path: linkedSourcePath || null,
+            video_filename: videoFilename,
+            linked_path: null,
             model_name: selectedModel,
             language: language !== 'auto' ? language : null,
             max_words_per_segment: wordsPerChunk,
@@ -145,7 +163,6 @@ export const TranscribeModal = () => {
           const err = await res.json().catch(() => ({}));
           throw new Error(err.detail || 'Transcription failed on server');
         }
-        resultData = await res.json();
       } else {
         throw new Error('Backend server is offline. Please run the local FastAPI service.');
       }

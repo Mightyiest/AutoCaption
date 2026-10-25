@@ -77,6 +77,8 @@ export const VideoUpscaleModal = () => {
         return { width: 1920, height: 1080, label: '1080p Full HD (1920 × 1080)' };
       } else if (aspectRatio === '1:1' || Math.abs(srcW / srcH - 1.0) < 0.1) {
         return { width: 1080, height: 1080, label: '1080p Square (1080 × 1080)' };
+      } else if (aspectRatio === '3:4' || Math.abs(srcW / srcH - 3 / 4) < 0.15) {
+        return { width: 1080, height: 1440, label: '1080p Portrait 3:4 (1080 × 1440)' };
       } else if (aspectRatio === '4:3' || Math.abs(srcW / srcH - 4 / 3) < 0.15) {
         return { width: 1440, height: 1080, label: '1080p Classic 4:3 (1440 × 1080)' };
       } else if (aspectRatio === '4:5' || Math.abs(srcW / srcH - 4 / 5) < 0.15) {
@@ -90,6 +92,8 @@ export const VideoUpscaleModal = () => {
         return { width: 3840, height: 2160, label: '4K Ultra HD (3840 × 2160)' };
       } else if (aspectRatio === '1:1' || Math.abs(srcW / srcH - 1.0) < 0.1) {
         return { width: 2160, height: 2160, label: '4K Square (2160 × 2160)' };
+      } else if (aspectRatio === '3:4' || Math.abs(srcW / srcH - 3 / 4) < 0.15) {
+        return { width: 2160, height: 2880, label: '4K Portrait 3:4 (2160 × 2880)' };
       } else if (aspectRatio === '4:3' || Math.abs(srcW / srcH - 4 / 3) < 0.15) {
         return { width: 2880, height: 2160, label: '4K Classic 4:3 (2880 × 2160)' };
       } else if (aspectRatio === '4:5' || Math.abs(srcW / srcH - 4 / 5) < 0.15) {

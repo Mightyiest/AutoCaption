@@ -5,7 +5,7 @@ import { extractAllWords, chunkWordsIntoSegments, stripPunctuationFromSegments }
 import { autoAssignEmojis, detectEmojiForWord } from '../engine/emojiEngine';
 import { autoApplyEmphasis, isPowerKeyword } from '../engine/emphasisEngine';
 import { detectNativeVideoFps } from '../engine/videoSourceCache';
-import { browseLocalFile, linkLocalPath, getStreamUrl, checkMediaStatus } from '../engine/mediaLinker';
+import { browseLocalFile, linkLocalPath, getStreamUrl, checkMediaStatus, isTempOrGeneratedName, isUuid } from '../engine/mediaLinker';
 import { getAllProjects, getProjectById, saveProject, deleteProject as dbDeleteProject, INITIAL_SHOWCASE_PROJECTS } from '../engine/projectStorage';
 
 const STORAGE_KEY_KEYWORD_RULES = 'autocaption_custom_keyword_rules';
@@ -297,10 +297,33 @@ export const useEditorStore = create((set, get) => ({
   videoFile: null,
   videoUrl: '',
   videoFilename: null,
+  originalFilename: null,
   videoFps: 30,
   videoWidth: 0,
   videoHeight: 0,
-  setVideoDimensions: (width, height) => set({ videoWidth: width, videoHeight: height }),
+  setVideoDimensions: (width, height) => {
+    const w = Number(width) || 0;
+    const h = Number(height) || 0;
+    if (w > 0 && h > 0) {
+      const ratio = w / h;
+      let aspectStr = `${w}:${h}`;
+      if (Math.abs(ratio - 9 / 16) < 0.03) aspectStr = '9:16';
+      else if (Math.abs(ratio - 16 / 9) < 0.03) aspectStr = '16:9';
+      else if (Math.abs(ratio - 1.0) < 0.03) aspectStr = '1:1';
+      else if (Math.abs(ratio - 3 / 4) < 0.03) aspectStr = '3:4';
+      else if (Math.abs(ratio - 4 / 3) < 0.03) aspectStr = '4:3';
+      else if (Math.abs(ratio - 4 / 5) < 0.03) aspectStr = '4:5';
+      else {
+        const gcd = (a, b) => (b === 0 ? a : gcd(b, a % b));
+        const divisor = gcd(Math.round(w), Math.round(h));
+        aspectStr = `${Math.round(w / divisor)}:${Math.round(h / divisor)}`;
+      }
+      set({ videoWidth: w, videoHeight: h, aspectRatio: aspectStr });
+      get().triggerAutoSave();
+    } else {
+      set({ videoWidth: w, videoHeight: h });
+    }
+  },
   duration: 0.0,
   currentTime: 0.0,
   seekRequestTime: null,
@@ -310,6 +333,11 @@ export const useEditorStore = create((set, get) => ({
   isMuted: false,
   aspectRatio: '9:16',
   showSafeZones: false,
+  studioColorMatch: true,
+  videoColorSpace: 'rec709',
+  isColorTagged: true,
+  videoBrightness: 100,
+  videoContrast: 100,
 
   // Audio Waveform State
   audioPeaks: null,
@@ -326,6 +354,7 @@ export const useEditorStore = create((set, get) => ({
   segments: [],
   selectedSegmentId: null,
   selectedWordId: null,
+  latestImportId: 0,
 
   // Caption Styling
   style: { ...DEFAULT_PRESET.style },
@@ -402,7 +431,8 @@ export const useEditorStore = create((set, get) => ({
 
   autoCreateProjectForBatchItem: async ({ file, linkedPath, filename, duration, width, height, presetId, thumbnail }) => {
     try {
-      const cleanTitle = (filename || (file ? file.name : (linkedPath ? linkedPath.split(/[/\\]/).pop() : 'Untitled Video')))
+      const effectiveLinkedPath = linkedPath || (file && file.path) || null;
+      const cleanTitle = (filename || (file ? file.name : (effectiveLinkedPath ? effectiveLinkedPath.split(/[/\\]/).pop() : 'Untitled Video')))
         .replace(/\.[^/.]+$/, '')
         .replace(/[/\\?%*:|"<>_]/g, ' ')
         .trim() || 'Untitled Video';
@@ -411,37 +441,18 @@ export const useEditorStore = create((set, get) => ({
         ? (width > height ? '16:9' : (width === height ? '1:1' : '9:16'))
         : '9:16';
 
+      const origFilename = (file ? file.name : null) || (effectiveLinkedPath ? effectiveLinkedPath.split(/[/\\]/).pop() : null) || (!isTempOrGeneratedName(filename) ? filename : null) || cleanTitle;
+
       const newId = 'proj-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
-      let streamUrl = linkedPath ? getStreamUrl(linkedPath) : (file ? URL.createObjectURL(file) : '');
-      let resolvedFilename = filename || (file ? file.name : null);
+      let streamUrl = effectiveLinkedPath ? getStreamUrl(effectiveLinkedPath) : (file ? URL.createObjectURL(file) : '');
+      let resolvedFilename = origFilename;
       const selectedPreset = getPresetById(presetId || 'mrbeast') || PRESETS[0];
 
       const BACKEND_URL = 'http://127.0.0.1:8000';
 
-      // If a browser File is passed without a linked path, upload to backend storage uploads cache
-      if (file && !linkedPath && get().backendAvailable) {
-        try {
-          const formData = new FormData();
-          formData.append('file', file);
-          const upRes = await fetch(`${BACKEND_URL}/api/upload-video`, {
-            method: 'POST',
-            body: formData
-          });
-          if (upRes.ok) {
-            const upData = await upRes.json();
-            if (upData.video_filename) {
-              resolvedFilename = upData.video_filename;
-              streamUrl = `${BACKEND_URL}/static/uploads/${encodeURIComponent(upData.video_filename)}`;
-            }
-          }
-        } catch (upErr) {
-          console.warn('Auto upload to backend storage failed:', upErr);
-        }
-      }
-
       let thumbUrl = thumbnail || null;
-      if (!thumbUrl && (linkedPath || resolvedFilename)) {
-        thumbUrl = `${BACKEND_URL}/api/media/thumbnail?path=${encodeURIComponent(linkedPath || '')}&filename=${encodeURIComponent(resolvedFilename || '')}&time_offset=0`;
+      if (!thumbUrl && (effectiveLinkedPath || resolvedFilename)) {
+        thumbUrl = `${BACKEND_URL}/api/media/thumbnail?path=${encodeURIComponent(effectiveLinkedPath || '')}&filename=${encodeURIComponent(resolvedFilename || '')}&time_offset=0`;
       }
 
       const newProj = {
@@ -455,9 +466,10 @@ export const useEditorStore = create((set, get) => ({
         style: { ...selectedPreset.style },
         activePresetId: selectedPreset.id,
         videoFilename: resolvedFilename,
+        originalFilename: origFilename,
         videoUrl: streamUrl,
-        linkedSourcePath: linkedPath || null,
-        isMediaLinked: Boolean(linkedPath),
+        linkedSourcePath: effectiveLinkedPath || null,
+        isMediaLinked: Boolean(effectiveLinkedPath),
         captionSnippet: '',
         thumbnailUrl: thumbUrl,
         isActive: false
@@ -536,6 +548,9 @@ export const useEditorStore = create((set, get) => ({
       const resolvedStyle = proj.style ? sanitizeStyle(proj.style) : sanitizeStyle({ ...presetDef.style });
       const hasCustomStyle = Boolean(proj.style || proj.activePresetId || proj.presetId || proj.preset);
 
+      const rawOrig = proj.originalFilename || (proj.linkedSourcePath ? proj.linkedSourcePath.split(/[/\\]/).pop() : null);
+      const originalName = rawOrig || (isTempOrGeneratedName(proj.videoFilename) ? (proj.title ? `${proj.title}.mp4` : 'video.mp4') : (proj.videoFilename || `${proj.title || 'video'}.mp4`));
+
       newItems.push({
         id: `batch-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         projectId: proj.id,
@@ -543,7 +558,9 @@ export const useEditorStore = create((set, get) => ({
         file: null,
         linkedPath: proj.linkedSourcePath || null,
         videoUrl: streamUrl,
-        name: proj.videoFilename || `${proj.title || 'video'}.mp4`,
+        name: originalName,
+        originalFilename: originalName,
+        videoFilename: proj.videoFilename || null,
         size: 0,
         duration: proj.duration || 10,
         width: proj.width || 1080,
@@ -607,6 +624,29 @@ export const useEditorStore = create((set, get) => ({
   fetchProjectsList: async () => {
     try {
       const list = await getAllProjects();
+
+      // Check linked media offline status across projects
+      const linkedPaths = list
+        .filter((p) => p.isMediaLinked && p.linkedSourcePath)
+        .map((p) => p.linkedSourcePath);
+
+      if (linkedPaths.length > 0 && get().backendAvailable) {
+        try {
+          const statusMap = await checkMediaStatus(linkedPaths);
+          list.forEach((p) => {
+            if (p.isMediaLinked && p.linkedSourcePath) {
+              const pNorm = p.linkedSourcePath;
+              const pFwd = pNorm.replace(/\\/g, '/');
+              const pBack = pNorm.replace(/\//g, '\\');
+              const exists = statusMap[pNorm] ?? statusMap[pFwd] ?? statusMap[pBack];
+              if (exists !== undefined) {
+                p.mediaOffline = !exists;
+              }
+            }
+          });
+        } catch (_) {}
+      }
+
       set({ projectsList: list });
       // Only auto-restore project into editor if the user is explicitly on the #editor hash route
       if (!get().activeProjectId && typeof window !== 'undefined') {
@@ -641,21 +681,39 @@ export const useEditorStore = create((set, get) => ({
         saveCustomKeywordRulesToStorage(loadedRules);
       }
 
+      let isOffline = Boolean(proj.mediaOffline);
+      if (proj.isMediaLinked && proj.linkedSourcePath && get().backendAvailable) {
+        try {
+          const statusMap = await checkMediaStatus([proj.linkedSourcePath]);
+          const pNorm = proj.linkedSourcePath;
+          const exists = statusMap[pNorm] ?? statusMap[pNorm.replace(/\\/g, '/')] ?? statusMap[pNorm.replace(/\//g, '\\')];
+          if (exists !== undefined) {
+            isOffline = !exists;
+          }
+        } catch (_) {}
+      }
+
+      const origFilename = proj.originalFilename || (proj.linkedSourcePath ? proj.linkedSourcePath.split(/[/\\]/).pop() : null) || (!isTempOrGeneratedName(proj.videoFilename) ? proj.videoFilename : null) || proj.title || 'Untitled Project';
+
       set({
         activeProjectId: proj.id,
         activeProjectTitle: proj.title || 'Untitled Project',
         currentView: 'editor',
         videoUrl: streamUrl,
         videoFilename: proj.videoFilename || (proj.linkedSourcePath ? proj.linkedSourcePath.split(/[/\\]/).pop() : null),
+        originalFilename: origFilename,
         linkedSourcePath: proj.linkedSourcePath || null,
         isMediaLinked: Boolean(proj.isMediaLinked),
-        mediaOffline: Boolean(proj.mediaOffline),
+        mediaOffline: isOffline,
         aspectRatio: proj.aspectRatio || '9:16',
         duration: proj.duration || 0,
         segments: proj.segments || [],
         style: projectStyle,
         activePresetId: proj.activePresetId || preset.id,
         customKeywordRules: loadedRules,
+        videoBrightness: typeof proj.videoBrightness === 'number' ? proj.videoBrightness : 100,
+        videoContrast: typeof proj.videoContrast === 'number' ? proj.videoContrast : 100,
+        videoColorSpace: proj.videoColorSpace || 'rec709',
         currentTime: 0,
         isPlaying: false,
         saveStatus: 'saved',
@@ -672,7 +730,7 @@ export const useEditorStore = create((set, get) => ({
   },
 
   saveCurrentProject: async () => {
-    const { activeProjectId, activeProjectTitle, aspectRatio, duration, segments, style, activePresetId, videoFilename, videoUrl, linkedSourcePath, isMediaLinked, customKeywordRules, autoSaveTimer, mediaElement, videoSnapshotUrl } = get();
+    const { activeProjectId, activeProjectTitle, aspectRatio, duration, segments, style, activePresetId, videoFilename, videoUrl, linkedSourcePath, isMediaLinked, customKeywordRules, autoSaveTimer, mediaElement, videoSnapshotUrl, videoBrightness, videoContrast } = get();
     if (!activeProjectId) return;
     if (autoSaveTimer) {
       clearTimeout(autoSaveTimer);
@@ -690,6 +748,8 @@ export const useEditorStore = create((set, get) => ({
         calculatedThumb = `${BACKEND_URL}/api/media/thumbnail?path=${encodeURIComponent(linkedSourcePath || '')}&filename=${encodeURIComponent(videoFilename || '')}&time_offset=0`;
       }
 
+      const origToSave = get().originalFilename || (linkedSourcePath ? linkedSourcePath.split(/[/\\]/).pop() : null) || (get().videoFile ? get().videoFile.name : null) || (!isTempOrGeneratedName(videoFilename) ? videoFilename : null) || activeProjectTitle;
+
       await saveProject({
         id: activeProjectId,
         title: activeProjectTitle,
@@ -702,9 +762,13 @@ export const useEditorStore = create((set, get) => ({
         activePresetId,
         customKeywordRules: customKeywordRules || [],
         videoFilename,
+        originalFilename: origToSave,
         videoUrl,
         linkedSourcePath,
         isMediaLinked,
+        videoBrightness: typeof videoBrightness === 'number' ? videoBrightness : 100,
+        videoContrast: typeof videoContrast === 'number' ? videoContrast : 100,
+        videoColorSpace: get().videoColorSpace || 'rec709',
         captionSnippet: segments[0]?.text || '',
         thumbnailUrl: calculatedThumb || null
       });
@@ -718,37 +782,21 @@ export const useEditorStore = create((set, get) => ({
 
   createNewProject: async ({ aspect = '9:16', title = '', linkedPath = null, videoFile = null, videoFilename = null, videoUrl = null, presetId = 'mrbeast' } = {}) => {
     const newId = 'proj-' + Date.now();
+    const effectiveLinkedPath = linkedPath || (videoFile && videoFile.path) || null;
     let streamUrl = videoUrl || '';
     let filename = videoFilename || null;
-    let isLinked = Boolean(linkedPath);
+    let isLinked = Boolean(effectiveLinkedPath);
 
-    if (linkedPath) {
-      streamUrl = getStreamUrl(linkedPath);
-      filename = linkedPath.split(/[/\\]/).pop();
+    if (effectiveLinkedPath) {
+      streamUrl = getStreamUrl(effectiveLinkedPath);
+      filename = effectiveLinkedPath.split(/[/\\]/).pop();
       isLinked = true;
     } else if (videoFile) {
       if (!filename) filename = videoFile.name;
       if (!streamUrl) streamUrl = URL.createObjectURL(videoFile);
-      // Ensure file is in backend uploads cache for Whisper and FFmpeg
-      const BACKEND_URL = 'http://127.0.0.1:8000';
-      if (get().backendAvailable) {
-        try {
-          const formData = new FormData();
-          formData.append('file', videoFile);
-          const res = await fetch(`${BACKEND_URL}/api/upload-preview`, {
-            method: 'POST',
-            body: formData
-          });
-          if (res.ok) {
-            const data = await res.json();
-            filename = data.video_filename;
-            streamUrl = `${BACKEND_URL}${data.video_url}`;
-          }
-        } catch (err) {
-          console.warn('Backend upload-preview failed during create project:', err);
-        }
-      }
     }
+
+    const originalName = (videoFile ? videoFile.name : null) || (effectiveLinkedPath ? effectiveLinkedPath.split(/[/\\]/).pop() : null) || (!isTempOrGeneratedName(videoFilename) ? videoFilename : null) || title || filename;
 
     const BACKEND_URL = 'http://127.0.0.1:8000';
     let newThumb = null;
@@ -770,6 +818,7 @@ export const useEditorStore = create((set, get) => ({
       style: defaultStyle,
       activePresetId: selectedPreset.id,
       videoFilename: filename,
+      originalFilename: originalName,
       videoUrl: streamUrl,
       linkedSourcePath: linkedPath,
       isMediaLinked: isLinked,
@@ -791,6 +840,7 @@ export const useEditorStore = create((set, get) => ({
       videoFile: videoFile,
       videoUrl: streamUrl,
       videoFilename: filename,
+      originalFilename: originalName,
       linkedSourcePath: linkedPath,
       isMediaLinked: isLinked,
       mediaOffline: false,
@@ -860,6 +910,56 @@ export const useEditorStore = create((set, get) => ({
   renameCurrentProject: (newTitle) => {
     set({ activeProjectTitle: newTitle, saveStatus: 'unsaved' });
     get().saveCurrentProject();
+  },
+
+  renameProject: async (projectId, newTitle) => {
+    if (!projectId || !newTitle || !newTitle.trim()) return;
+    const cleanTitle = newTitle.trim();
+    try {
+      const proj = await getProjectById(projectId);
+      if (proj) {
+        proj.title = cleanTitle;
+        const now = new Date().toISOString();
+        proj.updated_at = now;
+        proj.updatedAt = now;
+        await saveProject(proj);
+      }
+      if (get().activeProjectId === projectId) {
+        set({ activeProjectTitle: cleanTitle });
+      }
+      await get().fetchProjectsList();
+    } catch (err) {
+      console.warn('Failed to rename project:', err);
+    }
+  },
+
+  duplicateProject: async (projectId) => {
+    if (!projectId) return null;
+    try {
+      const proj = await getProjectById(projectId);
+      if (!proj) return null;
+
+      const newId = 'proj-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+      const copyTitle = `${proj.title || 'Untitled Project'} (Copy)`;
+      const now = new Date().toISOString();
+      const cloned = {
+        ...JSON.parse(JSON.stringify(proj)),
+        id: newId,
+        title: copyTitle,
+        createdAt: now,
+        updatedAt: now,
+        created_at: now,
+        updated_at: now,
+        isActive: false
+      };
+
+      await saveProject(cloned);
+      await get().fetchProjectsList();
+      return cloned;
+    } catch (err) {
+      console.warn('Failed to duplicate project:', err);
+      return null;
+    }
   },
 
   deleteCurrentProject: async (projectId) => {
@@ -1017,6 +1117,10 @@ export const useEditorStore = create((set, get) => ({
   setVideoFps: (videoFps) => set({ videoFps: Number(videoFps) || 30 }),
 
   setVideo: (file, url, filename, duration = 0, keepCaptions = false) => {
+    const prevUrl = get().videoUrl;
+    if (prevUrl && typeof prevUrl === 'string' && prevUrl.startsWith('blob:') && prevUrl !== url) {
+      try { URL.revokeObjectURL(prevUrl); } catch (_) {}
+    }
     const media = get().mediaElement;
     if (media) {
       try {
@@ -1027,10 +1131,12 @@ export const useEditorStore = create((set, get) => ({
     if (!keepCaptions && (get().segments || []).length > 0) {
       get().pushHistoryState();
     }
+    const origFilename = (file ? file.name : null) || (!isTempOrGeneratedName(filename) ? filename : null) || get().originalFilename;
     set((state) => ({
       videoFile: file,
       videoUrl: url,
       videoFilename: filename || (file ? file.name : null),
+      originalFilename: origFilename || state.originalFilename || (file ? file.name : null),
       duration: duration || state.duration || 0,
       currentTime: 0.0,
       isPlaying: false,
@@ -1068,35 +1174,36 @@ export const useEditorStore = create((set, get) => ({
 
   importVideoFile: async (file, keepCaptions = false) => {
     if (!file) return;
-    const localBlobUrl = URL.createObjectURL(file);
-    get().setVideo(file, localBlobUrl, file.name, 0, keepCaptions);
+    const importId = (get().latestImportId || 0) + 1;
+    set({ latestImportId: importId, originalFilename: file.name });
 
-    // Upload to backend preview cache if backend is online
-    const BACKEND_URL = 'http://127.0.0.1:8000';
-    if (get().backendAvailable) {
+    // If local path is directly accessible, link zero-copy without copying
+    if (file.path && get().backendAvailable) {
       try {
-        const formData = new FormData();
-        formData.append('file', file);
-        const res = await fetch(`${BACKEND_URL}/api/upload-preview`, {
-          method: 'POST',
-          body: formData
-        });
-        if (res.ok) {
-          const data = await res.json();
-          // Update store with persistent backend URL and filename
-          set(() => ({
-            videoUrl: `${BACKEND_URL}${data.video_url}`,
-            videoFilename: data.video_filename,
-            isMediaLinked: false,
-            linkedSourcePath: null,
-            mediaOffline: false
-          }));
+        const linked = await linkLocalPath(file.path);
+        if (linked && !linked.cancelled) {
+          get().setVideo(null, linked.streamUrl, linked.filename, linked.duration || 0, keepCaptions);
+          set({
+            linkedSourcePath: file.path,
+            isMediaLinked: true,
+            originalFilename: file.name,
+            videoFilename: linked.filename,
+            mediaOffline: false,
+            videoWidth: linked.width || 1080,
+            videoHeight: linked.height || 1920,
+            videoFps: linked.fps || 30
+          });
           get().saveCurrentProject();
+          return;
         }
       } catch (err) {
-        console.warn('Background upload-preview error:', err);
+        console.warn('Direct zero-copy linking failed, falling back to local blob:', err);
       }
     }
+
+    const localBlobUrl = URL.createObjectURL(file);
+    get().setVideo(file, localBlobUrl, file.name, 0, keepCaptions);
+    get().saveCurrentProject();
   },
 
   setDuration: (duration) => {
@@ -1190,6 +1297,56 @@ export const useEditorStore = create((set, get) => ({
     get().triggerAutoSave();
   },
   toggleSafeZones: () => set((state) => ({ showSafeZones: !state.showSafeZones })),
+  toggleStudioColorMatch: () => set((state) => ({ studioColorMatch: !state.studioColorMatch })),
+  setStudioColorMatch: (studioColorMatch) => set({ studioColorMatch }),
+  setVideoBrightness: (videoBrightness) => {
+    set({ videoBrightness: Number(videoBrightness) || 100 });
+    get().triggerAutoSave();
+  },
+  setVideoContrast: (videoContrast) => {
+    set({ videoContrast: Number(videoContrast) || 100 });
+    get().triggerAutoSave();
+  },
+  setVideoColorSpace: (videoColorSpace) => {
+    set({ videoColorSpace: videoColorSpace || 'rec709' });
+    get().triggerAutoSave();
+  },
+  resetVideoPicture: () => {
+    set({ videoBrightness: 100, videoContrast: 100, videoColorSpace: 'rec709' });
+    get().triggerAutoSave();
+  },
+  matchColorSpaceRec709: async (fullRange = false) => {
+    const { linkedSourcePath, videoFilename, videoUrl } = get();
+    const BACKEND_URL = 'http://127.0.0.1:8000';
+    try {
+      const resp = await fetch(`${BACKEND_URL}/api/media/tag-rec709`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          linked_path: linkedSourcePath,
+          filename: videoFilename,
+          full_range: Boolean(fullRange)
+        })
+      });
+      const data = await resp.json();
+      if (data && data.success) {
+        set({
+          videoUrl: `${BACKEND_URL}${data.stream_url}`,
+          videoFilename: data.filename,
+          linkedSourcePath: data.tagged_path,
+          videoBrightness: 100,
+          videoContrast: 100,
+          isColorTagged: true,
+          videoColorSpace: 'rec709'
+        });
+        get().saveCurrentProject();
+        return { success: true, data };
+      }
+    } catch (err) {
+      console.warn('Failed to tag video Rec.709:', err);
+      return { success: false, error: err.message };
+    }
+  },
   setUploadModalOpen: (isUploadModalOpen) => set({ isUploadModalOpen }),
   setExportModalOpen: (isExportModalOpen) => set({ isExportModalOpen }),
   setHelpModalOpen: (isHelpModalOpen) => set({ isHelpModalOpen }),
@@ -1332,6 +1489,7 @@ export const useEditorStore = create((set, get) => ({
   },
 
   splitSegmentAtPlayhead: (segmentId) => {
+    get().pushHistoryState();
     set((state) => {
       const segIndex = state.segments.findIndex((s) => s.id === segmentId);
       if (segIndex === -1) return state;
@@ -1349,15 +1507,19 @@ export const useEditorStore = create((set, get) => ({
         } else if (w.start >= t) {
           words2.push(w);
         } else {
-          // Playhead splits across an active word
-          words1.push({ ...w, end: t });
-          words2.push({ ...w, id: `w-${Math.random().toString(36).substring(2, 7)}`, start: t });
+          // Playhead is in the middle of a word: assign to the side with greater duration
+          if ((t - w.start) >= (w.end - t)) {
+            words1.push({ ...w, end: t });
+          } else {
+            words2.push({ ...w, start: t });
+          }
         }
       }
 
       if (words1.length === 0 || words2.length === 0) return state;
 
       const seg1 = {
+        ...seg,
         id: seg.id,
         start: seg.start,
         end: t,
@@ -1366,6 +1528,7 @@ export const useEditorStore = create((set, get) => ({
       };
 
       const seg2 = {
+        ...seg,
         id: `seg-${Math.random().toString(36).substring(2, 9)}`,
         start: t,
         end: words2[words2.length - 1].end,
@@ -1377,6 +1540,7 @@ export const useEditorStore = create((set, get) => ({
       newSegments.splice(segIndex, 1, seg1, seg2);
       return { segments: newSegments, selectedSegmentId: seg2.id };
     });
+    get().triggerAutoSave();
   },
 
   updateWordText: (segmentId, wordId, newText) => {

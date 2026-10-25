@@ -81,7 +81,9 @@ export function createCaptionScene({
       naturalWidth: videoInfo.naturalWidth || width,
       naturalHeight: videoInfo.naturalHeight || height,
       duration: videoInfo.duration || 0,
-      fit: videoInfo.fit || 'cover'
+      fit: videoInfo.fit || 'cover',
+      brightness: Number(videoInfo.brightness) || 100,
+      contrast: Number(videoInfo.contrast) || 100
     }
   };
 }

@@ -45,6 +45,8 @@ export const Navbar = () => {
     backendAvailable,
     aspectRatio,
     setAspectRatio,
+    videoWidth,
+    videoHeight,
     canvasLayout,
     setCanvasLayout,
     showSafeZones,
@@ -271,32 +273,44 @@ export const Navbar = () => {
 
       {/* Center Controls: Segmented Aspect Ratio, Safe Zones, Model Selector */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        {/* macOS Segmented Aspect Ratio Picker */}
-        <div className="segmented-control">
-          <button
-            onClick={() => setAspectRatio('9:16')}
-            className={`segmented-control-item ${aspectRatio === '9:16' ? 'active' : ''}`}
-            title="9:16 Vertical (TikTok / Reels / Shorts)"
-          >
-            <Smartphone size={12} />
-            <span>9:16</span>
-          </button>
-          <button
-            onClick={() => setAspectRatio('1:1')}
-            className={`segmented-control-item ${aspectRatio === '1:1' ? 'active' : ''}`}
-            title="1:1 Square Feed"
-          >
-            <Square size={12} />
-            <span>1:1</span>
-          </button>
-          <button
-            onClick={() => setAspectRatio('16:9')}
-            className={`segmented-control-item ${aspectRatio === '16:9' ? 'active' : ''}`}
-            title="16:9 Standard Landscape"
-          >
-            <Tv size={12} />
-            <span>16:9</span>
-          </button>
+        {/* Dynamic Match Source Aspect Ratio Indicator */}
+        <div 
+          className="match-source-badge"
+          title={videoWidth > 0 && videoHeight > 0 
+            ? `Canvas automatically matches source footage: ${aspectRatio} (${videoWidth} × ${videoHeight})` 
+            : 'Canvas automatically matches source video dimensions'}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-pill)',
+            padding: '4px 10px',
+            fontSize: '11px',
+            fontWeight: '600',
+            color: 'var(--text-primary)',
+            boxShadow: 'var(--shadow-subtle)',
+            userSelect: 'none'
+          }}
+        >
+          <Sparkles size={12} color="var(--accent-bright-blue)" />
+          <span>Match Source</span>
+          <span style={{ 
+            background: 'var(--accent-blue-subtle)', 
+            color: 'var(--accent-bright-blue)', 
+            padding: '1px 6px', 
+            borderRadius: '4px',
+            fontSize: '10px',
+            fontWeight: '700'
+          }}>
+            {aspectRatio || 'Source'}
+          </span>
+          {videoWidth > 0 && videoHeight > 0 && (
+            <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', fontWeight: '500' }}>
+              {videoWidth}×{videoHeight}
+            </span>
+          )}
         </div>
 
         {/* Layout Switcher (Canvas on Right / Center / Left) */}

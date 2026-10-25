@@ -13,7 +13,7 @@
 export function stripPunctuation(text = '') {
   if (!text) return '';
   return String(text)
-    .replace(/^[\s.,/#!$%^&*;:{}=\-_`~()?"'«»“”‘’—–]+|[\s.,/#!$%^&*;:{}=\-_`~()?"'«»“”‘’—–]+$/g, '')
+    .replace(/^[\s.,/!;:{}=\-_`~()?"'«»“”‘’—–]+|[\s.,/!;:{}=\-_`~()?"'«»“”‘’—–]+$/g, '')
     .trim();
 }
 

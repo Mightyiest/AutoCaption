@@ -54,7 +54,7 @@ import { extractAllWords, chunkWordsIntoSegments } from '../engine/wordChunker';
 import { autoAssignEmojis } from '../engine/emojiEngine';
 import { autoApplyEmphasis } from '../engine/emphasisEngine';
 import { measureAllSegmentsLayout } from '../engine/layoutMeasurer';
-import { browseLocalFile, getStreamUrl } from '../engine/mediaLinker';
+import { browseLocalFile, getStreamUrl, isTempOrGeneratedName, isUuid } from '../engine/mediaLinker';
 import { ClientSceneExporter } from '../engine/sceneExporter';
 import { renderPreviewOverlay } from '../engine/captionCanvasRenderer';
 import { createCaptionScene } from '../engine/captionScene';
@@ -253,6 +253,7 @@ export const BatchExportModal = () => {
       activePresetId,
       videoUrl: currentEditorVideoUrl,
       videoFilename: currentEditorVideoFilename,
+      originalFilename: currentEditorOriginalFilename,
       videoFile: currentEditorVideoFile,
       linkedSourcePath: currentEditorLinkedPath,
       duration: currentEditorDuration,
@@ -277,7 +278,8 @@ export const BatchExportModal = () => {
     if (hasActiveEditorMedia) {
       const resolvedPresetId = activePresetId || currentEditorStyle?.presetId || 'mrbeast';
       const resolvedStyle = currentEditorStyle ? sanitizeStyle(currentEditorStyle) : (getPresetById(resolvedPresetId)?.style || PRESETS[0].style);
-      const cleanName = currentEditorVideoFilename || (currentEditorLinkedPath ? currentEditorLinkedPath.split(/[/\\]/).pop() : (currentEditorVideoFile ? currentEditorVideoFile.name : 'Active Video.mp4'));
+      const rawOriginal = currentEditorOriginalFilename || (currentEditorVideoFile ? currentEditorVideoFile.name : null) || (currentEditorLinkedPath ? currentEditorLinkedPath.split(/[/\\]/).pop() : null);
+      const cleanName = (!isTempOrGeneratedName(rawOriginal) ? rawOriginal : null) || (!isTempOrGeneratedName(currentEditorVideoFilename) ? currentEditorVideoFilename : null) || (activeProjectTitle ? `${activeProjectTitle}.mp4` : 'Active Video.mp4');
 
       const matchIndex = updatedQueue.findIndex((it) => 
         (activeProjectId && it.projectId === activeProjectId) ||
@@ -291,6 +293,7 @@ export const BatchExportModal = () => {
         updatedQueue[matchIndex] = {
           ...item,
           projectTitle: activeProjectTitle || item.projectTitle,
+          originalFilename: cleanName,
           segments: (currentEditorSegments && currentEditorSegments.length > 0) ? currentEditorSegments : item.segments,
           style: resolvedStyle,
           presetId: resolvedPresetId,
@@ -313,6 +316,7 @@ export const BatchExportModal = () => {
           linkedPath: currentEditorLinkedPath || null,
           videoUrl: currentEditorVideoUrl || '',
           name: cleanName,
+          originalFilename: cleanName,
           size: currentEditorVideoFile ? currentEditorVideoFile.size : 0,
           duration: currentEditorDuration || 10,
           width: currentEditorWidth || 1080,
@@ -604,9 +608,11 @@ export const BatchExportModal = () => {
       }
       const meta = await extractVideoMetadata(file);
       
-      // Auto-create persistent individual project record
+      // Auto-create persistent individual project record (linking zero-copy if file.path exists)
+      const effectiveLinkedPath = file.path || null;
       const newProj = await autoCreateProjectForBatchItem({
         file,
+        linkedPath: effectiveLinkedPath,
         filename: file.name,
         duration: meta.duration,
         width: meta.width,
@@ -615,7 +621,8 @@ export const BatchExportModal = () => {
         thumbnail: meta.thumbnail
       });
 
-      const uploadedFilename = (newProj && newProj.videoFilename) || file.name;
+      const rawOrig = (newProj && newProj.originalFilename) || file.name;
+      const uploadedFilename = (!isTempOrGeneratedName(rawOrig) ? rawOrig : null) || (isTempOrGeneratedName(newProj?.videoFilename) ? file.name : (newProj?.videoFilename || file.name));
       const uploadedUrl = (newProj && newProj.videoUrl) || meta.blobUrl;
       const resolvedThumb = (newProj && newProj.thumbnailUrl) || meta.thumbnail;
 
@@ -624,9 +631,11 @@ export const BatchExportModal = () => {
         projectId: newProj ? newProj.id : null,
         projectTitle: newProj ? newProj.title : file.name.replace(/\.[^/.]+$/, ''),
         file: file,
-        linkedPath: null,
+        linkedPath: effectiveLinkedPath,
         videoUrl: uploadedUrl,
         name: uploadedFilename,
+        originalFilename: file.name,
+        backendFilename: (newProj && newProj.videoFilename) || null,
         size: file.size,
         duration: meta.duration,
         width: meta.width,
@@ -680,6 +689,7 @@ export const BatchExportModal = () => {
         linkedPath: res.filePath,
         videoUrl: `${BACKEND_URL}/api/media/stream?path=${encodeURIComponent(res.filePath)}`,
         name: res.filename,
+        originalFilename: res.filename,
         size: 0,
         duration: meta.duration,
         width: meta.width || res.width || 1080,
@@ -966,7 +976,12 @@ export const BatchExportModal = () => {
           }
         }
 
-        const cleanBase = item.name.replace(/\.[^/.]+$/, '').replace(/[/\\?%*:|"<>]/g, '').trim() || 'video';
+        let baseCandidate = item.originalFilename || (item.file && item.file.name) || (item.linkedPath && item.linkedPath.split(/[/\\]/).pop());
+        if (!baseCandidate || isTempOrGeneratedName(baseCandidate)) {
+          baseCandidate = (!isTempOrGeneratedName(item.projectTitle) && item.projectTitle) ? item.projectTitle : (!isTempOrGeneratedName(item.name) ? item.name : 'video');
+        }
+        let cleanBase = baseCandidate.replace(/\.[^/.]+$/, '').replace(/[/\\?%*:|"<>]/g, '').trim() || 'video';
+        cleanBase = cleanBase.replace(/_captioned$/i, '');
         const presetClean = (item.presetId || globalSettings.presetId || 'mrbeast').toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
         const rawPattern = globalSettings.filenamePattern || '{name}_captioned';
         const nameWithPattern = rawPattern.replace('{name}', cleanBase).replace('{preset}', presetClean);
@@ -993,6 +1008,7 @@ export const BatchExportModal = () => {
 
         let exportBlobUrl = null;
         let exportDownloadUrl = null;
+        let exportedBlobData = null;
 
         if (globalSettings.engineType === 'client_canvas') {
           const clientQuality = globalSettings.videoQuality === 'crf18' 
@@ -1033,28 +1049,44 @@ export const BatchExportModal = () => {
 
           exportBlobUrl = URL.createObjectURL(renderedBlob);
           exportDownloadUrl = exportBlobUrl;
+          exportedBlobData = renderedBlob;
 
           // Save rendered MP4 to backend storage for batch ZIP archive capability
           try {
             const formData = new FormData();
             formData.append('file', renderedBlob, finalOutputFilename);
-            fetch(`${BACKEND_URL}/api/upload-video`, { method: 'POST', body: formData }).catch(() => {});
-          } catch (_) {}
+            formData.append('filename', finalOutputFilename);
+            const saveRes = await fetch(`${BACKEND_URL}/api/batch/save-export`, {
+              method: 'POST',
+              body: formData
+            });
+            if (saveRes.ok) {
+              const saveData = await saveRes.json();
+              if (saveData.download_url) {
+                exportDownloadUrl = `${BACKEND_URL}${saveData.download_url}`;
+              }
+            }
+          } catch (saveErr) {
+            console.warn('Failed to save client export to backend for ZIP packaging:', saveErr);
+          }
 
         } else {
           // Backend FFmpeg ASS / DOM fallback
-          const measuredLines = measureAllSegmentsLayout(styledSegments, finalStyle, exportW, exportH);
+          const measured = await measureAllSegmentsLayout(styledSegments, finalStyle, exportW, exportH);
+          const measuredSegments = (measured && (measured.segments || measured.measuredSegments)) ? (measured.segments || measured.measuredSegments) : styledSegments;
+          const previewMetrics = (measured && (measured.preview_metrics || measured.previewMetrics)) ? (measured.preview_metrics || measured.previewMetrics) : null;
+
           const renderPayload = {
             video_filename: backendFilename,
             linked_path: item.linkedPath || null,
-            segments: styledSegments,
+            segments: measuredSegments,
             style: finalStyle,
             width: exportW,
             height: exportH,
             video_duration: transDuration,
             encoder_mode: globalSettings.encoderMode || 'gpu_nvenc',
             engine_type: globalSettings.engineType === 'dom' ? 'dom' : 'ass',
-            preview_metrics: measuredLines ? { measured_lines: measuredLines } : null,
+            preview_metrics: previewMetrics,
             output_filename: finalOutputFilename,
             fps: fpsToUse,
             video_quality: globalSettings.videoQuality || 'crf18'
@@ -1137,6 +1169,8 @@ export const BatchExportModal = () => {
           progress: 100,
           stageText: 'Export Complete!',
           exportUrl: exportBlobUrl,
+          exportDownloadUrl: exportDownloadUrl,
+          exportBlob: exportedBlobData,
           exportFilename: finalOutputFilename,
           segments: styledSegments
         });
@@ -1201,7 +1235,42 @@ export const BatchExportModal = () => {
 
     setIsZipping(true);
     try {
-      const filenames = completed.map((i) => i.exportFilename || `${i.name.replace(/\.[^/.]+$/, "")}_captioned.mp4`);
+      // Ensure all client-rendered MP4 blobs are stored on backend before requesting batch zip
+      for (const item of completed) {
+        let blobToSave = item.exportBlob;
+        if (!blobToSave && item.exportUrl && item.exportUrl.startsWith('blob:')) {
+          try {
+            const bRes = await fetch(item.exportUrl);
+            if (bRes.ok) {
+              blobToSave = await bRes.blob();
+            }
+          } catch (_) {}
+        }
+        if (blobToSave && item.exportFilename) {
+          try {
+            const formData = new FormData();
+            formData.append('file', blobToSave, item.exportFilename);
+            formData.append('filename', item.exportFilename);
+            await fetch(`${BACKEND_URL}/api/batch/save-export`, {
+              method: 'POST',
+              body: formData
+            });
+          } catch (_) {}
+        }
+      }
+
+      const filenames = completed.map((i) => {
+        if (i.exportFilename && !isTempOrGeneratedName(i.exportFilename)) return i.exportFilename;
+        const candidate = (!isTempOrGeneratedName(i.originalFilename) && i.originalFilename)
+          || (i.file && !isTempOrGeneratedName(i.file.name) && i.file.name)
+          || (i.linkedPath && !isTempOrGeneratedName(i.linkedPath.split(/[/\\]/).pop()) && i.linkedPath.split(/[/\\]/).pop())
+          || (!isTempOrGeneratedName(i.projectTitle) ? i.projectTitle : null)
+          || (!isTempOrGeneratedName(i.name) ? i.name : 'video');
+        let clean = candidate.replace(/\.[^/.]+$/, '').replace(/[/\\?%*:|"<>]/g, '').trim() || 'video';
+        clean = clean.replace(/_captioned$/i, '');
+        return `${clean}_captioned.mp4`;
+      });
+
       const res = await fetch(`${BACKEND_URL}/api/batch/zip-exports`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

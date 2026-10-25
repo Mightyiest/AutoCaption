@@ -18,6 +18,7 @@ import { VocalExtractorModal } from './components/VocalExtractorModal';
 import { VideoUpscaleModal } from './components/VideoUpscaleModal';
 import { useEditorStore } from './store/useEditorStore';
 import { useGlobalShortcuts } from './engine/useGlobalShortcuts';
+import { browseLocalFile } from './engine/mediaLinker';
 import './App.css';
 
 const BACKEND_URL = 'http://127.0.0.1:8000';
@@ -60,7 +61,26 @@ export function App() {
   }, [fetchProjectsList, setCurrentView]);
 
   useEffect(() => {
-    registerVideoPickerTrigger(() => {
+    registerVideoPickerTrigger(async () => {
+      if (useEditorStore.getState().backendAvailable) {
+        try {
+          const res = await browseLocalFile();
+          if (!res.cancelled && res.filePath) {
+            const title = res.filename.replace(/\.[^/.]+$/, "");
+            await useEditorStore.getState().createNewProject({
+              aspect: res.width > res.height ? '16:9' : '9:16',
+              title: title,
+              linkedPath: res.filePath
+            });
+            useEditorStore.getState().setTranscribeModalOpen(true);
+            return;
+          } else if (res.cancelled) {
+            return;
+          }
+        } catch (e) {
+          console.warn('Native file picker failed, falling back to browser picker:', e);
+        }
+      }
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
         fileInputRef.current.click();

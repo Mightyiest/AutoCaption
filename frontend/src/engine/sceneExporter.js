@@ -12,6 +12,7 @@ import {
   Input,
   BlobSource,
   UrlSource,
+  VideoSampleColorSpace,
   ALL_FORMATS,
   QUALITY_LOW,
   QUALITY_MEDIUM,
@@ -118,6 +119,8 @@ export class ClientSceneExporter {
     duration = 10,
     segments = [],
     style = {},
+    brightness = 100,
+    contrast = 100,
     onProgress = () => {}
   }) {
     this.isCancelled = false;
@@ -140,7 +143,34 @@ export class ClientSceneExporter {
     const bitrate = QUALITY_MAP[this.quality] || QUALITY_HIGH;
     const videoSource = new CanvasSource(canvas, {
       codec: videoCodec,
-      bitrate
+      bitrate,
+      onEncodedSample: (sample) => {
+        if (sample) {
+          try {
+            // Assign broadcast ITU-R Rec.709 Limited Range color space to input frame
+            sample.colorSpace = new VideoSampleColorSpace({
+              matrix: 'bt709',
+              primaries: 'bt709',
+              transfer: 'bt709',
+              fullRange: false
+            });
+          } catch (_) {}
+        }
+      },
+      onEncodedPacket: (packet, meta) => {
+        // Enforce broadcast ITU-R Rec.709 Limited Range (tv: 16–235) metadata on output track.
+        // Prevents Mediabunny from defaulting to sRGB gamma 2.4 (iec61966-2-1) and fullRange: true (yuvj420p),
+        // which causes harsh highlight blowout and crushed pitch-black shadows in Windows 11 Media Player,
+        // QuickTime, VLC, and Premiere Pro.
+        if (meta?.decoderConfig) {
+          meta.decoderConfig.colorSpace = {
+            primaries: 'bt709',
+            transfer: 'bt709',
+            matrix: 'bt709',
+            fullRange: false
+          };
+        }
+      }
     });
 
     output.addVideoTrack(videoSource, { frameRate: this.fps });
@@ -291,7 +321,9 @@ export class ClientSceneExporter {
         file: videoFile,
         url: videoUrl,
         duration,
-        fit: 'cover'
+        fit: 'cover',
+        brightness,
+        contrast
       }
     });
 
@@ -407,6 +439,7 @@ export class ClientSceneExporter {
     }
 
     const buffer = target.buffer;
+    videoSourceCache.clear();
     if (!buffer) {
       throw new Error('Failed to generate export video buffer');
     }
@@ -414,5 +447,107 @@ export class ClientSceneExporter {
     const mimeType = this.format === 'webm' ? 'video/webm' : 'video/mp4';
     return new Blob([buffer], { type: mimeType });
   }
+}
+
+/**
+ * High-speed exporter that renders ONLY the styled captions onto a 100% transparent canvas.
+ * Encodes directly into a lightweight WebM VP9 video track with full alpha transparency.
+ * This file is then burned over the native video via FFmpeg in the Hybrid Studio pipeline.
+ */
+export async function exportTransparentCaptionTrack({
+  width = 1080,
+  height = 1920,
+  fps = 30,
+  duration = 10,
+  segments = [],
+  style = {},
+  onProgress = () => {},
+  isCancelledRef = { current: false }
+}) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+
+  const outputFormat = new WebMOutputFormat();
+  const target = new BufferTarget();
+  const output = new Output({
+    format: outputFormat,
+    target
+  });
+
+  const videoSource = new CanvasSource(canvas, {
+    codec: 'vp9',
+    quality: QUALITY_HIGH,
+    alpha: 'keep'
+  });
+
+  output.addVideoTrack(videoSource, { frameRate: fps });
+  await output.start();
+
+  const totalFrames = Math.max(1, Math.round(duration * fps));
+  const frameInterval = 1 / fps;
+  const timestamps = Array.from({ length: totalFrames }, (_, i) => i * frameInterval);
+
+  const scene = createCaptionScene({
+    style,
+    segments,
+    canvasSize: { width, height, fps },
+    currentTime: 0,
+    videoInfo: { duration }
+  });
+
+  const startTime = performance.now();
+
+  try {
+    for (let i = 0; i < totalFrames; i++) {
+      if (isCancelledRef.current) {
+        await output.cancel();
+        throw new Error('Caption overlay export cancelled by user');
+      }
+
+      const frameTime = timestamps[i];
+
+      // Render styled caption overlay on 100% transparent canvas (videoFrame is null)
+      await renderCompositeFrame({
+        canvas,
+        videoFrame: null,
+        scene,
+        currentTime: frameTime
+      });
+
+      // Add transparent frame to WebM VP9 encoder
+      await videoSource.add(frameTime, frameInterval);
+
+      if (i % 5 === 0 || i === totalFrames - 1) {
+        const progress = (i + 1) / totalFrames;
+        const elapsedMs = performance.now() - startTime;
+        const avgFrameMs = elapsedMs / (i + 1);
+        const remainingSec = Math.max(0, ((totalFrames - (i + 1)) * avgFrameMs) / 1000);
+        onProgress({
+          progress,
+          currentFrame: i + 1,
+          totalFrames,
+          percent: Math.round(progress * 100),
+          fps,
+          etaSeconds: Math.round(remainingSec)
+        });
+      }
+    }
+  } catch (err) {
+    if (isCancelledRef.current) {
+      await output.cancel();
+    }
+    throw err;
+  }
+
+  videoSource.close();
+  await output.finalize();
+
+  const buffer = target.buffer;
+  if (!buffer) {
+    throw new Error('Failed to generate transparent caption overlay buffer');
+  }
+
+  return new Blob([buffer], { type: 'video/webm' });
 }
 
